@@ -12,7 +12,11 @@
             <h1 class="title">Processing Results</h1>
             <div class="content">
                 <h2 class="subtitle">Logs</h2>
-                <pre>{{ logs|safe }}</pre>
+                <pre>
+                    {% for log in logs %}
+                    {{ log }}
+                    {% endfor %}
+                </pre>
                 <a class="button is-link" href="{{ url_for('index') }}">Go Back</a>
             </div>
         </div>
