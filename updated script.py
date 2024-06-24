@@ -229,19 +229,13 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                 base_path, is_keyword_path, is_special_case = find_path_for_sender(sender_email, item.Subject, sender_path_table)
                 if base_path:
                     if is_special_case:
-                        relevant_attachments = [attachment for attachment in item.Attachments if attachment.FileName.lower().endswith(('.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'))]
-                        if relevant_attachments:
-                            for attachment in relevant_attachments:
-                                attachment_title = sanitize_filename(attachment.FileName).rsplit('.', 1)[0]
-                                filename = f"{attachment_title}.msg"
-                                item.SaveAs(os.path.join(base_path, filename), 3)
-                                logs.append(f"Saved special case: {filename} to {base_path}")
-                                saved_actual += 1
-                                processed = True
-                        else:
-                            logs.append(f"No relevant attachments found for special case email: {item.Subject}")
-                            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                            not_saved += 1
+                        for attachment in item.Attachments:
+                            attachment_title = sanitize_filename(attachment.FileName).rsplit('.', 1)[0]
+                            filename = f"{attachment_title}.msg"
+                            item.SaveAs(os.path.join(base_path, filename), 3)
+                            logs.append(f"Saved special case: {filename} to {base_path}")
+                            saved_actual += 1
+                            processed = True
                     else:
                         if is_keyword_path:
                             if item.Attachments.Count == 0:
