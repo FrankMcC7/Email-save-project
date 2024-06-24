@@ -5,7 +5,6 @@ import datetime
 import re
 import win32com.client
 import pandas as pd
-from io import StringIO
 import nest_asyncio
 from threading import Thread
 import pythoncom
@@ -122,6 +121,9 @@ def find_path_for_sender(sender, subject, sender_path_table):
         for keyword in keywords:
             if keyword.lower() in subject.lower():
                 return row['keyword_path'], True, row['special_case'] == 'Yes'
+            for attachment in row.get('attachments', []):
+                if keyword.lower() in attachment.FileName.lower():
+                    return row['keyword_path'], True, row['special_case'] == 'Yes'
     for _, row in rows.iterrows():
         if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
             return row['save_path'], False, row['special_case'] == 'Yes'
@@ -154,6 +156,12 @@ def update_excel_summary(date_str, total_emails, saved_default, saved_actual, no
 def read_excluded_senders(filepath):
     df = pd.read_csv(filepath)
     return df.iloc[:, 0].str.lower().tolist()
+
+def is_excluded_sender(sender_email, excluded_senders):
+    for excluded_sender in excluded_senders:
+        if excluded_sender in sender_email:
+            return True
+    return False
 
 def save_emails_from_senders_on_date(email_address, specific_date_str, sender_path_table, default_year, excluded_senders):
     logs = []
@@ -202,7 +210,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
 
         if hasattr(item, 'SenderEmailAddress') or hasattr(item, 'Sender'):
             sender_email = item.SenderEmailAddress.lower() if hasattr(item, 'SenderEmailAddress') else item.Sender.Address.lower()
-            if sender_email in excluded_senders:
+            if is_excluded_sender(sender_email, excluded_senders):
                 excluded_emails_count += 1
                 continue
 
@@ -227,8 +235,17 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                             break
 
                 base_path, is_keyword_path, is_special_case = find_path_for_sender(sender_email, item.Subject, sender_path_table)
-                if base_path:
-                    if is_special_case:
+                
+                if base_path and is_special_case:
+                    # Special case handling
+                    keyword_found = any(keyword.lower() in item.Subject.lower() for keyword in sender_path_table[sender_path_table['sender'].str.lower() == sender_email]['keywords'].values[0].split(';'))
+                    if not keyword_found:
+                        for attachment in item.Attachments:
+                            if any(keyword.lower() in attachment.FileName.lower() for keyword in sender_path_table[sender_path_table['sender'].str.lower() == sender_email]['keywords'].values[0].split(';')):
+                                keyword_found = True
+                                break
+
+                    if keyword_found:
                         for attachment in item.Attachments:
                             attachment_title = sanitize_filename(attachment.FileName).rsplit('.', 1)[0]
                             filename = f"{attachment_title}.msg"
@@ -237,42 +254,30 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                             saved_actual += 1
                             processed = True
                     else:
-                        if is_keyword_path:
-                            if item.Attachments.Count == 0:
-                                logs.append(f"Skipping email with subject '{item.Subject}': No attachments for keyword path.")
-                                failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                                not_saved += 1
-                                break
-                            year = extract_year_for_keywords(item.Subject)
-                            if not year:
-                                year_month_path = base_path
-                                logs.append(f"No year found, saving keyword email to base path: {year_month_path}")
-                            else:
-                                year_month_path = os.path.join(base_path, year)
-                                logs.append(f"Determined keyword path: {year_month_path}")
-                            save_type = 'keyword'
-                        else:
-                            year_month_path = os.path.join(base_path, year, month if month else "")
-                            logs.append(f"Determined actual path: {year_month_path}")
-                            save_type = 'actual'
-
-                        if not os.path.exists(year_month_path):
-                            os.makedirs(year_month_path)
-
-                        subject = sanitize_filename(item.Subject)
-                        filename = f"{subject}.msg"
-                        item.SaveAs(os.path.join(year_month_path, filename), 3)
-                        logs.append(f"Saved: {filename} to {year_month_path}")
-
-                        if save_type == 'default':
-                            saved_default += 1
-                        else:
-                            saved_actual += 1
-
-                        processed = True
+                        logs.append(f"Skipping special case email with subject '{item.Subject}': No matching keywords in subject or attachments.")
+                        failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+                        not_saved += 1
+                        processed = True  # Move to next email
                 else:
-                    year_month_path = os.path.join(DEFAULT_SAVE_PATH, sender_email, year, month if month else "")
-                    logs.append(f"Determined default path: {year_month_path}")
+                    # Normal case handling
+                    if is_keyword_path:
+                        if item.Attachments.Count == 0:
+                            logs.append(f"Skipping email with subject '{item.Subject}': No attachments for keyword path.")
+                            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+                            not_saved += 1
+                            break
+                        year = extract_year_for_keywords(item.Subject)
+                        if not year:
+                            year_month_path = base_path
+                            logs.append(f"No year found, saving keyword email to base path: {year_month_path}")
+                        else:
+                            year_month_path = os.path.join(base_path, year)
+                            logs.append(f"Determined keyword path: {year_month_path}")
+                        save_type = 'keyword'
+                    else:
+                        year_month_path = os.path.join(base_path, year, month if month else "")
+                        logs.append(f"Determined actual path: {year_month_path}")
+                        save_type = 'actual'
 
                     if not os.path.exists(year_month_path):
                         os.makedirs(year_month_path)
@@ -282,7 +287,11 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                     item.SaveAs(os.path.join(year_month_path, filename), 3)
                     logs.append(f"Saved: {filename} to {year_month_path}")
 
-                    saved_default += 1
+                    if save_type == 'default':
+                        saved_default += 1
+                    else:
+                        saved_actual += 1
+
                     processed = True
 
             except pythoncom.com_error as com_err:
