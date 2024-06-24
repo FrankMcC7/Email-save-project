@@ -121,9 +121,6 @@ def find_path_for_sender(sender, subject, sender_path_table):
         for keyword in keywords:
             if keyword.lower() in subject.lower():
                 return row['keyword_path'], True, row['special_case'] == 'Yes'
-            for attachment in row.get('attachments', []):
-                if keyword.lower() in attachment.FileName.lower():
-                    return row['keyword_path'], True, row['special_case'] == 'Yes'
     for _, row in rows.iterrows():
         if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
             return row['save_path'], False, row['special_case'] == 'Yes'
@@ -236,7 +233,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
 
                 base_path, is_keyword_path, is_special_case = find_path_for_sender(sender_email, item.Subject, sender_path_table)
                 
-                if base_path and is_special_case:
+                if base_path and is_special_case == 'Yes':
                     # Special case handling
                     keyword_found = any(keyword.lower() in item.Subject.lower() for keyword in sender_path_table[sender_path_table['sender'].str.lower() == sender_email]['keywords'].values[0].split(';'))
                     if not keyword_found:
