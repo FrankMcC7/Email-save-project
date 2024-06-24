@@ -1,0 +1,6 @@
+{
+  "DEFAULT_SAVE_PATH": "path_to_default_folder",
+  "LOG_FILE_PATH": "logs.txt",
+  "EXCEL_FILE_PATH": "email_summary.xlsx",
+  "EXCLUDED_SENDERS_FILE_PATH": "excluded_senders.csv"
+}
