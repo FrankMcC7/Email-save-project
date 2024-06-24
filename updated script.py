@@ -117,10 +117,14 @@ def extract_year_for_keywords(text):
 def find_path_for_sender(sender, subject, sender_path_table):
     rows = sender_path_table[sender_path_table['sender'].str.lower() == sender.lower()]
     for _, row in rows.iterrows():
-        keywords = str(row.get('keywords', '')).split(';')
-        for keyword in keywords:
-            if keyword.lower() in subject.lower():
-                return row['keyword_path'], True, row['special_case'] == 'Yes'
+        if row['special_case'] == 'Yes':
+            if row['coper_name'].lower() in subject.lower():
+                return row['keyword_path'], True, True
+        else:
+            keywords = str(row.get('keywords', '')).split(';')
+            for keyword in keywords:
+                if keyword.lower() in subject.lower():
+                    return row['keyword_path'], True, False
     for _, row in rows.iterrows():
         if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
             return row['save_path'], False, row['special_case'] == 'Yes'
@@ -233,16 +237,9 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
 
                 base_path, is_keyword_path, is_special_case = find_path_for_sender(sender_email, item.Subject, sender_path_table)
                 
-                if base_path and is_special_case == 'Yes':
+                if base_path and is_special_case:
                     # Special case handling
-                    keyword_found = any(keyword.lower() in item.Subject.lower() for keyword in sender_path_table[sender_path_table['sender'].str.lower() == sender_email]['keywords'].values[0].split(';'))
-                    if not keyword_found:
-                        for attachment in item.Attachments:
-                            if any(keyword.lower() in attachment.FileName.lower() for keyword in sender_path_table[sender_path_table['sender'].str.lower() == sender_email]['keywords'].values[0].split(';')):
-                                keyword_found = True
-                                break
-
-                    if keyword_found:
+                    if row['coper_name'].lower() in item.Subject.lower() or any(row['coper_name'].lower() in attachment.FileName.lower() for attachment in item.Attachments):
                         for attachment in item.Attachments:
                             attachment_title = sanitize_filename(attachment.FileName).rsplit('.', 1)[0]
                             filename = f"{attachment_title}.msg"
@@ -251,7 +248,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                             saved_actual += 1
                             processed = True
                     else:
-                        logs.append(f"Skipping special case email with subject '{item.Subject}': No matching keywords in subject or attachments.")
+                        logs.append(f"Skipping special case email with subject '{item.Subject}': No matching coper_name in subject or attachments.")
                         failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
                         not_saved += 1
                         processed = True  # Move to next email
