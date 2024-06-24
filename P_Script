@@ -29,15 +29,10 @@ EXCEL_FILE_PATH = config.get('EXCEL_FILE_PATH', 'email_summary.xlsx')
 EXCLUDED_SENDERS_FILE_PATH = config.get('EXCLUDED_SENDERS_FILE_PATH', 'excluded_senders.csv')
 
 def sanitize_filename(filename):
-    # Allowable characters: alphanumeric, spaces, and special characters - _ . + % ( )
     allowable_chars = re.compile(r'[^a-zA-Z0-9\s\-\_\.\+\%\(\)]')
-    # Replace disallowed characters with an underscore
     sanitized = allowable_chars.sub('_', filename)
-    # Replace multiple underscores with a single underscore
     sanitized = re.sub(r'_+', '_', sanitized)
-    # Replace spaces with underscores
     sanitized = sanitized.replace(' ', '_')
-    # Ensure the filename is not too long
     return sanitized[:255]
 
 def extract_year_and_month(text, default_year=None):
@@ -80,7 +75,7 @@ def extract_year_and_month(text, default_year=None):
             return year, month
 
         if numeric_date:
-            date_formats = ["%d.%m.%y", "%m.%d.%y", "%d.%m.%Y", "%m.%d.%Y", "%d/%m/%y", "%m/%d/%y", "%d/%m/%Y", "%m/%d/%Y", "%d%m%y", "%m%d%y", "%d%m%Y", "%m%d%Y"]
+            date_formats = ["%d.%m.%y", "%m.%d.%y", "%d.%m.%Y", "%m.%d.%Y", "%d/%m/%y", "%m/%d/%y", "%d/%m/%Y", "%m/%d/%Y", "%d%m%y", "%m%d%y", "%d%m%Y", "%m%dY"]
             for date_format in date_formats:
                 try:
                     parsed_date = datetime.datetime.strptime(numeric_date, date_format)
@@ -234,13 +229,21 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                 base_path, is_keyword_path, is_special_case = find_path_for_sender(sender_email, item.Subject, sender_path_table)
                 if base_path:
                     if is_special_case:
-                        attachment_titles = [sanitize_filename(attachment.FileName) for attachment in item.Attachments]
-                        combined_title = sanitize_filename(f"{item.Subject} {' '.join(attachment_titles)}")
-                        filename = f"{combined_title}.msg"
-                        item.SaveAs(os.path.join(base_path, filename), 3)
-                        logs.append(f"Saved special case: {filename} to {base_path}")
-                        saved_actual += 1
-                        processed = True
+                        # Process only relevant file types for attachments
+                        relevant_attachments = [attachment for attachment in item.Attachments if attachment.FileName.lower().endswith(('.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'))]
+                        
+                        if relevant_attachments:
+                            attachment_titles = [sanitize_filename(attachment.FileName).rsplit('.', 1)[0] for attachment in relevant_attachments]
+                            combined_title = sanitize_filename(f"{item.Subject} {' '.join(attachment_titles)}")
+                            filename = f"{combined_title}.msg"
+                            item.SaveAs(os.path.join(base_path, filename), 3)
+                            logs.append(f"Saved special case: {filename} to {base_path}")
+                            saved_actual += 1
+                            processed = True
+                        else:
+                            logs.append(f"No relevant attachments found for special case email: {item.Subject}")
+                            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+                            not_saved += 1
                     else:
                         if is_keyword_path:
                             if item.Attachments.Count == 0:
