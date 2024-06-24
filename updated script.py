@@ -308,6 +308,21 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                 not_saved += 1
                 retries = 0
 
+        if not processed:
+            # Default save path handling
+            year_month_path = os.path.join(DEFAULT_SAVE_PATH, sender_email, year, month if month else "")
+            logs.append(f"Determined default path: {year_month_path}")
+
+            if not os.path.exists(year_month_path):
+                os.makedirs(year_month_path)
+
+            subject = sanitize_filename(item.Subject)
+            filename = f"{subject}.msg"
+            item.SaveAs(os.path.join(year_month_path, filename), 3)
+            logs.append(f"Saved: {filename} to {year_month_path}")
+
+            saved_default += 1
+
     pythoncom.CoUninitialize()
     with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
         for log in logs:
