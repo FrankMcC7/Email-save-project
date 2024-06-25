@@ -178,7 +178,6 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     not_saved = 0
     failed_emails = []
 
-    # Limit the number of retries
     max_retries = 3
 
     for item in items:
