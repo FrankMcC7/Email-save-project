@@ -1,15 +1,15 @@
-from flask import Flask, render_template, request, redirect, url_for
-from flask_socketio import SocketIO
 import os
 import datetime
 import re
+import pythoncom
 import win32com.client
 import pandas as pd
 import nest_asyncio
-from threading import Thread
-import pythoncom
-import openpyxl
 import json
+from flask import Flask, render_template, request, redirect, url_for
+from flask_socketio import SocketIO
+from threading import Thread
+import openpyxl
 
 # Apply nest_asyncio to allow nested event loops
 nest_asyncio.apply()
@@ -73,7 +73,7 @@ def extract_year_and_month(text, default_year=None):
             return year, month
 
         if numeric_date:
-            date_formats = ["%d.%m.%y", "%m.%d.%y", "%d.%m.%Y", "%m.%d.%Y", "%d/%m/%y", "%m/%d/%y", "%d/%m/%Y", "%m/%d/%Y", "%d%m%y", "%m%d%y", "%d%m%Y", "%m%dY"]
+            date_formats = ["%d.%m.%y", "%m.%d.%y", "%d.%m.%Y", "%m.%d.%Y", "%d/%m/%y", "%m/%d/%y", "%d/%m/%Y", "%m/%d/%Y", "%d%m%y", "%m%d%y", "%d%m%Y", "%m%d%Y"]
             for date_format in date_formats:
                 try:
                     parsed_date = datetime.datetime.strptime(numeric_date, date_format)
@@ -128,6 +128,17 @@ def update_excel_summary(date_str, total_emails, saved_default, saved_actual, no
 
     workbook.save(EXCEL_FILE_PATH)
 
+def find_path_for_sender(sender, subject, sender_path_table):
+    rows = sender_path_table[sender_path_table['sender'].str.lower() == sender.lower()]
+    if len(rows) > 1:
+        for _, row in rows.iterrows():
+            if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
+                return row['save_path'], row['keyword_path'], row['keywords']
+    if not rows.empty:
+        row = rows.iloc[0]
+        return row['save_path'], row['keyword_path'], row['keywords']
+    return None, None, None
+
 def save_emails_from_senders_on_date(email_address, specific_date_str, sender_path_table, default_year):
     logs = []
     pythoncom.CoInitialize()
@@ -174,6 +185,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
 
         if hasattr(item, 'SenderEmailAddress') or hasattr(item, 'Sender'):
             sender_email = item.SenderEmailAddress.lower() if hasattr(item, 'SenderEmailAddress') else item.Sender.Address.lower()
+            save_path, keyword_path, keywords = find_path_for_sender(sender_email, item.Subject, sender_path_table)
 
         while retries > 0 and not processed:
             try:
@@ -183,8 +195,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                     not_saved += 1
                     break
 
-                sender_row = sender_path_table[sender_path_table['sender'].str.lower() == sender_email.lower()]
-                if sender_row.empty:
+                if not save_path:
                     year, month = extract_year_and_month(item.Subject, default_year)
                     year_month_path = os.path.join(DEFAULT_SAVE_PATH, sender_email, year, month if month else "")
                     if not os.path.exists(year_month_path):
@@ -202,64 +213,30 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                         not_saved += 1
                     continue
 
-                special_case = sender_row['special_case'].values[0].strip().lower()
-                coper_name = str(sender_row['coper_name'].values[0]).strip().lower()
-                keywords = str(sender_row.get('keywords', '')).split(';')
-                base_path = sender_row['save_path'].values[0]
+                keywords_list = [kw.strip().lower() for kw in keywords.split(';')] if keywords else []
+                keyword_matched = any(keyword in item.Subject.lower() for keyword in keywords_list)
 
-                if special_case == 'yes':
-                    if coper_name in item.Subject.lower():
-                        for attachment in item.Attachments:
-                            attachment_title = sanitize_filename(attachment.FileName).rsplit('.', 1)[0]
-                            filename = f"{attachment_title}.msg"
-                            try:
-                                item.SaveAs(os.path.join(base_path, filename), 3)
-                                logs.append(f"Saved special case: {filename} to {base_path}")
-                                saved_actual += 1
-                                processed = True
-                            except Exception as save_err:
-                                logs.append(f"Failed to save special case email: {str(save_err)}")
-                                failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                                not_saved += 1
-                        break
-                    else:
-                        logs.append(f"Skipping email with subject '{item.Subject}': Coper name not matched for special case.")
+                if not keyword_matched and item.Attachments.Count > 0:
+                    for attachment in item.Attachments:
+                        if any(keyword in attachment.FileName.lower() for keyword in keywords_list):
+                            keyword_matched = True
+                            break
+
+                if keyword_matched:
+                    subject = sanitize_filename(item.Subject)
+                    filename = f"{subject}_{specific_date_str}.msg"
+                    try:
+                        item.SaveAs(os.path.join(keyword_path, filename), 3)
+                        logs.append(f"Saved keyword case: {filename} to {keyword_path}")
+                        saved_actual += 1
+                        processed = True
+                    except Exception as save_err:
+                        logs.append(f"Failed to save keyword case email: {str(save_err)}")
+                        failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
                         not_saved += 1
-                        break
-
-                keyword_matched = any(keyword.lower() in item.Subject.lower() for keyword in keywords)
-
-                if coper_name in item.Subject.lower():
-                    for attachment in item.Attachments:
-                        attachment_title = sanitize_filename(attachment.FileName).rsplit('.', 1)[0]
-                        filename = f"{attachment_title}.msg"
-                        try:
-                            item.SaveAs(os.path.join(base_path, filename), 3)
-                            logs.append(f"Saved email with coper_name match: {filename} to {base_path}")
-                            saved_actual += 1
-                            processed = True
-                        except Exception as save_err:
-                            logs.append(f"Failed to save email: {str(save_err)}")
-                            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                            not_saved += 1
-                    break
-                elif keyword_matched:
-                    for attachment in item.Attachments:
-                        attachment_title = sanitize_filename(attachment.FileName).rsplit('.', 1)[0]
-                        filename = f"{attachment_title}.msg"
-                        try:
-                            item.SaveAs(os.path.join(base_path, filename), 3)
-                            logs.append(f"Saved keyword case: {filename} to {base_path}")
-                            saved_actual += 1
-                            processed = True
-                        except Exception as save_err:
-                            logs.append(f"Failed to save keyword case email: {str(save_err)}")
-                            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                            not_saved += 1
-                    break
                 else:
                     year, month = extract_year_and_month(item.Subject, default_year)
-                    year_month_path = os.path.join(base_path, year, month if month else "")
+                    year_month_path = os.path.join(save_path, year, month if month else "")
                     if not os.path.exists(year_month_path):
                         os.makedirs(year_month_path)
                     subject = sanitize_filename(item.Subject)
@@ -273,7 +250,6 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                         logs.append(f"Failed to save email: {str(save_err)}")
                         failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
                         not_saved += 1
-                    break
 
             except pythoncom.com_error as com_err:
                 error_code, _, error_message, _ = com_err.args
