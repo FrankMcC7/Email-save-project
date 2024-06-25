@@ -33,35 +33,101 @@ def sanitize_filename(filename):
     sanitized = sanitized.replace(' ', '_')
     return sanitized[:255]
 
-def extract_month_from_text(text):
-    date_patterns = [
-        (r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\b", "%B"),
-        (r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b", "%b")
-    ]
-    for pattern, date_format in date_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            month_num = datetime.datetime.strptime(match.group(), date_format).strftime("%m")
-            month_name = datetime.datetime.strptime(match.group(), date_format).strftime("%B")
-            return month_num, month_name
-    return None, None
+def extract_year_and_month(text, default_year=None):
+    date_pattern = re.compile(r"""
+    (?i)
+    \b(January|February|March|April|May|June|July|August|September|October|November|December)\b|
+    \b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b|
+    (\d{1,4})\/(\d{1,2})|
+    (\d{1,2})[./-](\d{1,2})[./-](\d{2,4})|
+    (\d{4})-(\d{1,2})-(\d{1,2})|
+    (Q[1-4])['\s]?(\d{2,4})|
+    ([1-4]Q)['\s]?(\d{2,4})|
+    (\d{2})(\d{4})|
+    (\d{4})(\d{2})
+    """, re.IGNORECASE | re.VERBOSE)
+    match = date_pattern.search(text)
 
-def extract_year_from_text(text, default_year):
+    if match:
+        full_month = match.group(1)
+        abbr_month = match.group(2)
+        numeric_date_1 = match.group(3)
+        numeric_date_2 = match.group(4)
+        numeric_date_3 = match.group(5)
+        numeric_date_4 = match.group(6)
+        quarter_1 = match.group(7)
+        quarter_year_1 = match.group(8)
+        quarter_2 = match.group(9)
+        quarter_year_2 = match.group(10)
+        month_year_1 = match.group(11)
+        year_month_1 = match.group(12)
+        year = match.group(13) if match.group(13) else default_year
+
+        # handle full month names
+        if full_month:
+            month_num = datetime.datetime.strptime(full_month, "%B").strftime("%m")
+            month_name = datetime.datetime.strptime(full_month, "%B").strftime("%B")
+            return year, f"{month_num}-{month_name}"
+
+        # handle abbr month names
+        if abbr_month:
+            month_num = datetime.datetime.strptime(abbr_month, "%b").strftime("%m")
+            month_name = datetime.datetime.strptime(abbr_month, "%b").strftime("%B")
+            return year, f"{month_num}-{month_name}"
+
+        # handle numeric dates
+        numeric_dates = [numeric_date_1, numeric_date_2, numeric_date_3, numeric_date_4]
+        for numeric_date in numeric_dates:
+            if numeric_date:
+                date_formats = ["%d.%m.%Y", "%m/%d/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%y", "%d/%m/%y", "%d/%m/%Y", 
+                                "%m/%d/%y", "%m/%d/%Y", "%m%d%Y", "%d%m%y", "%m%d%y", "%m%d%Y"]
+                for date_format in date_formats:
+                    try:
+                        parsed_date = datetime.datetime.strptime(numeric_date, date_format)
+                        month_num = parsed_date.strftime('%m')
+                        month_name = parsed_date.strftime('%B')
+                        year = year if year else parsed_date.strftime('%Y')
+                        return year, f"{month_num}-{month_name}"
+                    except ValueError:
+                        continue
+
+        # handle quarters
+        quarter_mappings = {'Q1': '03-March', 'Q2': '06-June', 'Q3': '09-September', 'Q4': '12-December'}
+        if quarter_1 and quarter_year_1:
+            quarter = quarter_mappings[quarter_1.upper()]
+            year = f"20{quarter_year_1}" if len(quarter_year_1) == 2 else quarter_year_1
+            return year, quarter
+
+        if quarter_2 and quarter_year_2:
+            quarter = quarter_mappings[quarter_2.upper()]
+            year = f"20{quarter_year_2}" if len(quarter_year_2) == 2 else quarter_year_2
+            return year, quarter
+
+        # handle month-year or year-month formats like 052024 or 202405
+        if month_year_1 and len(month_year_1) == 2:
+            month_num = month_year_1
+            month_name = datetime.datetime.strptime(month_num, "%m").strftime("%B")
+            year = year_month_1 if year_month_1 else default_year
+            return year, f"{month_num}-{month_name}"
+
+        if year_month_1 and len(year_month_1) == 4:
+            year = year_month_1
+            month_num = match.group(12)
+            month_name = datetime.datetime.strptime(month_num, "%m").strftime("%B")
+            return year, f"{month_num}-{month_name}"
+
+    return default_year, None
+
+def extract_year_for_keywords(text):
     year_pattern = re.compile(r"\b(20\d{2})\b")
     match = year_pattern.search(text)
     if match:
         return match.group(1)
-    return default_year
-
-def extract_year_and_month(text, default_year=None):
-    month_num, month_name = extract_month_from_text(text)
-    year = extract_year_from_text(text, default_year)
-    if month_num and year:
-        return year, f"{month_num}-{month_name}"
-    return default_year, None
+    return None
 
 def find_path_for_sender(sender, subject, sender_path_table):
     rows = sender_path_table[sender_path_table['sender'].str.lower() == sender.lower()]
+
     for _, row in rows.iterrows():
         keywords = str(row.get('keywords', '')).split(';')
         for keyword in keywords:
@@ -125,17 +191,18 @@ def process_email(item, sender_path_table, default_year):
                 year = default_year
             base_path, is_keyword_path = find_path_for_sender(sender_email, item.Subject, sender_path_table)
             if base_path:
+                save_path = os.path.join(base_path, str(year), month if month else '')
                 if is_keyword_path and item.Attachments.Count == 0:
-                    logs.append(f"Skipping email with Subject '{item.Subject}': No attachment found for AFS email.")
+                    logs.append(f"Skipping email with Subject '{item.Subject}': No attachment found for keyword path.")
                     failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
                     break
                 if is_keyword_path:
                     year = extract_year_for_keywords(item.Subject) or default_year
                     save_path = base_path
                 else:
-                    save_path = os.path.join(base_path, f"{year}-{month}")
+                    save_path = os.path.join(base_path, str(year), month if month else '')
             else:
-                save_path = os.path.join(DEFAULT_SAVE_PATH, datetime.datetime.now().strftime('%Y-%m-%d'))
+                save_path = os.path.join(DEFAULT_SAVE_PATH, str(year), month if month else '')
 
             filename = save_email(item, save_path)
             logs.append(f"Saved: {filename} to {save_path}")
