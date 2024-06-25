@@ -3,23 +3,40 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Processing Results</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.9.3/css/bulma.min.css">
+    <title>Results - Email Archiver</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
 </head>
 <body>
-    <section class="section">
-        <div class="container">
-            <h1 class="title">Processing Results</h1>
-            <div class="content">
-                <h2 class="subtitle">Logs</h2>
-                <pre>
-                    {% for log in logs %}
-                    {{ log }}
-                    {% endfor %}
-                </pre>
-                <a class="button is-link" href="{{ url_for('index') }}">Go Back</a>
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        <a class="navbar-brand" href="#">Email Archiver</a>
+        <div class="collapse navbar-collapse">
+            <ul class="navbar-nav ml-auto">
+                <li class="nav-item">
+                    <a class="nav-link" href="/">Home</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="/results">Results</a>
+                </li>
+            </ul>
+        </div>
+    </nav>
+    <div class="container mt-5">
+        <h1 class="text-center">Email Archiver - Results</h1>
+        <div class="mt-4">
+            <h3>Log Output:</h3>
+            <button class="btn btn-secondary mb-3" type="button" data-toggle="collapse" data-target="#logOutput" aria-expanded="false" aria-controls="logOutput">
+                Toggle Log Output
+            </button>
+            <div class="collapse" id="logOutput">
+                <pre class="bg-light p-3">{{ logs | safe }}</pre>
             </div>
         </div>
-    </section>
+        <div class="text-center mt-4">
+            <a href="/" class="btn btn-primary">Go Back</a>
+        </div>
+    </div>
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.4/dist/umd/popper.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
 </body>
 </html>
