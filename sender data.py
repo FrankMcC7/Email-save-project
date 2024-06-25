@@ -104,21 +104,28 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                     base_path = matched_row['base_path']
                     keyword_path = matched_row['keyword_path']
                     keywords = str(matched_row['keywords']).split(';')
-                    keyword_matched = any(keyword.lower() in item.Subject.lower() for keyword in keywords)
+                    keywords = [kw.lower().strip() for kw in keywords]  # Ensure keywords are lowercase and stripped
 
-                    if keyword_matched and item.Attachments.Count > 0:
+                    keyword_matched = any(keyword in item.Subject.lower() for keyword in keywords)
+
+                    if not keyword_matched and item.Attachments.Count > 0:
                         for attachment in item.Attachments:
-                            subject = sanitize_filename(item.Subject)
-                            filename = f"{subject}_{specific_date_str}.msg"
-                            try:
-                                item.SaveAs(os.path.join(keyword_path, filename), 3)
-                                logs.append(f"Saved keyword case: {filename} to {keyword_path}")
-                                saved_actual += 1
-                                processed = True
-                            except Exception as save_err:
-                                logs.append(f"Failed to save keyword case email: {str(save_err)}")
-                                failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                                not_saved += 1
+                            if any(keyword in attachment.FileName.lower() for keyword in keywords):
+                                keyword_matched = True
+                                break
+
+                    if keyword_matched:
+                        subject = sanitize_filename(item.Subject)
+                        filename = f"{subject}_{specific_date_str}.msg"
+                        try:
+                            item.SaveAs(os.path.join(keyword_path, filename), 3)
+                            logs.append(f"Saved keyword case: {filename} to {keyword_path}")
+                            saved_actual += 1
+                            processed = True
+                        except Exception as save_err:
+                            logs.append(f"Failed to save keyword case email: {str(save_err)}")
+                            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+                            not_saved += 1
                     else:
                         year, month = extract_year_and_month(item.Subject, default_year)
                         year_month_path = os.path.join(base_path, year, month if month else "")
