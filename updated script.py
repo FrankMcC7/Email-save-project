@@ -178,16 +178,19 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     not_saved = 0
     failed_emails = []
 
+    # Limit the number of retries
+    max_retries = 3
+
     for item in items:
         total_emails += 1
-        retries = 3
+        retries = 0
         processed = False
 
         if hasattr(item, 'SenderEmailAddress') or hasattr(item, 'Sender'):
             sender_email = item.SenderEmailAddress.lower() if hasattr(item, 'SenderEmailAddress') else item.Sender.Address.lower()
             save_path, keyword_path, keywords = find_path_for_sender(sender_email, item.Subject, sender_path_table)
 
-        while retries > 0 and not processed:
+        while retries < max_retries and not processed:
             try:
                 if not sender_email:
                     logs.append(f"Error: Email item has no sender address.")
@@ -254,16 +257,16 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
             except pythoncom.com_error as com_err:
                 error_code, _, error_message, _ = com_err.args
                 logs.append(f"COM Error handling email with subject '{item.Subject}': {error_message} (Code: {error_code})")
-                retries -= 1
-                if retries == 0:
-                    logs.append(f"Failed to save email '{item.Subject}' after 3 retries.")
+                retries += 1
+                if retries >= max_retries:
+                    logs.append(f"Failed to save email '{item.Subject}' after {max_retries} retries.")
                     failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
                     not_saved += 1
             except Exception as e:
                 logs.append(f"Error handling email with subject '{item.Subject}': {str(e)}")
                 failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
                 not_saved += 1
-                retries = 0
+                retries = max_retries
 
         if not processed:
             year, month = extract_year_and_month(item.Subject, default_year)
