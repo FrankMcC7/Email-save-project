@@ -1,0 +1,257 @@
+import os
+import datetime
+import re
+import pythoncom
+import win32com.client
+import pandas as pd
+import nest_asyncio
+import json
+from flask import Flask, render_template, request, redirect, url_for, flash
+from flask_socketio import SocketIO
+from threading import Thread
+import openpyxl
+
+# Apply nest_asyncio to allow nested event loops
+nest_asyncio.apply()
+
+app = Flask(__name__)
+app.secret_key = 'supersecretkey'
+socketio = SocketIO(app)
+
+# Load configurations from a JSON file
+with open('config.json', 'r') as f:
+    config = json.load(f)
+
+DEFAULT_SAVE_PATH = config.get('DEFAULT_SAVE_PATH', 'path_to_default_folder')
+LOG_FILE_PATH = config.get('LOG_FILE_PATH', 'logs.txt')
+EXCEL_FILE_PATH = config.get('EXCEL_FILE_PATH', 'email_summary.xlsx')
+
+def sanitize_filename(filename):
+    allowable_chars = re.compile(r'[^a-zA-Z0-9\s\-\_\.\+\%\(\)]')
+    sanitized = allowable_chars.sub('_', filename)
+    sanitized = re.sub(r'_+', '_', sanitized)
+    sanitized = sanitized.replace(' ', '_')
+    return sanitized[:255]
+
+def extract_month_from_text(text):
+    date_patterns = [
+        (r"\b(January|February|March|April|May|June|July|August|September|October|November|December)\b", "%B"),
+        (r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b", "%b")
+    ]
+    for pattern, date_format in date_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            month_num = datetime.datetime.strptime(match.group(), date_format).strftime("%m")
+            month_name = datetime.datetime.strptime(match.group(), date_format).strftime("%B")
+            return month_num, month_name
+    return None, None
+
+def extract_year_from_text(text, default_year):
+    year_pattern = re.compile(r"\b(20\d{2})\b")
+    match = year_pattern.search(text)
+    if match:
+        return match.group(1)
+    return default_year
+
+def extract_year_and_month(text, default_year=None):
+    month_num, month_name = extract_month_from_text(text)
+    year = extract_year_from_text(text, default_year)
+    if month_num and year:
+        return year, f"{month_num}-{month_name}"
+    return default_year, None
+
+def find_path_for_sender(sender, subject, sender_path_table):
+    rows = sender_path_table[sender_path_table['sender'].str.lower() == sender.lower()]
+    for _, row in rows.iterrows():
+        keywords = str(row.get('keywords', '')).split(';')
+        for keyword in keywords:
+            if keyword.lower() in subject.lower():
+                return row['keyword_path'], True
+
+    for _, row in rows.iterrows():
+        if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
+            return row['save_path'], False
+
+    if not rows.empty:
+        return rows.iloc[0]['save_path'], False
+
+    return None, False
+
+def update_excel_summary(date_str, total_emails, saved_default, saved_actual, not_saved, failed_emails):
+    if os.path.exists(EXCEL_FILE_PATH):
+        workbook = openpyxl.load_workbook(EXCEL_FILE_PATH)
+    else:
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = 'Summary'
+        sheet.append(['Date', 'Total Emails', 'Saved in Default', 'Saved in Actual Paths', 'Not Saved'])
+
+    sheet = workbook.active
+    sheet.append([date_str, total_emails, saved_default, saved_actual, not_saved])
+
+    if 'Failed Emails' not in workbook.sheetnames:
+        failed_sheet = workbook.create_sheet('Failed Emails')
+        failed_sheet.append(['Date', 'Email Address', 'Subject'])
+    else:
+        failed_sheet = workbook['Failed Emails']
+
+    for email in failed_emails:
+        failed_sheet.append([date_str, email['email_address'], email['subject']])
+
+    workbook.save(EXCEL_FILE_PATH)
+
+def save_email(item, save_path):
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    filename = f"{sanitize_filename(item.Subject)}.msg"
+    item.SaveAs(os.path.join(save_path, filename), 3)
+    return filename
+
+def process_email(item, sender_path_table, default_year):
+    logs = []
+    failed_emails = []
+    retries = 3
+    processed = False
+    while retries > 0 and not processed:
+        try:
+            sender_email = item.SenderEmailAddress.lower() if hasattr(item, 'SenderEmailAddress') else item.Sender.Address.lower()
+            year, month = extract_year_and_month(item.Subject, default_year)
+            if not year or not month:
+                for attachment in item.Attachments:
+                    year, month = extract_year_and_month(attachment.Filename, default_year)
+                    if year and month:
+                        break
+            if not year:
+                year = default_year
+            base_path, is_keyword_path = find_path_for_sender(sender_email, item.Subject, sender_path_table)
+            if base_path:
+                if is_keyword_path and item.Attachments.Count == 0:
+                    logs.append(f"Skipping email with Subject '{item.Subject}': No attachment found for AFS email.")
+                    failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+                    break
+                if is_keyword_path:
+                    year = extract_year_for_keywords(item.Subject) or default_year
+                    save_path = base_path
+                else:
+                    save_path = os.path.join(base_path, f"{year}-{month}")
+            else:
+                save_path = os.path.join(DEFAULT_SAVE_PATH, datetime.datetime.now().strftime('%Y-%m-%d'))
+
+            filename = save_email(item, save_path)
+            logs.append(f"Saved: {filename} to {save_path}")
+            processed = True
+        except pythoncom.com_error as com_err:
+            retries -= 1
+            logs.append(f"COM Error handling email with subject '{item.Subject}' (Code: {com_err.args})")
+            if retries == 0:
+                logs.append(f"Failed to save the email '{item.Subject}' after 3 retries")
+                failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+        except Exception as e:
+            retries = 0
+            logs.append(f"Error handling email with subject '{item.Subject}': {str(e)}")
+            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+
+    return logs, failed_emails
+
+def save_emails_from_senders_on_date(email_address, specific_date_str, sender_path_table, default_year):
+    logs = []
+    pythoncom.CoInitialize()
+    specific_date = datetime.datetime.strptime(specific_date_str, '%Y-%m-%d').date()
+    outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+    inbox = None
+
+    for store in outlook.Stores:
+        if store.DisplayName.lower() == email_address.lower() or store.ExchangeStoreType == 3:
+            try:
+                root_folder = store.GetRootFolder()
+                for folder in root_folder.Folders:
+                    if folder.Name.lower() == "inbox":
+                        inbox = folder
+                        break
+                if inbox is not None:
+                    break
+            except AttributeError as e:
+                logs.append(f"Error accessing inbox: {str(e)}")
+                continue
+
+    if inbox is None:
+        logs.append(f"No Inbox found for the account with email address: {email_address}")
+        pythoncom.CoUninitialize()
+        with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
+            f.writelines("\n".join(logs))
+        return
+
+    items = inbox.Items
+    items.Sort("[ReceivedTime]", True)
+    items = items.Restrict(f"[ReceivedTime] >= '{specific_date.strftime('%m/%d/%Y')} 00:00 AM' AND [ReceivedTime] <= '{specific_date.strftime('%m/%d/%Y')} 11:59 PM'")
+
+    total_emails = 0
+    saved_default = 0
+    saved_actual = 0
+    not_saved = 0
+    failed_emails = []
+
+    for item in items:
+        total_emails += 1
+        email_logs, email_failed_emails = process_email(item, sender_path_table, default_year)
+        logs.extend(email_logs)
+        failed_emails.extend(email_failed_emails)
+        if any('default' in log for log in email_logs):
+            saved_default += 1
+        else:
+            saved_actual += 1
+
+    pythoncom.CoUninitialize()
+    with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
+        f.writelines("\n".join(logs))
+
+    update_excel_summary(specific_date_str, total_emails, saved_default, saved_actual, not_saved, failed_emails)
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        date_str = request.form['date']
+        default_year = request.form['default_year']
+        file = request.files['file']
+        if file and date_str and default_year:
+            try:
+                datetime.datetime.strptime(date_str, '%Y-%m-%d')
+            except ValueError:
+                flash("Invalid date format. Please enter the date in YYYY-MM-DD format.", 'error')
+                return redirect(url_for('index'))
+
+            if not (default_year.isdigit() and len(default_year) == 4):
+                flash("Invalid year format. Please enter the year in YYYY format.", 'error')
+                return redirect(url_for('index'))
+
+            filename = file.filename
+            filepath = os.path.join('uploads', filename)
+            file.save(filepath)
+            sender_path_table = pd.read_csv(filepath)
+
+            account_email_address = "hf_data@bofa.com"
+            socketio.start_background_task(save_emails_from_senders_on_date, account_email_address, date_str, sender_path_table, default_year)
+            return redirect(url_for('results'))
+
+    return render_template('index.html')
+
+@app.route('/results')
+def results():
+    logs = []
+    if os.path.exists(LOG_FILE_PATH):
+        with open(LOG_FILE_PATH, 'r') as f:
+            logs = f.readlines()
+
+    return render_template('results.html', logs=logs)
+
+def run_app():
+    socketio.run(app, debug=True, use_reloader=False, allow_unsafe_werkzeug=True)
+
+if __name__ == '__main__':
+    if not os.path.exists('uploads'):
+        os.makedirs('uploads')
+    if not os.path.exists(DEFAULT_SAVE_PATH):
+        os.makedirs(DEFAULT_SAVE_PATH)
+
+    thread = Thread(target=run_app)
+    thread.start()
