@@ -138,7 +138,7 @@ def find_path_for_sender(sender, subject, sender_path_table):
         if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
             return row['save_path'], row['special_case'], False
 
-    if not rows.empty():
+    if not rows.empty:
         return rows.iloc[0]['save_path'], rows.iloc[0]['special_case'], False
 
     return None, None, False
@@ -175,7 +175,8 @@ def save_email(item, save_path, special_case):
         for attachment in item.Attachments:
             # Only consider attachments with specific file types
             if attachment.FileName.lower().endswith(valid_extensions):
-                filename = f"{sanitize_filename(attachment.Filename)}.msg"
+                filename = sanitize_filename(os.path.splitext(attachment.Filename)[0])  # Remove extension
+                filename = f"{filename}.msg"
                 break
         else:
             # If no valid attachment is found, fallback to using the subject
@@ -203,10 +204,10 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
             if not year:
                 year = default_year
             base_path, special_case, is_keyword_path = find_path_for_sender(sender_email, item.Subject, sender_path_table)
-            if base_path:
-                save_path = os.path.join(base_path, str(year), month if month else '')
-            else:
-                save_path = os.path.join(DEFAULT_SAVE_PATH, specific_date_str)
+            if not base_path:  # No specific path found, use default save path
+                base_path = DEFAULT_SAVE_PATH
+                special_case = 'no'
+            save_path = os.path.join(base_path, str(year), month if month else '')
 
             filename = save_email(item, save_path, special_case)
             logs.append(f"Saved: {filename} to {save_path}")
