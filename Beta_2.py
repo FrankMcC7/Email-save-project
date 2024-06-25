@@ -204,10 +204,10 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
             if not year:
                 year = default_year
             base_path, special_case, is_keyword_path = find_path_for_sender(sender_email, item.Subject, sender_path_table)
-            if not base_path:  # No specific path found, use default save path
-                base_path = DEFAULT_SAVE_PATH
-                special_case = 'no'
-            save_path = os.path.join(base_path, str(year), month if month else '')
+            if base_path:
+                save_path = os.path.join(base_path, str(year), month if month else '')
+            else:
+                save_path = os.path.join(DEFAULT_SAVE_PATH, specific_date_str)  # Use specific date folder in default path
 
             filename = save_email(item, save_path, special_case)
             logs.append(f"Saved: {filename} to {save_path}")
