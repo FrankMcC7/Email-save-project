@@ -138,7 +138,7 @@ def find_path_for_sender(sender, subject, sender_path_table):
         if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
             return row['save_path'], row['special_case'], False
 
-    if not rows.empty:
+    if not rows.empty():
         return rows.iloc[0]['save_path'], rows.iloc[0]['special_case'], False
 
     return None, None, False
@@ -170,10 +170,16 @@ def save_email(item, save_path, special_case):
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     
-    if special_case.lower() == 'yes' and item.Attachments.Count > 0:
+    valid_extensions = ('.xlsx', '.xls', '.csv', '.pdf', '.doc', '.docx')
+    if special_case and special_case.lower() == 'yes' and item.Attachments.Count > 0:
         for attachment in item.Attachments:
-            filename = f"{sanitize_filename(attachment.Filename)}.msg"
-            break
+            # Only consider attachments with specific file types
+            if attachment.FileName.lower().endswith(valid_extensions):
+                filename = f"{sanitize_filename(attachment.Filename)}.msg"
+                break
+        else:
+            # If no valid attachment is found, fallback to using the subject
+            filename = f"{sanitize_filename(item.Subject)}.msg"
     else:
         filename = f"{sanitize_filename(item.Subject)}.msg"
 
@@ -199,15 +205,6 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
             base_path, special_case, is_keyword_path = find_path_for_sender(sender_email, item.Subject, sender_path_table)
             if base_path:
                 save_path = os.path.join(base_path, str(year), month if month else '')
-                if is_keyword_path and item.Attachments.Count == 0:
-                    logs.append(f"Skipping email with Subject '{item.Subject}': No attachment found for keyword path.")
-                    failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                    break
-                if is_keyword_path:
-                    year = extract_year_for_keywords(item.Subject) or default_year
-                    save_path = os.path.join(base_path, str(year), month if month else '')
-                else:
-                    save_path = os.path.join(base_path, str(year), month if month else '')
             else:
                 save_path = os.path.join(DEFAULT_SAVE_PATH, specific_date_str)
 
@@ -270,7 +267,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
         email_logs, email_failed_emails = process_email(item, sender_path_table, default_year, specific_date_str)
         logs.extend(email_logs)
         failed_emails.extend(email_failed_emails)
-        if any('default' in log for log in email_logs):
+        if any(DEFAULT_SAVE_PATH in log for log in email_logs):
             saved_default += 1
         else:
             saved_actual += 1
