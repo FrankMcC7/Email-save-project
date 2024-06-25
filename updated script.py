@@ -8,7 +8,6 @@ import nest_asyncio
 import json
 from flask import Flask, render_template, request, redirect, url_for
 from flask_socketio import SocketIO
-from threading import Thread
 import openpyxl
 
 # Apply nest_asyncio to allow nested event loops
@@ -135,155 +134,156 @@ def find_path_for_sender(sender, subject, sender_path_table):
             if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
                 return row['save_path'], row['keyword_path'], row['keywords']
     if not rows.empty:
-        row = rows.iloc[0]
+        row = rows.iloc(0)
         return row['save_path'], row['keyword_path'], row['keywords']
     return None, None, None
 
 def save_emails_from_senders_on_date(email_address, specific_date_str, sender_path_table, default_year):
     logs = []
     pythoncom.CoInitialize()
-    specific_date = datetime.datetime.strptime(specific_date_str, '%Y-%m-%d').date()
-    outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
-    inbox = None
+    try:
+        specific_date = datetime.datetime.strptime(specific_date_str, '%Y-%m-%d').date()
+        outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+        inbox = None
 
-    for store in outlook.Stores:
-        if store.DisplayName.lower() == email_address.lower() or store.ExchangeStoreType == 3:
-            try:
-                root_folder = store.GetRootFolder()
-                for folder in root_folder.Folders:
-                    if folder.Name.lower() == "inbox":
-                        inbox = folder
+        for store in outlook.Stores:
+            if store.DisplayName.lower() == email_address.lower() or store.ExchangeStoreType == 3:
+                try:
+                    root_folder = store.GetRootFolder()
+                    for folder in root_folder.Folders:
+                        if folder.Name.lower() == "inbox":
+                            inbox = folder
+                            break
+                    if inbox is not None:
                         break
-                if inbox is not None:
-                    break
-            except AttributeError as e:
-                logs.append(f"Error accessing inbox: {str(e)}")
-                continue
-
-    if inbox is None:
-        logs.append(f"No Inbox found for the account with the email address: {email_address}")
-        pythoncom.CoUninitialize()
-        with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
-            for log in logs:
-                f.write(f"{log}\n")
-        return
-
-    items = inbox.Items
-    items.Sort("[ReceivedTime]", True)
-    items = items.Restrict(f"[ReceivedTime] >= '{specific_date.strftime('%m/%d/%Y')} 00:00 AM' AND [ReceivedTime] <= '{specific_date.strftime('%m/%d/%Y')} 11:59 PM'")
-
-    total_emails = 0
-    saved_default = 0
-    saved_actual = 0
-    not_saved = 0
-    failed_emails = []
-
-    max_retries = 3
-
-    for item in items:
-        total_emails += 1
-        retries = 0
-        processed = False
-
-        if hasattr(item, 'SenderEmailAddress') or hasattr(item, 'Sender'):
-            sender_email = item.SenderEmailAddress.lower() if hasattr(item, 'SenderEmailAddress') else item.Sender.Address.lower()
-            save_path, keyword_path, keywords = find_path_for_sender(sender_email, item.Subject, sender_path_table)
-
-        while retries < max_retries and not processed:
-            try:
-                if not sender_email:
-                    logs.append(f"Error: Email item has no sender address.")
-                    failed_emails.append({'email_address': 'Unknown', 'subject': item.Subject})
-                    not_saved += 1
-                    break
-
-                if not save_path:
-                    year, month = extract_year_and_month(item.Subject, default_year)
-                    year_month_path = os.path.join(DEFAULT_SAVE_PATH, sender_email, year, month if month else "")
-                    if not os.path.exists(year_month_path):
-                        os.makedirs(year_month_path)
-                    subject = sanitize_filename(item.Subject)
-                    filename = f"{subject}.msg"
-                    try:
-                        item.SaveAs(os.path.join(year_month_path, filename), 3)
-                        logs.append(f"Saved: {filename} to {year_month_path}")
-                        saved_default += 1
-                        processed = True
-                    except Exception as save_err:
-                        logs.append(f"Failed to save email to default path: {str(save_err)}")
-                        failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                        not_saved += 1
+                except AttributeError as e:
+                    logs.append(f"Error accessing inbox: {str(e)}")
                     continue
 
-                keywords_list = [kw.strip().lower() for kw in keywords.split(';')] if keywords else []
-                keyword_matched = any(keyword in item.Subject.lower() for keyword in keywords_list)
+        if inbox is None:
+            logs.append(f"No Inbox found for the account with the email address: {email_address}")
+            with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
+                for log in logs:
+                    f.write(f"{log}\n")
+            return
 
-                if not keyword_matched and item.Attachments.Count > 0:
-                    for attachment in item.Attachments:
-                        if any(keyword in attachment.FileName.lower() for keyword in keywords_list):
-                            keyword_matched = True
-                            break
+        items = inbox.Items
+        items.Sort("[ReceivedTime]", True)
+        items = items.Restrict(f"[ReceivedTime] >= '{specific_date.strftime('%m/%d/%Y')} 00:00 AM' AND [ReceivedTime] <= '{specific_date.strftime('%m/%d/%Y')} 11:59 PM'")
 
-                if keyword_matched:
-                    subject = sanitize_filename(item.Subject)
-                    filename = f"{subject}_{specific_date_str}.msg"
-                    try:
-                        item.SaveAs(os.path.join(keyword_path, filename), 3)
-                        logs.append(f"Saved keyword case: {filename} to {keyword_path}")
-                        saved_actual += 1
-                        processed = True
-                    except Exception as save_err:
-                        logs.append(f"Failed to save keyword case email: {str(save_err)}")
+        total_emails = 0
+        saved_default = 0
+        saved_actual = 0
+        not_saved = 0
+        failed_emails = []
+
+        max_retries = 3
+
+        for item in items:
+            total_emails += 1
+            retries = 0
+            processed = False
+
+            if hasattr(item, 'SenderEmailAddress') or hasattr(item, 'Sender'):
+                sender_email = item.SenderEmailAddress.lower() if hasattr(item, 'SenderEmailAddress') else item.Sender.Address.lower()
+                save_path, keyword_path, keywords = find_path_for_sender(sender_email, item.Subject, sender_path_table)
+
+            while retries < max_retries and not processed:
+                try:
+                    if not sender_email:
+                        logs.append(f"Error: Email item has no sender address.")
+                        failed_emails.append({'email_address': 'Unknown', 'subject': item.Subject})
+                        not_saved += 1
+                        break
+
+                    if not save_path:
+                        year, month = extract_year_and_month(item.Subject, default_year)
+                        year_month_path = os.path.join(DEFAULT_SAVE_PATH, sender_email, year, month if month else "")
+                        if not os.path.exists(year_month_path):
+                            os.makedirs(year_month_path)
+                        subject = sanitize_filename(item.Subject)
+                        filename = f"{subject}.msg"
+                        try:
+                            item.SaveAs(os.path.join(year_month_path, filename), 3)
+                            logs.append(f"Saved: {filename} to {year_month_path}")
+                            saved_default += 1
+                            processed = True
+                        except Exception as save_err:
+                            logs.append(f"Failed to save email to default path: {str(save_err)}")
+                            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+                            not_saved += 1
+                        continue
+
+                    keywords_list = [kw.strip().lower() for kw in keywords.split(';')] if keywords else []
+                    keyword_matched = any(keyword in item.Subject.lower() for keyword in keywords_list)
+
+                    if not keyword_matched and item.Attachments.Count > 0:
+                        for attachment in item.Attachments:
+                            if any(keyword in attachment.FileName.lower() for keyword in keywords_list):
+                                keyword_matched = True
+                                break
+
+                    if keyword_matched:
+                        subject = sanitize_filename(item.Subject)
+                        filename = f"{subject}_{specific_date_str}.msg"
+                        try:
+                            item.SaveAs(os.path.join(keyword_path, filename), 3)
+                            logs.append(f"Saved keyword case: {filename} to {keyword_path}")
+                            saved_actual += 1
+                            processed = True
+                        except Exception as save_err:
+                            logs.append(f"Failed to save keyword case email: {str(save_err)}")
+                            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+                            not_saved += 1
+                    else:
+                        year, month = extract_year_and_month(item.Subject, default_year)
+                        year_month_path = os.path.join(save_path, year, month if month else "")
+                        if not os.path.exists(year_month_path):
+                            os.makedirs(year_month_path)
+                        subject = sanitize_filename(item.Subject)
+                        filename = f"{subject}.msg"
+                        try:
+                            item.SaveAs(os.path.join(year_month_path, filename), 3)
+                            logs.append(f"Saved: {filename} to {year_month_path}")
+                            saved_actual += 1
+                            processed = True
+                        except Exception as save_err:
+                            logs.append(f"Failed to save email: {str(save_err)}")
+                            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+                            not_saved += 1
+
+                except pythoncom.com_error as com_err:
+                    error_code, _, error_message, _ = com_err.args
+                    logs.append(f"COM Error handling email with subject '{item.Subject}': {error_message} (Code: {error_code})")
+                    retries += 1
+                    if retries >= max_retries:
+                        logs.append(f"Failed to save email '{item.Subject}' after {max_retries} retries.")
                         failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
                         not_saved += 1
-                else:
-                    year, month = extract_year_and_month(item.Subject, default_year)
-                    year_month_path = os.path.join(save_path, year, month if month else "")
-                    if not os.path.exists(year_month_path):
-                        os.makedirs(year_month_path)
-                    subject = sanitize_filename(item.Subject)
-                    filename = f"{subject}.msg"
-                    try:
-                        item.SaveAs(os.path.join(year_month_path, filename), 3)
-                        logs.append(f"Saved: {filename} to {year_month_path}")
-                        saved_actual += 1
-                        processed = True
-                    except Exception as save_err:
-                        logs.append(f"Failed to save email: {str(save_err)}")
-                        failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                        not_saved += 1
-
-            except pythoncom.com_error as com_err:
-                error_code, _, error_message, _ = com_err.args
-                logs.append(f"COM Error handling email with subject '{item.Subject}': {error_message} (Code: {error_code})")
-                retries += 1
-                if retries >= max_retries:
-                    logs.append(f"Failed to save email '{item.Subject}' after {max_retries} retries.")
+                except Exception as e:
+                    logs.append(f"Error handling email with subject '{item.Subject}': {str(e)}")
                     failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
                     not_saved += 1
-            except Exception as e:
-                logs.append(f"Error handling email with subject '{item.Subject}': {str(e)}")
-                failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                not_saved += 1
-                retries = max_retries
+                    retries = max_retries
 
-        if not processed:
-            year, month = extract_year_and_month(item.Subject, default_year)
-            year_month_path = os.path.join(DEFAULT_SAVE_PATH, sender_email, year, month if month else "")
-            if not os.path.exists(year_month_path):
-                os.makedirs(year_month_path)
-            subject = sanitize_filename(item.Subject)
-            filename = f"{subject}.msg"
-            try:
-                item.SaveAs(os.path.join(year_month_path, filename), 3)
-                logs.append(f"Saved: {filename} to {year_month_path}")
-                saved_default += 1
-            except Exception as save_err:
-                logs.append(f"Failed to save email to default path: {str(save_err)}")
-                failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                not_saved += 1
+            if not processed:
+                year, month = extract_year_and_month(item.Subject, default_year)
+                year_month_path = os.path.join(DEFAULT_SAVE_PATH, sender_email, year, month if month else "")
+                if not os.path.exists(year_month_path):
+                    os.makedirs(year_month_path)
+                subject = sanitize_filename(item.Subject)
+                filename = f"{subject}.msg"
+                try:
+                    item.SaveAs(os.path.join(year_month_path, filename), 3)
+                    logs.append(f"Saved: {filename} to {year_month_path}")
+                    saved_default += 1
+                except Exception as save_err:
+                    logs.append(f"Failed to save email to default path: {str(save_err)}")
+                    failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+                    not_saved += 1
+    finally:
+        pythoncom.CoUninitialize()
 
-    pythoncom.CoUninitialize()
     with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
         for log in logs:
             f.write(f"{log}\n")
@@ -333,5 +333,4 @@ if __name__ == '__main__':
     if not os.path.exists(DEFAULT_SAVE_PATH):
         os.makedirs(DEFAULT_SAVE_PATH)
     
-    thread = Thread(target=run_app)
-    thread.start()
+    run_app()
