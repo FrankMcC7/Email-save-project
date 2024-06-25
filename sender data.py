@@ -5,6 +5,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
     inbox = None
 
+    # Find the inbox for the specified email address
     for store in outlook.Stores:
         if store.DisplayName.lower() == email_address.lower() or store.ExchangeStoreType == 3:
             try:
@@ -27,6 +28,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                 f.write(f"{log}\n")
         return
 
+    # Retrieve emails within the specified date range
     items = inbox.Items
     items.Sort("[ReceivedTime]", True)
     items = items.Restrict(f"[ReceivedTime] >= '{specific_date.strftime('%m/%d/%Y')} 00:00 AM' AND [ReceivedTime] <= '{specific_date.strftime('%m/%d/%Y')} 11:59 PM'")
@@ -37,11 +39,13 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     not_saved = 0
     failed_emails = []
 
+    # Process each email
     for item in items:
         total_emails += 1
         retries = 3
         processed = False
 
+        # Get sender email address
         if hasattr(item, 'SenderEmailAddress') or hasattr(item, 'Sender'):
             sender_email = item.SenderEmailAddress.lower() if hasattr(item, 'SenderEmailAddress') else item.Sender.Address.lower()
 
@@ -71,7 +75,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                         logs.append(f"Failed to save email to default path: {str(save_err)}")
                         failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
                         not_saved += 1
-                    continue
+                    break
 
                 matched_row = None
                 if len(sender_rows) > 1:
@@ -137,6 +141,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                     else:
                         logs.append(f"Skipping email with subject '{item.Subject}': No attachments for keyword path.")
                         not_saved += 1
+                break
 
             except pythoncom.com_error as com_err:
                 error_code, _, error_message, _ = com_err.args
