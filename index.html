@@ -3,39 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Email Processing</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bulma/0.9.3/css/bulma.min.css">
+    <title>Email Archiver</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
 </head>
 <body>
-    <section class="section">
-        <div class="container">
-            <h1 class="title">Email Processing</h1>
-            <form action="/" method="post" enctype="multipart/form-data">
-                <div class="field">
-                    <label class="label">Date (YYYY-MM-DD)</label>
-                    <div class="control">
-                        <input class="input" type="date" name="date" required>
-                    </div>
-                </div>
-                <div class="field">
-                    <label class="label">Default Year (YYYY)</label>
-                    <div class="control">
-                        <input class="input" type="text" name="default_year" pattern="\d{4}" required>
-                    </div>
-                </div>
-                <div class="field">
-                    <label class="label">CSV File</label>
-                    <div class="control">
-                        <input class="input" type="file" name="file" accept=".csv" required>
-                    </div>
-                </div>
-                <div class="field">
-                    <div class="control">
-                        <button class="button is-link" type="submit">Submit</button>
-                    </div>
-                </div>
-            </form>
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        <a class="navbar-brand" href="#">Email Archiver</a>
+        <div class="collapse navbar-collapse">
+            <ul class="navbar-nav ml-auto">
+                <li class="nav-item">
+                    <a class="nav-link" href="/">Home</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="/results">Results</a>
+                </li>
+            </ul>
         </div>
-    </section>
+    </nav>
+    <div class="container mt-5">
+        <h1 class="text-center">Email Archiver</h1>
+        <form action="/" method="POST" enctype="multipart/form-data" class="mt-4">
+            <div class="form-group">
+                <label for="date">Date (YYYY-MM-DD):</label>
+                <input type="text" class="form-control" id="date" name="date" placeholder="Enter date in YYYY-MM-DD format" required>
+            </div>
+            <div class="form-group">
+                <label for="default_year">Default Year (YYYY):</label>
+                <input type="text" class="form-control" id="default_year" name="default_year" placeholder="Enter default year in YYYY format" required>
+            </div>
+            <div class="form-group">
+                <label for="file">CSV File:</label>
+                <input type="file" class="form-control-file" id="file" name="file" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">Submit</button>
+        </form>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="mt-4">
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+    </div>
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.4/dist/umd/popper.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
 </body>
 </html>
