@@ -106,31 +106,6 @@ def extract_year_and_month(text, default_year=None):
 
     return default_year, None
 
-def extract_year_for_keywords(text):
-    year_pattern = re.compile(r"\b(20\d{2})\b")
-    match = year_pattern.search(text)
-    if match:
-        return match.group(1)
-    return None
-
-def find_path_for_sender(sender, subject, sender_path_table):
-    rows = sender_path_table[sender_path_table['sender'].str.lower() == sender.lower()]
-    for _, row in rows.iterrows():
-        if row['special_case'] == 'Yes':
-            if row['coper_name'].lower() in subject.lower():
-                return row['keyword_path'], True, True
-        else:
-            keywords = str(row.get('keywords', '')).split(';')
-            for keyword in keywords:
-                if keyword.lower() in subject.lower():
-                    return row['keyword_path'], True, False
-    for _, row in rows.iterrows():
-        if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
-            return row['save_path'], False, row['special_case'] == 'Yes'
-    if not rows.empty:
-        return rows.iloc[0]['save_path'], False, rows.iloc[0]['special_case'] == 'Yes'
-    return None, False, False
-
 def update_excel_summary(date_str, total_emails, saved_default, saved_actual, not_saved, failed_emails):
     if os.path.exists(EXCEL_FILE_PATH):
         workbook = openpyxl.load_workbook(EXCEL_FILE_PATH)
@@ -252,76 +227,53 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
                         not_saved += 1
                         break
 
-                keyword_matched = False
-                for keyword in keywords:
-                    if keyword.lower() in item.Subject.lower():
-                        keyword_matched = True
-                        break
+                keyword_matched = any(keyword.lower() in item.Subject.lower() for keyword in keywords)
 
                 if coper_name in item.Subject.lower():
-                    if keyword_matched:
-                        for attachment in item.Attachments:
-                            attachment_title = sanitize_filename(attachment.FileName).rsplit('.', 1)[0]
-                            filename = f"{attachment_title}.msg"
-                            try:
-                                item.SaveAs(os.path.join(base_path, filename), 3)
-                                logs.append(f"Saved keyword case: {filename} to {base_path}")
-                                saved_actual += 1
-                                processed = True
-                            except Exception as save_err:
-                                logs.append(f"Failed to save keyword case email: {str(save_err)}")
-                                failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                                not_saved += 1
-                        break
-                    else:
-                        year, month = extract_year_and_month(item.Subject, default_year)
-                        year_month_path = os.path.join(base_path, year, month if month else "")
-                        if not os.path.exists(year_month_path):
-                            os.makedirs(year_month_path)
-                        subject = sanitize_filename(item.Subject)
-                        filename = f"{subject}.msg"
+                    for attachment in item.Attachments:
+                        attachment_title = sanitize_filename(attachment.FileName).rsplit('.', 1)[0]
+                        filename = f"{attachment_title}.msg"
                         try:
-                            item.SaveAs(os.path.join(year_month_path, filename), 3)
-                            logs.append(f"Saved: {filename} to {year_month_path}")
+                            item.SaveAs(os.path.join(base_path, filename), 3)
+                            logs.append(f"Saved email with coper_name match: {filename} to {base_path}")
                             saved_actual += 1
                             processed = True
                         except Exception as save_err:
                             logs.append(f"Failed to save email: {str(save_err)}")
                             failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
                             not_saved += 1
-                        break
+                    break
+                elif keyword_matched:
+                    for attachment in item.Attachments:
+                        attachment_title = sanitize_filename(attachment.FileName).rsplit('.', 1)[0]
+                        filename = f"{attachment_title}.msg"
+                        try:
+                            item.SaveAs(os.path.join(base_path, filename), 3)
+                            logs.append(f"Saved keyword case: {filename} to {base_path}")
+                            saved_actual += 1
+                            processed = True
+                        except Exception as save_err:
+                            logs.append(f"Failed to save keyword case email: {str(save_err)}")
+                            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+                            not_saved += 1
+                    break
                 else:
-                    if keyword_matched:
-                        for attachment in item.Attachments:
-                            attachment_title = sanitize_filename(attachment.FileName).rsplit('.', 1)[0]
-                            filename = f"{attachment_title}.msg"
-                            try:
-                                item.SaveAs(os.path.join(base_path, filename), 3)
-                                logs.append(f"Saved keyword case: {filename} to {base_path}")
-                                saved_actual += 1
-                                processed = True
-                            except Exception as save_err:
-                                logs.append(f"Failed to save keyword case email: {str(save_err)}")
-                                failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                                not_saved += 1
-                        break
-                    else:
-                        year, month = extract_year_and_month(item.Subject, default_year)
-                        year_month_path = os.path.join(base_path, year, month if month else "")
-                        if not os.path.exists(year_month_path):
-                            os.makedirs(year_month_path)
-                        subject = sanitize_filename(item.Subject)
-                        filename = f"{subject}.msg"
-                        try:
-                            item.SaveAs(os.path.join(year_month_path, filename), 3)
-                            logs.append(f"Saved: {filename} to {year_month_path}")
-                            saved_actual += 1
-                            processed = True
-                        except Exception as save_err:
-                            logs.append(f"Failed to save email: {str(save_err)}")
-                            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-                            not_saved += 1
-                        break
+                    year, month = extract_year_and_month(item.Subject, default_year)
+                    year_month_path = os.path.join(base_path, year, month if month else "")
+                    if not os.path.exists(year_month_path):
+                        os.makedirs(year_month_path)
+                    subject = sanitize_filename(item.Subject)
+                    filename = f"{subject}.msg"
+                    try:
+                        item.SaveAs(os.path.join(year_month_path, filename), 3)
+                        logs.append(f"Saved: {filename} to {year_month_path}")
+                        saved_actual += 1
+                        processed = True
+                    except Exception as save_err:
+                        logs.append(f"Failed to save email: {str(save_err)}")
+                        failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+                        not_saved += 1
+                    break
 
             except pythoncom.com_error as com_err:
                 error_code, _, error_message, _ = com_err.args
