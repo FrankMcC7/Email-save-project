@@ -132,16 +132,16 @@ def find_path_for_sender(sender, subject, sender_path_table):
         keywords = str(row.get('keywords', '')).split(';')
         for keyword in keywords:
             if keyword.lower() in subject.lower():
-                return row['keyword_path'], True
+                return row['keyword_path'], row['special_case'], True
 
     for _, row in rows.iterrows():
         if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
-            return row['save_path'], False
+            return row['save_path'], row['special_case'], False
 
     if not rows.empty:
-        return rows.iloc[0]['save_path'], False
+        return rows.iloc[0]['save_path'], rows.iloc[0]['special_case'], False
 
-    return None, False
+    return None, None, False
 
 def update_excel_summary(date_str, total_emails, saved_default, saved_actual, not_saved, failed_emails):
     if os.path.exists(EXCEL_FILE_PATH):
@@ -166,14 +166,21 @@ def update_excel_summary(date_str, total_emails, saved_default, saved_actual, no
 
     workbook.save(EXCEL_FILE_PATH)
 
-def save_email(item, save_path):
+def save_email(item, save_path, special_case):
     if not os.path.exists(save_path):
         os.makedirs(save_path)
-    filename = f"{sanitize_filename(item.Subject)}.msg"
+    
+    if special_case.lower() == 'yes' and item.Attachments.Count > 0:
+        for attachment in item.Attachments:
+            filename = f"{sanitize_filename(attachment.Filename)}.msg"
+            break
+    else:
+        filename = f"{sanitize_filename(item.Subject)}.msg"
+
     item.SaveAs(os.path.join(save_path, filename), 3)
     return filename
 
-def process_email(item, sender_path_table, default_year):
+def process_email(item, sender_path_table, default_year, specific_date_str):
     logs = []
     failed_emails = []
     retries = 3
@@ -189,7 +196,7 @@ def process_email(item, sender_path_table, default_year):
                         break
             if not year:
                 year = default_year
-            base_path, is_keyword_path = find_path_for_sender(sender_email, item.Subject, sender_path_table)
+            base_path, special_case, is_keyword_path = find_path_for_sender(sender_email, item.Subject, sender_path_table)
             if base_path:
                 save_path = os.path.join(base_path, str(year), month if month else '')
                 if is_keyword_path and item.Attachments.Count == 0:
@@ -198,13 +205,13 @@ def process_email(item, sender_path_table, default_year):
                     break
                 if is_keyword_path:
                     year = extract_year_for_keywords(item.Subject) or default_year
-                    save_path = base_path
+                    save_path = os.path.join(base_path, str(year), month if month else '')
                 else:
                     save_path = os.path.join(base_path, str(year), month if month else '')
             else:
-                save_path = os.path.join(DEFAULT_SAVE_PATH, str(year), month if month else '')
+                save_path = os.path.join(DEFAULT_SAVE_PATH, specific_date_str)
 
-            filename = save_email(item, save_path)
+            filename = save_email(item, save_path, special_case)
             logs.append(f"Saved: {filename} to {save_path}")
             processed = True
         except pythoncom.com_error as com_err:
@@ -260,7 +267,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
 
     for item in items:
         total_emails += 1
-        email_logs, email_failed_emails = process_email(item, sender_path_table, default_year)
+        email_logs, email_failed_emails = process_email(item, sender_path_table, default_year, specific_date_str)
         logs.extend(email_logs)
         failed_emails.extend(email_failed_emails)
         if any('default' in log for log in email_logs):
