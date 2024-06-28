@@ -27,7 +27,7 @@ LOG_FILE_PATH = config.get('LOG_FILE_PATH', 'logs.txt')
 EXCEL_FILE_PATH = config.get('EXCEL_FILE_PATH', 'email_summary.xlsx')
 
 def sanitize_filename(filename):
-    allowable_chars = re.compile(r'[^a-zA-Z0-9\s\-\_\.\+\%\(\)]')
+    allowable_chars = re.compile(r'[^a-zA-Z0-9\s\-\_\.\+\%\(\)\|]')
     sanitized = allowable_chars.sub('_', filename)
     sanitized = re.sub(r'_+', '_', sanitized)
     sanitized = sanitized.replace(' ', '_')
