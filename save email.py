@@ -59,3 +59,37 @@ def index():
 
     return render_template('index.html')
 
+
+
+def save_email(item, save_path, special_case):
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    
+    valid_extensions = ('.xlsx', '.xls', '.csv', '.pdf', '.doc', '.docx')
+    if special_case and special_case.lower() == 'yes' and item.Attachments.Count > 0:
+        for attachment in item.Attachments:
+            # Only consider attachments with specific file types
+            if attachment.FileName.lower().endswith(valid_extensions):
+                filename_base = sanitize_filename(os.path.splitext(attachment.Filename)[0])  # Remove extension
+                filename = f"{filename_base}.msg"
+                break
+        else:
+            # If no valid attachment is found, fallback to using the subject
+            filename_base = sanitize_filename(item.Subject)
+            filename = f"{filename_base}.msg"
+    else:
+        filename_base = sanitize_filename(item.Subject)
+        filename = f"{filename_base}.msg"
+
+    # Ensure the combined length of the save path and filename does not exceed 255 characters
+    extension = ".msg"
+    max_filename_length = 255 - len(save_path) - len(extension) - 1  # -1 for the path separator
+    if len(filename_base) > max_filename_length:
+        filename_base = filename_base[:max_filename_length]
+
+    filename = f"{filename_base}{extension}"
+    full_path = os.path.join(save_path, filename)
+
+    item.SaveAs(full_path, 3)
+    return filename
+
