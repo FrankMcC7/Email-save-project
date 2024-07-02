@@ -25,3 +25,37 @@ def save_email(item, save_path, special_case):
 
     item.SaveAs(full_path, 3)
     return filename
+
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        date_str = request.form['date']
+        default_year = request.form['default_year']
+        file = request.files['file']
+        if file and date_str and default_year:
+            try:
+                datetime.datetime.strptime(date_str, '%Y-%m-%d')
+            except ValueError:
+                flash("Invalid date format. Please enter the date in YYYY-MM-DD format.", 'error')
+                return redirect(url_for('index'))
+
+            if not (default_year.isdigit() and len(default_year) == 4):
+                flash("Invalid year format. Please enter the year in YYYY format.", 'error')
+                return redirect(url_for('index'))
+
+            filename = file.filename
+            filepath = os.path.join('uploads', filename)
+            file.save(filepath)
+            
+            try:
+                sender_path_table = pd.read_csv(filepath, encoding='utf-8')
+            except UnicodeDecodeError:
+                sender_path_table = pd.read_csv(filepath, encoding='latin1')
+
+            account_email_address = "hf_data@bofa.com"
+            socketio.start_background_task(save_emails_from_senders_on_date, account_email_address, date_str, sender_path_table, default_year)
+            return redirect(url_for('results'))
+
+    return render_template('index.html')
+
