@@ -1,3 +1,6 @@
+pip install PyMuPDF Pillow pytesseract pandas openpyxl
+
+
 import fitz  # PyMuPDF
 from PIL import Image
 import pytesseract
