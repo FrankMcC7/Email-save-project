@@ -1,9 +1,6 @@
-pip install PyMuPDF Pillow pytesseract pandas openpyxl
-
-
 import fitz  # PyMuPDF
 from PIL import Image
-import pytesseract
+import easyocr
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
@@ -18,13 +15,17 @@ def pdf_page_to_image(doc, page_num, zoom=2):
     img = Image.open(io.BytesIO(pix.tobytes()))
     return img
 
-# Function to extract text from an image using OCR
-def extract_text_from_image(image):
-    text = pytesseract.image_to_string(image)
-    return text
+# Function to extract text from an image using EasyOCR
+def extract_text_from_image(image, reader):
+    image_bytes = io.BytesIO()
+    image.save(image_bytes, format='PNG')
+    image_bytes.seek(0)
+    text = reader.readtext(image_bytes, detail=0, paragraph=True)
+    return ' '.join(text)
 
 # Function to extract text from PDF pages
 def extract_text_from_pdf(pdf_path, password=None):
+    reader = easyocr.Reader(['en'])  # Initialize EasyOCR reader with English language
     doc = fitz.open(pdf_path)
     
     if doc.needs_pass:
@@ -35,7 +36,7 @@ def extract_text_from_pdf(pdf_path, password=None):
     data = []
     for page_num in range(len(doc)):
         img = pdf_page_to_image(doc, page_num)
-        text = extract_text_from_image(img)
+        text = extract_text_from_image(img, reader)
         data.append(text)
     
     return data
