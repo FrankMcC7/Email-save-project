@@ -8,8 +8,8 @@ password = 'your_password'
 site_url = 'url'
 parent_list_name = 'list'
 child_list_name = 'Child List Name'  # Replace with the actual child list name
-lookup_field_name = 'ParentLookupField'  # Replace with the actual lookup field name in the child list
-parent_id = 1  # Replace with the ID of the parent item you are interested in
+lookup_field_name = 'id'  # Replace with the actual lookup field name in the child list
+parent_id = '1'  # Replace with the ID of the parent item you are interested in
 
 # Create a session
 session = requests.Session()
@@ -24,8 +24,11 @@ if response.status_code == 200:
 else:
     print("Failed to retrieve site information:", response.text)
 
+# Encode the parent ID to handle special characters
+encoded_parent_id = parent_id.replace(':', '%3A')
+
 # Get child list items for the specified parent item
-child_list_info_url = f"{site_url}/_api/web/lists/GetByTitle('{child_list_name}')/items?$filter={lookup_field_name}Id eq {parent_id}"
+child_list_info_url = f"{site_url}/_api/web/lists/GetByTitle('{child_list_name}')/items?$filter={lookup_field_name} eq '{encoded_parent_id}'"
 response = session.get(child_list_info_url, headers={"Accept": "application/json;odata=verbose"})
 if response.status_code == 200:
     child_items = response.json()['d']['results']
