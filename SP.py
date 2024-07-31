@@ -1,3 +1,5 @@
+pip install Office365-REST-Python-Client
+
 from office365.sharepoint.client_context import ClientContext
 from office365.runtime.auth.client_credential import ClientCredential
 import pandas as pd
