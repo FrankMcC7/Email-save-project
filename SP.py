@@ -1,5 +1,3 @@
-pip install requests requests_ntlm
-
 import requests
 from requests_ntlm import HttpNtlmAuth
 import pandas as pd
@@ -8,7 +6,10 @@ import pandas as pd
 username = 'your_username'
 password = 'your_password'
 site_url = 'url'
-list_name = 'item name'
+list_name = 'list'
+
+# Specify the internal name of the first column (e.g., 'Title', 'ID', etc.)
+first_column_name = 'Title'  # Replace with the actual internal name of the first column
 
 # Create a session
 session = requests.Session()
@@ -36,17 +37,10 @@ if response.status_code == 200:
     response = session.get(items_url, headers={"Accept": "application/json;odata=verbose"})
     if response.status_code == 200:
         items = response.json()['d']['results']
+        print(f"First 5 records from the '{first_column_name}' column:")
         for item in items:
-            print(item)
+            print(item[first_column_name])
     else:
         print("Failed to retrieve list items:", response.text)
 else:
     print("Failed to retrieve list information:", response.text)
-
-# Verify list name
-response = input(f"Is the SharePoint list '{list_name}' correct? (yes/no): ").strip().lower()
-if response != 'yes':
-    print("Please verify your SharePoint site URL and list name.")
-else:
-    print("Proceeding with the update...")
-    # Your update code goes here
