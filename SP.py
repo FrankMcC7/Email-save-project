@@ -1,40 +1,50 @@
-pip install Office365-REST-Python-Client
+pip install requests requests_ntlm
 
-from office365.sharepoint.client_context import ClientContext
-from office365.runtime.auth.client_credential import ClientCredential
+import requests
+from requests_ntlm import HttpNtlmAuth
 import pandas as pd
 
-# Authentication
+# Authentication details
+username = 'your_username'
+password = 'your_password'
 site_url = 'url'
-client_id = 'your_client_id'  # Typically provided by your IT department
-client_secret = 'your_client_secret'  # Typically provided by your IT department
+list_name = 'item name'
 
-# Connect to SharePoint
-ctx = ClientContext(site_url).with_credentials(ClientCredential(client_id, client_secret))
+# Create a session
+session = requests.Session()
+session.auth = HttpNtlmAuth(username, password)
 
-# Retrieve and display site information
-web = ctx.web
-ctx.load(web)
-ctx.execute_query()
-print("Site Title:", web.properties['Title'])
-print("Site URL:", site_url)
+# Get site information
+site_info_url = f"{site_url}/_api/web"
+response = session.get(site_info_url, headers={"Accept": "application/json;odata=verbose"})
+if response.status_code == 200:
+    site_info = response.json()
+    print("Site Title:", site_info['d']['Title'])
+else:
+    print("Failed to retrieve site information:", response.text)
 
-# List name
-base_list_name = 'list name'
+# Get list information
+list_info_url = f"{site_url}/_api/web/lists/GetByTitle('{list_name}')"
+response = session.get(list_info_url, headers={"Accept": "application/json;odata=verbose"})
+if response.status_code == 200:
+    list_info = response.json()
+    print("List Title:", list_info['d']['Title'])
+    print("List Description:", list_info['d']['Description'])
 
-# Retrieve and display list information
-target_list = ctx.web.lists.get_by_title(base_list_name)
-ctx.load(target_list)
-ctx.execute_query()
-print("List Title:", target_list.properties['Title'])
-
-# Load sample items from the list
-items = target_list.items.top(5).get().execute_query()
-for item in items:
-    print(item.properties)
+    # Get sample items from the list
+    items_url = f"{list_info_url}/items?$top=5"
+    response = session.get(items_url, headers={"Accept": "application/json;odata=verbose"})
+    if response.status_code == 200:
+        items = response.json()['d']['results']
+        for item in items:
+            print(item)
+    else:
+        print("Failed to retrieve list items:", response.text)
+else:
+    print("Failed to retrieve list information:", response.text)
 
 # Verify list name
-response = input(f"Is the SharePoint list '{base_list_name}' correct? (yes/no): ").strip().lower()
+response = input(f"Is the SharePoint list '{list_name}' correct? (yes/no): ").strip().lower()
 if response != 'yes':
     print("Please verify your SharePoint site URL and list name.")
 else:
