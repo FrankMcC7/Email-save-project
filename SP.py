@@ -1,30 +1,37 @@
-from shareplum import Site
-from shareplum import Office365
-from shareplum.site import Version
+from office365.sharepoint.client_context import ClientContext
+from office365.runtime.auth.client_credential import ClientCredential
+import pandas as pd
 
 # Authentication
-username = 'your_username'
-password = 'your_password'
-site_url = 'https://your_sharepoint_site_url'
-base_list_name = 'BaseDatabaseList'
+site_url = 'url'
+client_id = 'your_client_id'  # Typically provided by your IT department
+client_secret = 'your_client_secret'  # Typically provided by your IT department
 
 # Connect to SharePoint
-authcookie = Office365(site_url, username=username, password=password).GetCookies()
-site = Site(site_url, version=Version.v365, authcookie=authcookie)
+ctx = ClientContext(site_url).with_credentials(ClientCredential(client_id, client_secret))
 
 # Retrieve and display site information
-print("Site Title:", site.info['Title'])
+web = ctx.web
+ctx.load(web)
+ctx.execute_query()
+print("Site Title:", web.properties['Title'])
 print("Site URL:", site_url)
 
-# Retrieve and display list information
-base_list = site.List(base_list_name)
-list_info = base_list.GetListItems('All Items', rowlimit=5)  # Load a sample of 5 items
-print("List Title:", base_list_name)
-print("Sample Data from List:")
-for item in list_info:
-    print(item)
+# List name
+base_list_name = 'list name'
 
-# Check if the base list name is correct
+# Retrieve and display list information
+target_list = ctx.web.lists.get_by_title(base_list_name)
+ctx.load(target_list)
+ctx.execute_query()
+print("List Title:", target_list.properties['Title'])
+
+# Load sample items from the list
+items = target_list.items.top(5).get().execute_query()
+for item in items:
+    print(item.properties)
+
+# Verify list name
 response = input(f"Is the SharePoint list '{base_list_name}' correct? (yes/no): ").strip().lower()
 if response != 'yes':
     print("Please verify your SharePoint site URL and list name.")
