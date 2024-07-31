@@ -5,8 +5,8 @@ import pandas as pd
 # Authentication details
 username = 'your_username'
 password = 'your_password'
-site_url = 'https://sharepoint.bankofamerica.com/sites/WCQATeam/HFTransparency'
-parent_list_name = 'Hedge Fund Client Risk Disclosure Data Parent'
+site_url = 'url'
+parent_list_name = 'list'
 child_list_name = 'Child List Name'  # Replace with the actual child list name
 lookup_field_name = 'ParentLookupField'  # Replace with the actual lookup field name in the child list
 parent_id = 1  # Replace with the ID of the parent item you are interested in
