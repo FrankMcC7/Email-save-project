@@ -1,22 +1,27 @@
 import pandas as pd
 
 # Load the existing and new data files into pandas DataFrames
-existing_df = pd.read_excel('existing_file.xlsx')
-new_df = pd.read_excel('new_file.xlsx')
+try:
+    existing_df = pd.read_excel('existing_file.xlsx', engine='openpyxl')
+    new_df = pd.read_excel('new_file.xlsx', engine='openpyxl')
+    print("Files loaded successfully.")
+except Exception as e:
+    print(f"Error loading files: {e}")
+    raise
 
-# Merge the dataframes
-merged_df = pd.merge(existing_df, new_df, on='aa', suffixes=('_existing', '_new'))
+# Merge the dataframes on
+merged_df = pd.merge(existing_df, new_df, on='', suffixes=('_existing', '_new'))
 
 # List to store results of changes
 changes = []
 
 # Iterate over each row in the merged dataframe
 for index, row in merged_df.iterrows():
-    hfad_fund_coperid = row['aa']
-    row_changes = {'aa': hfad_fund_coperid}
+    hfad_fund_coperid = row['']
+    row_changes = {'': }
     
     # Check each field if it has changed
-    for col in ['aa', 'bb', 'cc', 'dd', 'ee']:
+    for col in ['', '', '', '', '']:
         existing_value = row[f'{col}_existing']
         new_value = row[f'{col}_new']
         
@@ -31,6 +36,9 @@ for index, row in merged_df.iterrows():
 changes_df = pd.DataFrame(changes)
 
 # Save the changes to a new Excel file
-changes_df.to_excel('changes_report.xlsx', index=False)
-
-print("Changes report generated: 'changes_report.xlsx'")
+try:
+    changes_df.to_excel('changes_report.xlsx', index=False)
+    print("Changes report generated: 'changes_report.xlsx'")
+except Exception as e:
+    print(f"Error saving report: {e}")
+    raise
