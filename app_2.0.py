@@ -200,13 +200,19 @@ def save_email(item, save_path, special_case):
     else:
         filename_base = sanitize_filename(item.Subject)
 
+    # Ensure the filename does not exceed the maximum length
     extension = ".msg"
+    max_filename_length = 255 - len(save_path) - len(extension) - 1
+    if len(filename_base) > max_filename_length:
+        filename_base = filename_base[:max_filename_length]
+
     filename = f"{filename_base}{extension}"
     full_path = os.path.join(save_path, filename)
 
     # Check if file already exists, if yes, add a suffix to avoid overwriting
     counter = 1
     while os.path.exists(full_path):
+        # Adjust filename if a conflict exists
         filename = f"{filename_base}_{counter}{extension}"
         full_path = os.path.join(save_path, filename)
         counter += 1
