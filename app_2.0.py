@@ -10,7 +10,6 @@ from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_socketio import SocketIO
 from threading import Thread
 import openpyxl
-from concurrent.futures import ThreadPoolExecutor
 
 # Apply nest_asyncio to allow nested event loops
 nest_asyncio.apply()
@@ -27,31 +26,29 @@ DEFAULT_SAVE_PATH = config.get('DEFAULT_SAVE_PATH', 'path_to_default_folder')
 LOG_FILE_PATH = config.get('LOG_FILE_PATH', 'logs.txt')
 EXCEL_FILE_PATH = config.get('EXCEL_FILE_PATH', 'email_summary.xlsx')
 
-# Compile regex pattern once to improve performance
-date_pattern = re.compile(r"""
-    (?i)
-    \b(January|February|March|April|May|June|July|August|September|October|November|December)\b|
-    \b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b|
-    (\d{2})[./-](\d{4})|                       # Formats like 08.2024, 08-2024
-    (\d{8})|                                  # Formats like 08312024 (MMDDYYYY)
-    (\d{6})|                                  # Formats like 083124 (MMDDYY)
-    (\d{2})[./-](\d{2})[./-](\d{4})|          # Formats like 08-31-2024, 08.31.2024
-    (\d{4})-(\d{2})-(\d{2})|                  # Formats like 2024-08-31
-    (Q[1-4])['\s]?(\d{2,4})|                  # Quarter formats like Q1 2024
-    ([1-4]Q)['\s]?(\d{2,4})|                  # Quarter formats like 1Q 2024
-    (\d{2})(\d{4})|                           # Formats like 082024 (MMYYYY)
-    (\d{4})(\d{2})                            # Formats like 202408 (YYYYMM)
-""", re.IGNORECASE | re.VERBOSE)
-
-quarter_mappings = {'Q1': '03-March', 'Q2': '06-June', 'Q3': '09-September', 'Q4': '12-December'}
-
 def sanitize_filename(filename):
     allowable_chars = re.compile(r'[^a-zA-Z0-9\s\-\_\.\+\%\(\)]')
     sanitized = allowable_chars.sub('_', filename).replace(' ', '_')
     return sanitized[:255]
 
 def extract_date_from_text(text, default_year=None):
+    date_pattern = re.compile(r"""
+        (?i)
+        \b(January|February|March|April|May|June|July|August|September|October|November|December)\b|
+        \b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b|
+        (\d{2})[./-](\d{4})|                       # Formats like 08.2024, 08-2024
+        (\d{8})|                                  # Formats like 08312024 (MMDDYYYY)
+        (\d{6})|                                  # Formats like 083124 (MMDDYY)
+        (\d{2})[./-](\d{2})[./-](\d{4})|          # Formats like 08-31-2024, 08.31.2024
+        (\d{4})-(\d{2})-(\d{2})|                  # Formats like 2024-08-31
+        (Q[1-4])['\s]?(\d{2,4})|                  # Quarter formats like Q1 2024
+        ([1-4]Q)['\s]?(\d{2,4})|                  # Quarter formats like 1Q 2024
+        (\d{2})(\d{4})|                           # Formats like 082024 (MMYYYY)
+        (\d{4})(\d{2})                            # Formats like 202408 (YYYYMM)
+    """, re.IGNORECASE | re.VERBOSE)
+
     match = date_pattern.search(text)
+
     if match:
         full_month = match.group(1)
         abbr_month = match.group(2)
@@ -110,6 +107,8 @@ def extract_date_from_text(text, default_year=None):
             except ValueError:
                 pass
 
+        quarter_mappings = {'Q1': '03-March', 'Q2': '06-June', 'Q3': '09-September', 'Q4': '12-December'}
+        
         if quarter_1 and quarter_year_1:
             quarter = quarter_mappings[quarter_1.upper()]
             year = f"20{quarter_year_1}" if len(quarter_year_1) == 2 else quarter_year_1
@@ -141,18 +140,16 @@ def extract_date_from_text(text, default_year=None):
     return default_year, None
 
 def find_save_path(sender, subject, sender_path_table):
-    sender_lower = sender.lower()
-    subject_lower = subject.lower()
-
-    rows = sender_path_table[sender_path_table['sender'].str.lower() == sender_lower]
+    rows = sender_path_table[sender_path_table['sender'].str.lower() == sender.lower()]
 
     for _, row in rows.iterrows():
-        keywords = set(str(row.get('keywords', '')).split(';'))
-        if any(keyword.lower() in subject_lower for keyword in keywords):
-            return row['keyword_path'], row['special_case'], True
+        keywords = str(row.get('keywords', '')).split(';')
+        for keyword in keywords:
+            if keyword.lower() in subject.lower():
+                return row['keyword_path'], row['special_case'], True
 
     for _, row in rows.iterrows():
-        if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject_lower:
+        if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
             return row['save_path'], row['special_case'], False
 
     if not rows.empty:
@@ -161,8 +158,6 @@ def find_save_path(sender, subject, sender_path_table):
     return None, None, False
 
 def update_excel_summary(date_str, total_emails, saved_default, saved_actual, not_saved, failed_emails):
-    import openpyxl  # Lazy load to improve initial load time
-
     if os.path.exists(EXCEL_FILE_PATH):
         workbook = openpyxl.load_workbook(EXCEL_FILE_PATH)
     else:
@@ -199,24 +194,24 @@ def save_email(item, save_path, special_case):
             filename_base = sanitize_filename(item.Subject)
     else:
         filename_base = sanitize_filename(item.Subject)
-
+    
     # Ensure the filename does not exceed the maximum length
     extension = ".msg"
     max_filename_length = 255 - len(save_path) - len(extension) - 1
     if len(filename_base) > max_filename_length:
         filename_base = filename_base[:max_filename_length]
-
+    
     filename = f"{filename_base}{extension}"
     full_path = os.path.join(save_path, filename)
-
-    # Check if file already exists, if yes, add a suffix to avoid overwriting
+    
+    # Check if a file with the same name already exists
     counter = 1
     while os.path.exists(full_path):
-        # Adjust filename if a conflict exists
+        # If it exists, add a suffix to the filename
         filename = f"{filename_base}_{counter}{extension}"
         full_path = os.path.join(save_path, filename)
         counter += 1
-
+    
     item.SaveAs(full_path, 3)
     return filename
 
@@ -226,45 +221,31 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
     retries = 3
     processed = False
 
-    try:
-        # Check if the item has a valid sender (i.e., it's an email)
-        if hasattr(item, 'SenderEmailAddress') and item.SenderEmailAddress:
-            sender_email = item.SenderEmailAddress.lower()
-        elif hasattr(item, 'Sender') and item.Sender:
-            sender_email = item.Sender.Address.lower()
-        else:
-            logs.append(f"Item skipped: No valid sender found for item.")
-            return logs, failed_emails
-
-        subject = getattr(item, 'Subject', 'No Subject')
-
-        while retries > 0 and not processed:
-            try:
-                year, month = extract_date_from_text(subject, default_year)
-                if not year or not month:
-                    for attachment in item.Attachments:
-                        year, month = extract_date_from_text(attachment.FileName, default_year)
-                        if year and month:
-                            break
-                year = year or default_year
-                base_path, special_case, _ = find_save_path(sender_email, subject, sender_path_table)
-                save_path = os.path.join(base_path or DEFAULT_SAVE_PATH, str(year), month or specific_date_str)
-                filename = save_email(item, save_path, special_case)
-                logs.append(f"Saved: {filename} to {save_path}")
-                processed = True
-            except pythoncom.com_error as com_err:
-                retries -= 1
-                logs.append(f"COM Error handling email '{subject}' (Code: {com_err.args})")
-                if retries == 0:
-                    logs.append(f"Failed to save the email '{subject}' after 3 retries")
-                    failed_emails.append({'email_address': sender_email, 'subject': subject})
-            except Exception as e:
-                retries = 0
-                logs.append(f"Error handling email '{subject}': {str(e)}")
-                failed_emails.append({'email_address': sender_email, 'subject': subject})
-
-    except Exception as e:
-        logs.append(f"Unexpected error processing item: {str(e)}")
+    while retries > 0 and not processed:
+        try:
+            sender_email = item.SenderEmailAddress.lower() if hasattr(item, 'SenderEmailAddress') else item.Sender.Address.lower()
+            year, month = extract_date_from_text(item.Subject, default_year)
+            if not year or not month:
+                for attachment in item.Attachments:
+                    year, month = extract_date_from_text(attachment.FileName, default_year)
+                    if year and month:
+                        break
+            year = year or default_year
+            base_path, special_case, _ = find_save_path(sender_email, item.Subject, sender_path_table)
+            save_path = os.path.join(base_path or DEFAULT_SAVE_PATH, str(year), month or specific_date_str)
+            filename = save_email(item, save_path, special_case)
+            logs.append(f"Saved: {filename} to {save_path}")
+            processed = True
+        except pythoncom.com_error as com_err:
+            retries -= 1
+            logs.append(f"COM Error handling email '{item.Subject}' (Code: {com_err.args})")
+            if retries == 0:
+                logs.append(f"Failed to save the email '{item.Subject}' after 3 retries")
+                failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
+        except Exception as e:
+            retries = 0
+            logs.append(f"Error handling email '{item.Subject}': {str(e)}")
+            failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
 
     return logs, failed_emails
 
@@ -297,17 +278,12 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     items.Sort("[ReceivedTime]", True)
     items = items.Restrict(f"[ReceivedTime] >= '{specific_date.strftime('%m/%d/%Y')} 00:00 AM' AND [ReceivedTime] <= '{specific_date.strftime('%m/%d/%Y')} 11:59 PM'")
 
-    def process_item(item):
-        return process_email(item, sender_path_table, default_year, specific_date_str)
-
     total_emails, saved_default, saved_actual, not_saved = 0, 0, 0, 0
     failed_emails = []
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        results = list(executor.map(process_item, items))
-
-    for email_logs, email_failed_emails in results:
+    for item in items:
         total_emails += 1
+        email_logs, email_failed_emails = process_email(item, sender_path_table, default_year, specific_date_str)
         logs.extend(email_logs)
         failed_emails.extend(email_failed_emails)
         if any(DEFAULT_SAVE_PATH in log for log in email_logs):
