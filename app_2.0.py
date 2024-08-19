@@ -155,7 +155,7 @@ def find_save_path(sender, subject, sender_path_table):
         if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject_lower:
             return row['save_path'], row['special_case'], False
 
-    if not rows.empty():
+    if not rows.empty:
         return rows.iloc[0]['save_path'], rows.iloc[0]['special_case'], False
 
     return None, None, False
@@ -226,9 +226,10 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
     retries = 3
     processed = False
 
-    # Check if the item is an email (MailItem)
-    if item.Class != 43:  # 43 is the Class value for MailItem
-        logs.append(f"Item skipped: Not an email. Item class: {item.Class}")
+    # Safely check if the item is an email (MailItem)
+    item_class = getattr(item, 'Class', None)
+    if item_class != 43:  # 43 is the Class value for MailItem
+        logs.append(f"Item skipped: Not an email. Item class: {item_class}")
         return logs, failed_emails
 
     # Check if the item has a valid sender (i.e., it's an email)
