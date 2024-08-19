@@ -152,8 +152,14 @@ def extract_date_from_text(text, default_year=None):
     return default_year, None
 
 def find_save_path(sender, subject, sender_path_table):
+    # Check if the sender exists in the CSV file
     rows = sender_path_table[sender_path_table['sender'].str.lower() == sender.lower()]
 
+    # If the sender is not found in the CSV, treat it as a default path email
+    if rows.empty:
+        return None, None, False  # Indicate that this is a default path email
+
+    # If the sender is found, check for keyword matches and special cases
     for _, row in rows.iterrows():
         keywords = str(row.get('keywords', '')).split(';')
         for keyword in keywords:
@@ -161,16 +167,9 @@ def find_save_path(sender, subject, sender_path_table):
                 special_case_value = row['special_case'].strip().lower() == 'yes'
                 return row['keyword_path'], special_case_value, True
 
-    for _, row in rows.iterrows():
-        if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
-            special_case_value = row['special_case'].strip().lower() == 'yes'
-            return row['save_path'], special_case_value, False
-
-    if not rows.empty:
-        special_case_value = rows.iloc[0]['special_case'].strip().lower() == 'yes'
-        return rows.iloc[0]['save_path'], special_case_value, False
-
-    return None, None, False
+    # If no keywords matched, check if it's a special case
+    special_case_value = rows.iloc[0]['special_case'].strip().lower() == 'yes'
+    return rows.iloc[0]['save_path'], special_case_value, True  # Not a default path email
 
 def update_excel_summary(date_str, total_emails, saved_default, saved_actual, not_saved, failed_emails):
     if os.path.exists(EXCEL_FILE_PATH):
@@ -258,8 +257,28 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
                     if year and month:
                         break
             year = year or default_year
-            base_path, special_case, _ = find_save_path(sender_email, item.Subject, sender_path_table)
-            save_path = os.path.join(base_path or DEFAULT_SAVE_PATH, str(year), month or specific_date_str)
+
+            # Determine the save path based on the sender and subject
+            base_path, special_case, is_csv_path = find_save_path(sender_email, item.Subject, sender_path_table)
+
+            # If it's a default path email (sender not in CSV)
+            if not is_csv_path:
+                save_path = os.path.join(DEFAULT_SAVE_PATH, specific_date_str)
+
+            # If it's a special case or keyword match but has no attachments, skip saving
+            elif special_case or is_csv_path:
+                if item.Attachments.Count == 0:
+                    logs.append(f"Skipped: '{item.Subject}' from '{sender_email}' because it has no attachments")
+                    processed = True
+                    continue  # Skip processing this email
+                
+                # If it's a special case, save in the year folder only
+                if special_case:
+                    save_path = os.path.join(base_path or DEFAULT_SAVE_PATH, str(year))
+                else:
+                    # For keyword matches, save in the year/month folder
+                    save_path = os.path.join(base_path or DEFAULT_SAVE_PATH, str(year), month)
+
             filename = save_email(item, save_path, special_case)
             logs.append(f"Saved: {filename} to {save_path}")
             processed = True
