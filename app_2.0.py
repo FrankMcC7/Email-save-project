@@ -10,6 +10,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_socketio import SocketIO
 from threading import Thread
 import openpyxl
+import unicodedata
 
 # Apply nest_asyncio to allow nested event loops
 nest_asyncio.apply()
@@ -27,8 +28,19 @@ LOG_FILE_PATH = config.get('LOG_FILE_PATH', 'logs.txt')
 EXCEL_FILE_PATH = config.get('EXCEL_FILE_PATH', 'email_summary.xlsx')
 
 def sanitize_filename(filename):
-    allowable_chars = re.compile(r'[^a-zA-Z0-9\s\-\_\.\+\%\(\)]')
-    sanitized = allowable_chars.sub('_', filename).replace(' ', '_')
+    # Normalize unicode characters to their closest ASCII equivalent (e.g., é -> e)
+    normalized_filename = unicodedata.normalize('NFKD', filename).encode('ASCII', 'ignore').decode('ASCII')
+
+    # Replace special characters with underscores or remove them
+    sanitized = re.sub(r'[<>:"/\\|?*\[\]\'`~!@#$%^&*()+={};,]', '_', normalized_filename)
+
+    # Replace multiple underscores with a single underscore
+    sanitized = re.sub(r'_+', '_', sanitized)
+
+    # Trim leading and trailing underscores or spaces
+    sanitized = sanitized.strip(' _')
+
+    # Limit filename length to avoid filesystem issues (255 characters max, considering extension)
     return sanitized[:255]
 
 def extract_date_from_text(text, default_year=None):
@@ -146,14 +158,17 @@ def find_save_path(sender, subject, sender_path_table):
         keywords = str(row.get('keywords', '')).split(';')
         for keyword in keywords:
             if keyword.lower() in subject.lower():
-                return row['keyword_path'], row['special_case'], True
+                special_case_value = row['special_case'].strip().lower() == 'yes'
+                return row['keyword_path'], special_case_value, True
 
     for _, row in rows.iterrows():
         if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject.lower():
-            return row['save_path'], row['special_case'], False
+            special_case_value = row['special_case'].strip().lower() == 'yes'
+            return row['save_path'], special_case_value, False
 
     if not rows.empty:
-        return rows.iloc[0]['save_path'], rows.iloc[0]['special_case'], False
+        special_case_value = rows.iloc[0]['special_case'].strip().lower() == 'yes'
+        return rows.iloc[0]['save_path'], special_case_value, False
 
     return None, None, False
 
@@ -181,39 +196,51 @@ def update_excel_summary(date_str, total_emails, saved_default, saved_actual, no
     workbook.save(EXCEL_FILE_PATH)
 
 def save_email(item, save_path, special_case):
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-    
-    valid_extensions = ('.xlsx', '.xls', '.csv', '.pdf', '.doc', '.docx')
-    if special_case and item.Attachments.Count > 0:
-        for attachment in item.Attachments:
-            if attachment.FileName.lower().endswith(valid_extensions):
-                filename_base = sanitize_filename(os.path.splitext(attachment.FileName)[0])
-                break
+    try:
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        
+        valid_extensions = ('.xlsx', '.xls', '.csv', '.pdf', '.doc', '.docx')
+        if special_case and item.Attachments.Count > 0:
+            for attachment in item.Attachments:
+                if attachment.FileName.lower().endswith(valid_extensions):
+                    filename_base = sanitize_filename(os.path.splitext(attachment.FileName)[0])
+                    break
+            else:
+                filename_base = sanitize_filename(item.Subject)
         else:
             filename_base = sanitize_filename(item.Subject)
-    else:
-        filename_base = sanitize_filename(item.Subject)
-    
-    # Ensure the filename does not exceed the maximum length
-    extension = ".msg"
-    max_filename_length = 255 - len(save_path) - len(extension) - 1
-    if len(filename_base) > max_filename_length:
-        filename_base = filename_base[:max_filename_length]
-    
-    filename = f"{filename_base}{extension}"
-    full_path = os.path.join(save_path, filename)
-    
-    # Check if a file with the same name already exists
-    counter = 1
-    while os.path.exists(full_path):
-        # If it exists, add a suffix to the filename
-        filename = f"{filename_base}_{counter}{extension}"
+        
+        # Ensure the filename does not exceed the maximum length
+        extension = ".msg"
+        max_filename_length = 255 - len(save_path) - len(extension) - 1
+        if len(filename_base) > max_filename_length:
+            filename_base = filename_base[:max_filename_length]
+        
+        filename = f"{filename_base}{extension}"
         full_path = os.path.join(save_path, filename)
-        counter += 1
-    
-    item.SaveAs(full_path, 3)
-    return filename
+        
+        # Check if a file with the same name already exists
+        counter = 1
+        while os.path.exists(full_path):
+            # If it exists, add a suffix to the filename
+            filename = f"{filename_base}_{counter}{extension}"
+            full_path = os.path.join(save_path, filename)
+            counter += 1
+        
+        # Attempt to save the email
+        item.SaveAs(full_path, 3)
+        return filename
+    except pythoncom.com_error as com_err:
+        # Log more details in case of an error
+        error_message = f"COM Error saving email '{item.Subject}' to '{save_path}': {str(com_err)}"
+        print(error_message)
+        raise  # Re-raise the error after logging
+    except Exception as e:
+        # Log general exceptions
+        error_message = f"General Error saving email '{item.Subject}' to '{save_path}': {str(e)}"
+        print(error_message)
+        raise  # Re-raise the error after logging
 
 def process_email(item, sender_path_table, default_year, specific_date_str):
     logs = []
@@ -238,9 +265,9 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
             processed = True
         except pythoncom.com_error as com_err:
             retries -= 1
-            logs.append(f"COM Error handling email '{item.Subject}' (Code: {com_err.args})")
+            logs.append(f"COM Error handling email '{item.Subject}' from '{sender_email}' (Code: {com_err.args})")
             if retries == 0:
-                logs.append(f"Failed to save the email '{item.Subject}' after 3 retries")
+                logs.append(f"Failed to save the email '{item.Subject}' from '{sender_email}' after 3 retries")
                 failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
         except Exception as e:
             retries = 0
