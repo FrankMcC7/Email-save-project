@@ -226,7 +226,15 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
     retries = 3
     processed = False
 
-    sender_email = item.SenderEmailAddress.lower() if hasattr(item, 'SenderEmailAddress') else item.Sender.Address.lower()
+    # Check if the item has a valid sender (i.e., it's an email)
+    if hasattr(item, 'SenderEmailAddress') and item.SenderEmailAddress:
+        sender_email = item.SenderEmailAddress.lower()
+    elif hasattr(item, 'Sender') and item.Sender:
+        sender_email = item.Sender.Address.lower()
+    else:
+        logs.append(f"Item skipped: No valid sender found for item with subject '{item.Subject}'")
+        return logs, failed_emails
+
     subject = item.Subject
 
     while retries > 0 and not processed:
