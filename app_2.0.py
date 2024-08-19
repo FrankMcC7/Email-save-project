@@ -261,23 +261,24 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
             # Determine the save path based on the sender and subject
             base_path, special_case, is_csv_path = find_save_path(sender_email, item.Subject, sender_path_table)
 
+            # Ensure base_path is not None
+            if base_path is None:
+                base_path = DEFAULT_SAVE_PATH
+
             # If it's a default path email (sender not in CSV)
             if not is_csv_path:
-                save_path = os.path.join(DEFAULT_SAVE_PATH, specific_date_str)
+                save_path = os.path.join(base_path, specific_date_str)
 
-            # If it's a special case or keyword match but has no attachments, skip saving
+            # If it's a special case or keyword match, save in the year folder only
             elif special_case or is_csv_path:
-                if item.Attachments.Count == 0:
-                    logs.append(f"Skipped: '{item.Subject}' from '{sender_email}' because it has no attachments")
-                    processed = True
-                    continue  # Skip processing this email
-                
-                # If it's a special case, save in the year folder only
-                if special_case:
-                    save_path = os.path.join(base_path or DEFAULT_SAVE_PATH, str(year))
+                save_path = os.path.join(base_path, str(year))
+
+            # Normal case: Save in year/month folder if both are identified, or in year folder if month is not identified
+            else:
+                if month:
+                    save_path = os.path.join(base_path, str(year), month)
                 else:
-                    # For keyword matches, save in the year/month folder
-                    save_path = os.path.join(base_path or DEFAULT_SAVE_PATH, str(year), month)
+                    save_path = os.path.join(base_path, str(year))
 
             filename = save_email(item, save_path, special_case)
             logs.append(f"Saved: {filename} to {save_path}")
