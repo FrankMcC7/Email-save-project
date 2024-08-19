@@ -155,7 +155,7 @@ def find_save_path(sender, subject, sender_path_table):
         if pd.notna(row['coper_name']) and row['coper_name'].lower() in subject_lower:
             return row['save_path'], row['special_case'], False
 
-    if not rows.empty:
+    if not rows.empty():
         return rows.iloc[0]['save_path'], rows.iloc[0]['special_case'], False
 
     return None, None, False
@@ -226,16 +226,21 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
     retries = 3
     processed = False
 
+    # Check if the item is an email (MailItem)
+    if item.Class != 43:  # 43 is the Class value for MailItem
+        logs.append(f"Item skipped: Not an email. Item class: {item.Class}")
+        return logs, failed_emails
+
     # Check if the item has a valid sender (i.e., it's an email)
     if hasattr(item, 'SenderEmailAddress') and item.SenderEmailAddress:
         sender_email = item.SenderEmailAddress.lower()
     elif hasattr(item, 'Sender') and item.Sender:
         sender_email = item.Sender.Address.lower()
     else:
-        logs.append(f"Item skipped: No valid sender found for item with subject '{item.Subject}'")
+        logs.append(f"Item skipped: No valid sender found for item with subject '{getattr(item, 'Subject', 'No Subject')}'")
         return logs, failed_emails
 
-    subject = item.Subject
+    subject = getattr(item, 'Subject', 'No Subject')
 
     while retries > 0 and not processed:
         try:
