@@ -226,47 +226,45 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
     retries = 3
     processed = False
 
-    # Safely check if the item is an email (MailItem)
-    item_class = getattr(item, 'Class', None)
-    if item_class != 43:  # 43 is the Class value for MailItem
-        logs.append(f"Item skipped: Not an email. Item class: {item_class}")
-        return logs, failed_emails
+    try:
+        # Check if the item has a valid sender (i.e., it's an email)
+        if hasattr(item, 'SenderEmailAddress') and item.SenderEmailAddress:
+            sender_email = item.SenderEmailAddress.lower()
+        elif hasattr(item, 'Sender') and item.Sender:
+            sender_email = item.Sender.Address.lower()
+        else:
+            logs.append(f"Item skipped: No valid sender found for item.")
+            return logs, failed_emails
 
-    # Check if the item has a valid sender (i.e., it's an email)
-    if hasattr(item, 'SenderEmailAddress') and item.SenderEmailAddress:
-        sender_email = item.SenderEmailAddress.lower()
-    elif hasattr(item, 'Sender') and item.Sender:
-        sender_email = item.Sender.Address.lower()
-    else:
-        logs.append(f"Item skipped: No valid sender found for item with subject '{getattr(item, 'Subject', 'No Subject')}'")
-        return logs, failed_emails
+        subject = getattr(item, 'Subject', 'No Subject')
 
-    subject = getattr(item, 'Subject', 'No Subject')
-
-    while retries > 0 and not processed:
-        try:
-            year, month = extract_date_from_text(subject, default_year)
-            if not year or not month:
-                for attachment in item.Attachments:
-                    year, month = extract_date_from_text(attachment.FileName, default_year)
-                    if year and month:
-                        break
-            year = year or default_year
-            base_path, special_case, _ = find_save_path(sender_email, subject, sender_path_table)
-            save_path = os.path.join(base_path or DEFAULT_SAVE_PATH, str(year), month or specific_date_str)
-            filename = save_email(item, save_path, special_case)
-            logs.append(f"Saved: {filename} to {save_path}")
-            processed = True
-        except pythoncom.com_error as com_err:
-            retries -= 1
-            logs.append(f"COM Error handling email '{subject}' (Code: {com_err.args})")
-            if retries == 0:
-                logs.append(f"Failed to save the email '{subject}' after 3 retries")
+        while retries > 0 and not processed:
+            try:
+                year, month = extract_date_from_text(subject, default_year)
+                if not year or not month:
+                    for attachment in item.Attachments:
+                        year, month = extract_date_from_text(attachment.FileName, default_year)
+                        if year and month:
+                            break
+                year = year or default_year
+                base_path, special_case, _ = find_save_path(sender_email, subject, sender_path_table)
+                save_path = os.path.join(base_path or DEFAULT_SAVE_PATH, str(year), month or specific_date_str)
+                filename = save_email(item, save_path, special_case)
+                logs.append(f"Saved: {filename} to {save_path}")
+                processed = True
+            except pythoncom.com_error as com_err:
+                retries -= 1
+                logs.append(f"COM Error handling email '{subject}' (Code: {com_err.args})")
+                if retries == 0:
+                    logs.append(f"Failed to save the email '{subject}' after 3 retries")
+                    failed_emails.append({'email_address': sender_email, 'subject': subject})
+            except Exception as e:
+                retries = 0
+                logs.append(f"Error handling email '{subject}': {str(e)}")
                 failed_emails.append({'email_address': sender_email, 'subject': subject})
-        except Exception as e:
-            retries = 0
-            logs.append(f"Error handling email '{subject}': {str(e)}")
-            failed_emails.append({'email_address': sender_email, 'subject': subject})
+
+    except Exception as e:
+        logs.append(f"Unexpected error processing item: {str(e)}")
 
     return logs, failed_emails
 
