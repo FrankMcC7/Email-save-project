@@ -159,17 +159,30 @@ def find_save_path(sender, subject, sender_path_table):
     if rows.empty:
         return None, None, False  # Indicate that this is a default path email
 
-    # If the sender is found, check for keyword matches and special cases
-    for _, row in rows.iterrows():
+    # If the sender email has multiple entries, apply coper_name matching logic
+    if len(rows) > 1:
+        for _, row in rows.iterrows():
+            coper_name = str(row.get('coper_name', '')).strip()
+            if coper_name.lower() in subject.lower():  # Partial match of coper_name in subject
+                # Check if the subject also contains any keywords associated with this coper_name
+                keywords = str(row.get('keywords', '')).split(';')
+                for keyword in keywords:
+                    if keyword.lower() in subject.lower():
+                        return row['keyword_path'], False, True  # Save in keyword path
+                return row['save_path'], False, True  # Save in save path if no keywords match
+        # If no coper_name matches, return None to indicate default save path
+        return None, None, False  # Indicate that this is a default path email
+
+    # If the sender email has a unique entry, apply normal keyword and special case logic
+    else:
+        row = rows.iloc[0]  # Since it's a unique entry, take the first (and only) row
         keywords = str(row.get('keywords', '')).split(';')
         for keyword in keywords:
             if keyword.lower() in subject.lower():
-                special_case_value = row['special_case'].strip().lower() == 'yes'
-                return row['keyword_path'], special_case_value, True
-
-    # If no keywords matched, check if it's a special case
-    special_case_value = rows.iloc[0]['special_case'].strip().lower() == 'yes'
-    return rows.iloc[0]['save_path'], special_case_value, True  # Not a default path email
+                return row['keyword_path'], False, True  # Save in keyword path
+        # Check if it's a special case
+        special_case_value = row['special_case'].strip().lower() == 'yes'
+        return row['save_path'], special_case_value, True  # Save in save path or special case path
 
 def update_excel_summary(date_str, total_emails, saved_default, saved_actual, not_saved, failed_emails):
     if os.path.exists(EXCEL_FILE_PATH):
