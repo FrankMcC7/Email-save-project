@@ -20,7 +20,7 @@ app.secret_key = 'supersecretkey'
 socketio = SocketIO(app)
 
 # Load configurations from a JSON file
-with open('config.json', 'r') as f:
+with open('config.json', 'r') as f):
     config = json.load(f)
 
 DEFAULT_SAVE_PATH = config.get('DEFAULT_SAVE_PATH', 'path_to_default_folder')
@@ -31,17 +31,22 @@ def sanitize_filename(filename):
     # Normalize unicode characters to their closest ASCII equivalent (e.g., é -> e)
     normalized_filename = unicodedata.normalize('NFKD', filename).encode('ASCII', 'ignore').decode('ASCII')
 
-    # Replace special characters with underscores or remove them
+    # Replace common problematic characters with underscores or remove them
     sanitized = re.sub(r'[<>:"/\\|?*\[\]\'`~!@#$%^&*()+={};,]', '_', normalized_filename)
 
-    # Replace multiple underscores with a single underscore
+    # Replace dots (.) followed by a space or end of the string with an underscore, except for file extensions
+    sanitized = re.sub(r'\.(?=\s|$)', '_', sanitized)
+
+    # Replace any sequence of multiple special characters (like "--") with a single underscore
     sanitized = re.sub(r'_+', '_', sanitized)
 
     # Trim leading and trailing underscores or spaces
     sanitized = sanitized.strip(' _')
 
     # Limit filename length to avoid filesystem issues (255 characters max, considering extension)
-    return sanitized[:255]
+    sanitized = sanitized[:255]
+
+    return sanitized
 
 def extract_date_from_text(text, default_year=None):
     date_pattern = re.compile(r"""
@@ -77,6 +82,10 @@ def extract_date_from_text(text, default_year=None):
         year = default_year
 
         if full_month or abbr_month:
+            # Extract the year after the month name
+            year_match = re.search(r'\b(\d{4})\b', text)
+            if year_match:
+                year = year_match.group(1)
             month_num = datetime.datetime.strptime(full_month or abbr_month, "%B" if full_month else "%b").strftime("%m")
             month_name = datetime.datetime.strptime(full_month or abbr_month, "%B" if full_month else "%b").strftime("%B")
             return year, f"{month_num}-{month_name}"
@@ -162,8 +171,8 @@ def find_save_path(sender, subject, sender_path_table):
     # If the sender email has multiple entries, apply coper_name matching logic
     if len(rows) > 1:
         for _, row in rows.iterrows():
-            coper_name = str(row.get('coper_name', '')).strip()
-            if coper_name.lower() in subject.lower():  # Partial match of coper_name in subject
+            coper_name = str(row.get('coper_name', '')).strip().lower()
+            if coper_name and coper_name in subject.lower():  # Match the coper_name in subject
                 # Check if the subject also contains any keywords associated with this coper_name
                 keywords = str(row.get('keywords', '')).split(';')
                 for keyword in keywords:
