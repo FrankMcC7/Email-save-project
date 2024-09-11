@@ -71,8 +71,15 @@ def process_csv_and_create_items(session, site_url, child_list_name, csv_file_pa
                     'Level': row.get('Level'),
                     'Received': row.get('Received'),
                     'Action': row.get('Action'),
-                    'ActionDate': row.get('ActionDate') if row.get('ActionDate') else None
+                    'ActionDate': row.get('ActionDate') if row.get('ActionDate') else None,
                 }
+                
+                # Extract the ParentID from the CSV
+                parent_id = row.get('ParentID')
+                
+                # Ensure ParentID exists before proceeding
+                if parent_id:
+                    new_entry_data['ParentIDId'] = int(parent_id)  # Assuming 'ParentIDId' is the lookup field in SharePoint
                 
                 # Log the data being sent for debugging purposes
                 logging.debug(f"Creating item with data: {new_entry_data}")
