@@ -68,7 +68,6 @@ def process_csv_and_create_items(session, site_url, child_list_name, csv_file_pa
                     'ID': row.get('ID'),
                     'Name': row.get('Name'),
                     'rID': row.get('ID'),
-                    'Month': row.get('Month'),
                     'Level': row.get('Level'),
                     'Received': row.get('Received'),
                     'Action': row.get('Action'),
@@ -82,6 +81,17 @@ def process_csv_and_create_items(session, site_url, child_list_name, csv_file_pa
                 
                     # Ensure ParentID exists before proceeding and convert it to an integer
                     new_entry_data['ParentIDId'] = int(parent_id)
+
+                # Handle Report Month field, ensuring it is in the correct format (YYYY-MM-DD) for Date Only
+                report_month_str = row.get('Report Month')
+                if report_month_str:
+                    try:
+                        # Parse the date to ensure it is in the correct format
+                        report_month = datetime.strptime(report_month_str, '%Y-%m-%d')
+                        new_entry_data['ReportMonth'] = report_month.strftime('%Y-%m-%d')  # Keep only date part
+                    except ValueError:
+                        logging.error(f"Invalid date format in 'Report Month' for row: {row}. Skipping this row.")
+                        continue  # Skip this row if the date format is invalid
 
                 # Convert the ActionDate to the correct format (ISO 8601 for Edm.DateTime)
                 action_date_str = row.get('ActionDate')
