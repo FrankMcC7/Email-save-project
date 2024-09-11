@@ -11,8 +11,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Prompt user for authentication details
 username = input("Enter your username: ")
 password = getpass.getpass("Enter your password: ")
-site_url = 'abc'
-child_list_name = 'abc'  # Replace with the actual name of the child list
+site_url = 'https://yoursharepointsite.com'  # Replace with your actual SharePoint site URL
+child_list_name = 'YourListName'  # Replace with the internal name of your SharePoint list
 
 # CSV file containing the data
 csv_file_path = 'data.csv'  # Replace with the path to your CSV file
@@ -38,7 +38,17 @@ def create_list_item(session, site_url, child_list_name, data, request_digest):
         "X-RequestDigest": request_digest
     }
     
-    response = session.post(add_item_url, headers=headers, data=json.dumps(data))
+    # Include __metadata with the correct type for the list
+    data_with_metadata = {
+        "__metadata": {
+            "type": f"SP.Data.{child_list_name}ListItem"  # Adjust this based on your list's internal name
+        }
+    }
+    
+    # Merge the original data into the data_with_metadata
+    data_with_metadata.update(data)
+    
+    response = session.post(add_item_url, headers=headers, data=json.dumps(data_with_metadata))
     
     if response.status_code == 201:  # 201 Created
         logging.info(f"New entry successfully created: {data}")
@@ -57,7 +67,6 @@ def process_csv_and_create_items(session, site_url, child_list_name, csv_file_pa
                     'ID': row.get('ID'),
                     'Name': row.get('Name'),
                     'rID': row.get('ID'),
-                    'Name': row.get('Name'),
                     'Month': row.get('Month'),
                     'Level': row.get('Level'),
                     'Received': row.get('Received'),
