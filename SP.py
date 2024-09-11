@@ -73,21 +73,18 @@ def process_csv_and_create_items(session, site_url, child_list_name, csv_file_pa
                     'Action': row.get('Action'),
                 }
 
-                # Extract the ParentID from the vLookupID field by splitting at the colon and taking the second part
-                parent_id_str = row.get('vLookupID')  # Ensure this field is correct
+                # Extract the ParentID from the correct lookup field (replace 'ParentLookupFieldName' with actual internal field name)
+                parent_id_str = row.get('ParentLookupFieldName')  # Ensure this field is correct
                 if parent_id_str:
-                    # Split at the colon and take the second part
-                    parent_id = parent_id_str.split(':')[1] if ':' in parent_id_str else parent_id_str
-                
-                    # Ensure ParentID exists before proceeding and convert it to an integer
-                    new_entry_data['ParentIDId'] = int(parent_id)
+                    # Process the value as a string, keeping delimiters if present
+                    new_entry_data['ParentLookupFieldName'] = parent_id_str
 
                 # Handle Report Month field, ensuring it is in the correct format (YYYY-MM-DD) for Date Only
                 report_month_str = row.get('Report Month')
                 if report_month_str:
                     try:
-                        # Parse the date to ensure it is in the correct format
-                        report_month = datetime.strptime(report_month_str, '%Y-%m-%d')
+                        # Parse the date to handle YYYY/MM/DD format
+                        report_month = datetime.strptime(report_month_str, '%Y/%m/%d')
                         new_entry_data['ReportMonth'] = report_month.strftime('%Y-%m-%d')  # Keep only date part
                     except ValueError:
                         logging.error(f"Invalid date format in 'Report Month' for row: {row}. Skipping this row.")
