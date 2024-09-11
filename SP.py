@@ -4,6 +4,7 @@ import json
 import csv
 import getpass
 import logging
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -71,15 +72,27 @@ def process_csv_and_create_items(session, site_url, child_list_name, csv_file_pa
                     'Level': row.get('Level'),
                     'Received': row.get('Received'),
                     'Action': row.get('Action'),
-                    'ActionDate': row.get('ActionDate') if row.get('ActionDate') else None,
                 }
+
+                # Extract the ParentID from the vLookupID field by splitting at the colon and taking the second part
+                parent_id_str = row.get('vLookupID')  # Ensure this field is correct
+                if parent_id_str:
+                    # Split at the colon and take the second part
+                    parent_id = parent_id_str.split(':')[1] if ':' in parent_id_str else parent_id_str
                 
-                # Extract the ParentID from the CSV
-                parent_id = row.get('ParentID')
-                
-                # Ensure ParentID exists before proceeding
-                if parent_id:
-                    new_entry_data['ParentIDId'] = int(parent_id)  # Assuming 'ParentIDId' is the lookup field in SharePoint
+                    # Ensure ParentID exists before proceeding and convert it to an integer
+                    new_entry_data['ParentIDId'] = int(parent_id)
+
+                # Convert the ActionDate to the correct format (ISO 8601 for Edm.DateTime)
+                action_date_str = row.get('ActionDate')
+                if action_date_str:
+                    try:
+                        # Parse the date and convert it to the correct format
+                        action_date = datetime.strptime(action_date_str, '%Y-%m-%d')  # Update format as necessary
+                        new_entry_data['ActionDate'] = action_date.isoformat() + 'Z'  # Convert to ISO 8601
+                    except ValueError:
+                        logging.error(f"Invalid date format in row: {row}. Skipping this row.")
+                        continue  # Skip this row if the date format is invalid
                 
                 # Log the data being sent for debugging purposes
                 logging.debug(f"Creating item with data: {new_entry_data}")
