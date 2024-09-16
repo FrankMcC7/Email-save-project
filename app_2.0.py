@@ -60,27 +60,30 @@ def extract_date_from_text(text, default_year=None):
     # Prepare text by replacing various separators with spaces
     text = text.replace("'", "").replace(",", " ").replace("-", " ").replace("/", " ").replace(".", " ")
     text = re.sub(r'\s+', ' ', text)
+    text = text.strip()  # Remove leading/trailing whitespace
 
     # Define regex patterns to extract date components
     patterns = [
         # Match full or abbreviated month names with optional day and year
-        r'(?i)\b(?:on|as of|for)?\s*(\d{1,2})?\s*(January|February|March|April|May|June|'
+        r'(?i)\s*(?:\b(?:on|as of|for)\b\s*)?'        # Optional prefixes with word boundaries
+        r'(?:\b(\d{1,2})\b\s*)?'                      # Optional day with word boundary
+        r'\b('                                        # Word boundary before month name
+        r'January|February|March|April|May|June|'
         r'July|August|September|October|November|December|'
-        r'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)'
-        r'[\s,]*(\d{4}|\d{2})?\b',
+        r'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec'
+        r')\b'                                        # Word boundary after month name
+        r'[\s,]*'                                     # Optional separator
+        r'(\d{4}|\d{2})?\b',                          # Optional year with word boundary
 
-        # Match numeric dates: MM DD YYYY or DD MM YYYY or YYYY MM DD
-        r'\b(\d{1,4})\s+(\d{1,2})\s+(\d{1,4})\b',
+        # Pattern for compact dates with 6 or 8 digits
+        r'\b(\d{6,8})\b',
 
-        # Match compact dates: MMDDYYYY or YYYYMMDD
-        r'\b(\d{8})\b',
+        # Pattern for dates with separators: DD/MM/YY, DD-MM-YYYY, etc.
+        r'\b(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\b',
 
         # Match year and month: YYYY MM or MM YYYY
         r'\b(\d{4})\s+(\d{1,2})\b',
         r'\b(\d{1,2})\s+(\d{4})\b',
-
-        # Match month and year with dot separator: MM.YYYY
-        r'\b(\d{1,2})\.(\d{4})\b',
 
         # Match month and year without separator: MMYYYY or YYYYMM
         r'\b(\d{2})(\d{4})\b',
@@ -94,8 +97,11 @@ def extract_date_from_text(text, default_year=None):
         matches = re.findall(pattern, text)
         for match in matches:
             # Handle month name patterns
-            if len(match) == 3 and re.match(r'(?i)^(January|February|March|April|May|June|July|August|September|October|November|December|'
-                                            r'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)$', match[1]):
+            if len(match) == 3 and re.match(
+                r'(?i)^(January|February|March|April|May|June|July|August|September|October|November|December|'
+                r'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)$',
+                match[1]
+            ):
                 day, month_str, year = match
                 day = day.strip() if day else '1'  # Default to first day if not provided
                 year = year.strip() if year else default_year
@@ -106,12 +112,43 @@ def extract_date_from_text(text, default_year=None):
                     year = '20' + year
                 date_str = f"{day} {month_str} {year}"
                 date_formats = ['%d %B %Y', '%d %b %Y']
-            # Handle numeric date patterns
+                # Try parsing the date string with the date formats
+                for fmt in date_formats:
+                    try:
+                        parsed_date = datetime.datetime.strptime(date_str, fmt)
+                        month_num = parsed_date.strftime('%m')
+                        month_name = parsed_date.strftime('%B')
+                        year = parsed_date.strftime('%Y')
+                        return year, f"{month_num}-{month_name}"
+                    except ValueError:
+                        continue
+
+            # Handle compact date patterns with 6 or 8 digits
+            elif len(match) == 1 and match[0].isdigit():
+                date_str = match[0]
+                if len(date_str) == 6:
+                    date_formats = ['%d%m%y', '%m%d%y', '%y%m%d', '%y%d%m']
+                elif len(date_str) == 8:
+                    date_formats = ['%d%m%Y', '%m%d%Y', '%Y%m%d', '%Y%d%m']
+                else:
+                    continue
+                for fmt in date_formats:
+                    try:
+                        parsed_date = datetime.datetime.strptime(date_str, fmt)
+                        month_num = parsed_date.strftime('%m')
+                        month_name = parsed_date.strftime('%B')
+                        year = parsed_date.strftime('%Y')
+                        return year, f"{month_num}-{month_name}"
+                    except ValueError:
+                        continue
+
+            # Handle dates with separators: DD/MM/YY, DD-MM-YYYY, etc.
             elif len(match) == 3 and all(part.isdigit() for part in match):
                 part1, part2, part3 = match
                 combinations = [
-                    (f"{part1} {part2} {part3}", ['%m %d %Y', '%d %m %Y', '%Y %m %d']),
-                    (f"{part1} {part2} {part3}", ['%m %d %y', '%d %m %y', '%y %m %d']),
+                    (f"{part1} {part2} {part3}", ['%d %m %Y', '%d %m %y']),
+                    (f"{part2} {part1} {part3}", ['%m %d %Y', '%m %d %y']),
+                    (f"{part3} {part2} {part1}", ['%Y %m %d', '%y %m %d']),
                 ]
                 parsed = False
                 for date_str, date_formats in combinations:
@@ -128,20 +165,8 @@ def extract_date_from_text(text, default_year=None):
                         break
                 if not parsed:
                     continue
-            # Handle compact date patterns
-            elif len(match) == 1 and len(match[0]) == 8 and match[0].isdigit():
-                date_str = match[0]
-                date_formats = ['%m%d%Y', '%Y%m%d', '%d%m%Y', '%Y%d%m']
-                for fmt in date_formats:
-                    try:
-                        parsed_date = datetime.datetime.strptime(date_str, fmt)
-                        month_num = parsed_date.strftime('%m')
-                        month_name = parsed_date.strftime('%B')
-                        year = parsed_date.strftime('%Y')
-                        return year, f"{month_num}-{month_name}"
-                    except ValueError:
-                        continue
-            # Handle year and month patterns with space separator
+
+            # Handle other patterns as before...
             elif len(match) == 2 and match[0].isdigit() and match[1].isdigit():
                 num1, num2 = match
                 if len(num1) == 4 and len(num2) <= 2:
@@ -161,21 +186,7 @@ def extract_date_from_text(text, default_year=None):
                         return year, f"{month_num}-{month_name}"
                     except ValueError:
                         continue
-            # Handle month and year with dot separator: MM.YYYY
-            elif len(match) == 2 and match[0].isdigit() and match[1].isdigit():
-                month_part, year_part = match
-                if len(year_part) == 4 and len(month_part) <= 2:
-                    date_str = f"{month_part} {year_part}"
-                    date_formats = ['%m %Y']
-                    for fmt in date_formats:
-                        try:
-                            parsed_date = datetime.datetime.strptime(date_str, fmt)
-                            month_num = parsed_date.strftime('%m')
-                            month_name = parsed_date.strftime('%B')
-                            year = parsed_date.strftime('%Y')
-                            return year, f"{month_num}-{month_name}"
-                        except ValueError:
-                            continue
+
             # Handle month and year without separator: MMYYYY or YYYYMM
             elif len(match) == 2 and match[0].isdigit() and match[1].isdigit():
                 part1, part2 = match
@@ -196,6 +207,7 @@ def extract_date_from_text(text, default_year=None):
                         return year, f"{month_num}-{month_name}"
                     except ValueError:
                         continue
+
             # Handle quarter patterns
             elif len(match) == 2:
                 quarter_str, year = match
