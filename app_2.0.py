@@ -7,7 +7,6 @@ import pandas as pd
 import json
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_socketio import SocketIO
-from threading import Thread
 import openpyxl
 import unicodedata
 
@@ -346,17 +345,17 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
             # If it's a default path email (sender not in CSV)
             if not is_csv_path:
                 save_path = os.path.join(base_path, specific_date_str)
-
-            # If it's a special case or keyword match, save in the year folder only
-            elif special_case or is_csv_path:
-                save_path = os.path.join(base_path, str(year))
-
-            # Normal case: Save in year/month folder if both are identified, or in year folder if month is not identified
             else:
-                if month:
-                    save_path = os.path.join(base_path, str(year), month)
-                else:
+                # Sender is in CSV
+                if special_case:
+                    # Special case emails are saved in base_path/year
                     save_path = os.path.join(base_path, str(year))
+                else:
+                    # Normal case: Save in year/month folder if both are identified
+                    if month:
+                        save_path = os.path.join(base_path, str(year), month)
+                    else:
+                        save_path = os.path.join(base_path, str(year))
 
             filename = save_email(item, save_path, special_case)
             logs.append(f"Saved: {filename} to {save_path}")
@@ -461,7 +460,7 @@ def index():
 def results():
     logs = []
     if os.path.exists(LOG_FILE_PATH):
-        with open(LOG_FILE_PATH, 'r') as f:
+        with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f:
             logs = f.readlines()
 
     return render_template('results.html', logs=logs)
