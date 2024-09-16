@@ -34,6 +34,7 @@ def sanitize_filename(filename):
 def extract_emails_for_date(email_address, specific_date_str, sender_path_table):
     logs = []
     new_senders = []
+    new_sender_emails = set()
 
     pythoncom.CoInitialize()
     specific_date = datetime.datetime.strptime(specific_date_str, '%Y-%m-%d').date()
@@ -55,7 +56,7 @@ def extract_emails_for_date(email_address, specific_date_str, sender_path_table)
         logs.append(f"No Inbox found for the account with email address: {email_address}")
         pythoncom.CoUninitialize()
         with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
-            f.writelines("\n".join(logs))
+            f.write("\n".join(logs))
         return
 
     items = inbox.Items
@@ -65,11 +66,20 @@ def extract_emails_for_date(email_address, specific_date_str, sender_path_table)
     # Standardize column names to lowercase
     sender_path_table.columns = sender_path_table.columns.str.lower()
 
+    # Ensure 'sender' column is stripped and normalized
+    sender_path_table['sender'] = sender_path_table['sender'].astype(str).str.strip()
+    sender_path_table['sender'] = sender_path_table['sender'].apply(
+        lambda x: unicodedata.normalize('NFKD', x).encode('ASCII', 'ignore').decode('ASCII').lower()
+    )
+
     extracted_emails = []
 
     for item in items:
         try:
-            sender_email = item.SenderEmailAddress.lower() if hasattr(item, 'SenderEmailAddress') else item.Sender.Address.lower()
+            sender_email = item.SenderEmailAddress if hasattr(item, 'SenderEmailAddress') else item.Sender.Address
+            sender_email = sender_email.strip().lower()
+            sender_email = unicodedata.normalize('NFKD', sender_email).encode('ASCII', 'ignore').decode('ASCII')
+
             subject = item.Subject
             extracted_emails.append({'sender_email': sender_email, 'subject': subject})
         except Exception as e:
@@ -88,12 +98,14 @@ def extract_emails_for_date(email_address, specific_date_str, sender_path_table)
         subject = row['subject']
         subject_lower = subject.lower() if subject else ''
 
-        # Check if the sender exists in the database CSV
-        matching_rows = sender_path_table[sender_path_table['sender'].str.lower() == sender_email]
+        # Match sender email after stripping and normalizing
+        matching_rows = sender_path_table[sender_path_table['sender'] == sender_email]
 
         if matching_rows.empty:
             # Sender email not found in database; new sender
-            new_senders.append({'sender': sender_email, 'subject': subject})
+            if sender_email not in new_sender_emails:
+                new_sender_emails.add(sender_email)
+                new_senders.append({'sender': sender_email, 'subject': subject})
             continue  # Proceed to next email
 
         else:
@@ -104,7 +116,7 @@ def extract_emails_for_date(email_address, specific_date_str, sender_path_table)
             for _, db_row in matching_rows.iterrows():
                 coper_name = str(db_row.get('coper_name', '')).strip().lower()
 
-                if not coper_name or pd.isna(coper_name):
+                if not coper_name or pd.isna(coper_name) or coper_name == 'nan':
                     # 'coper_name' is empty or NaN; known sender
                     is_known_sender = True
                     break  # No need to check further
@@ -121,21 +133,33 @@ def extract_emails_for_date(email_address, specific_date_str, sender_path_table)
 
             if not is_known_sender:
                 # Sender email exists but 'coper_name' not matched; new sender context
-                new_senders.append({'sender': sender_email, 'subject': subject})
+                if sender_email not in new_sender_emails:
+                    new_sender_emails.add(sender_email)
+                    new_senders.append({'sender': sender_email, 'subject': subject})
 
     # Save new senders to CSV
     if new_senders:
         new_senders_df = pd.DataFrame(new_senders)
+
+        # Remove duplicates within new_senders_df
+        new_senders_df.drop_duplicates(subset=['sender'], inplace=True)
+
         if os.path.exists(NEW_SENDERS_CSV):
-            # Append to existing CSV
-            new_senders_df.to_csv(NEW_SENDERS_CSV, mode='a', index=False, header=False)
+            # Read existing CSV
+            existing_senders_df = pd.read_csv(NEW_SENDERS_CSV)
+            # Combine with new data
+            combined_df = pd.concat([existing_senders_df, new_senders_df], ignore_index=True)
+            # Drop duplicates
+            combined_df.drop_duplicates(subset=['sender'], inplace=True)
+            # Save combined data
+            combined_df.to_csv(NEW_SENDERS_CSV, index=False)
         else:
-            # Create new CSV
+            # Save new senders
             new_senders_df.to_csv(NEW_SENDERS_CSV, index=False)
 
     # Save logs
     with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
-        f.writelines("\n".join(logs))
+        f.write("\n".join(logs))
 
     pythoncom.CoUninitialize()
 
@@ -166,7 +190,7 @@ def index():
             # Standardize column names to lowercase
             sender_path_table.columns = sender_path_table.columns.str.lower()
 
-            account_email_address = "hf_data@bofa.com"
+            account_email_address = "your_email_address@example.com"  # Replace with your email address
             socketio.start_background_task(extract_emails_for_date, account_email_address, date_str, sender_path_table)
             return redirect(url_for('results'))
 
@@ -189,4 +213,4 @@ def results():
 
 if __name__ == '__main__':
     os.makedirs('uploads', exist_ok=True)
-    socketio.run(app, debug=True, use_reloader=False)
+    socketio.run(app, host='0.0.0.0', port=8080, debug=True, use_reloader=False)
