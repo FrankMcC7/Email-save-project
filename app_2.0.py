@@ -4,7 +4,6 @@ import re
 import pythoncom
 import win32com.client
 import pandas as pd
-import nest_asyncio
 import json
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_socketio import SocketIO
@@ -12,16 +11,17 @@ from threading import Thread
 import openpyxl
 import unicodedata
 
-# Apply nest_asyncio to allow nested event loops
-nest_asyncio.apply()
-
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'
 socketio = SocketIO(app)
 
 # Load configurations from a JSON file
-with open('config.json', 'r') as f):
-    config = json.load(f)
+try:
+    with open('config.json', 'r') as f:
+        config = json.load(f)
+except FileNotFoundError:
+    config = {}
+    print("Configuration file 'config.json' not found. Using default settings.")
 
 DEFAULT_SAVE_PATH = config.get('DEFAULT_SAVE_PATH', 'path_to_default_folder')
 LOG_FILE_PATH = config.get('LOG_FILE_PATH', 'logs.txt')
@@ -49,115 +49,171 @@ def sanitize_filename(filename):
     return sanitized
 
 def extract_date_from_text(text, default_year=None):
-    date_pattern = re.compile(r"""
-        (?i)
-        \b(January|February|March|April|May|June|July|August|September|October|November|December)\b|
-        \b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b|
-        (\d{2})[./-](\d{4})|                       # Formats like 08.2024, 08-2024
-        (\d{8})|                                  # Formats like 08312024 (MMDDYYYY)
-        (\d{6})|                                  # Formats like 083124 (MMDDYY)
-        (\d{2})[./-](\d{2})[./-](\d{4})|          # Formats like 08-31-2024, 08.31.2024
-        (\d{4})-(\d{2})-(\d{2})|                  # Formats like 2024-08-31
-        (Q[1-4])['\s]?(\d{2,4})|                  # Quarter formats like Q1 2024
-        ([1-4]Q)['\s]?(\d{2,4})|                  # Quarter formats like 1Q 2024
-        (\d{2})(\d{4})|                           # Formats like 082024 (MMYYYY)
-        (\d{4})(\d{2})                            # Formats like 202408 (YYYYMM)
-    """, re.IGNORECASE | re.VERBOSE)
+    import re
+    import datetime
 
-    match = date_pattern.search(text)
+    # Map quarters to months
+    quarter_mappings = {
+        '1': '03-March', '2': '06-June', '3': '09-September', '4': '12-December',
+        'Q1': '03-March', 'Q2': '06-June', 'Q3': '09-September', 'Q4': '12-December',
+    }
 
-    if match:
-        full_month = match.group(1)
-        abbr_month = match.group(2)
-        month_year_format = match.group(3)
-        mmddyyyy_format = match.group(4)
-        mmddyy_format = match.group(5)
-        date_format = match.group(6) or match.group(7)
-        quarter_1 = match.group(8)
-        quarter_year_1 = match.group(9)
-        quarter_2 = match.group(10)
-        quarter_year_2 = match.group(11)
-        month_year_2 = match.group(12)
-        year_month_2 = match.group(13)
-        year = default_year
+    # Prepare text by replacing various separators with spaces
+    text = text.replace("'", "").replace(",", " ").replace("-", " ").replace("/", " ").replace(".", " ")
+    text = re.sub(r'\s+', ' ', text)
 
-        if full_month or abbr_month:
-            # Extract the year after the month name
-            year_match = re.search(r'\b(\d{4})\b', text)
-            if year_match:
-                year = year_match.group(1)
-            month_num = datetime.datetime.strptime(full_month or abbr_month, "%B" if full_month else "%b").strftime("%m")
-            month_name = datetime.datetime.strptime(full_month or abbr_month, "%B" if full_month else "%b").strftime("%B")
-            return year, f"{month_num}-{month_name}"
+    # Define regex patterns to extract date components
+    patterns = [
+        # Match full or abbreviated month names with optional day and year
+        r'(?i)\b(?:on|as of|for)?\s*(\d{1,2})?\s*(January|February|March|April|May|June|'
+        r'July|August|September|October|November|December|'
+        r'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)'
+        r'[\s,]*(\d{4}|\d{2})?\b',
 
-        if month_year_format:  # Handles 08.2024 or 08-2024
-            try:
-                month_num, year = month_year_format.split(".") if "." in month_year_format else month_year_format.split("-")
-                month_name = datetime.datetime.strptime(month_num, "%m").strftime("%B")
-                return year, f"{month_num}-{month_name}"
-            except ValueError:
-                pass
+        # Match numeric dates: MM DD YYYY or DD MM YYYY or YYYY MM DD
+        r'\b(\d{1,4})\s+(\d{1,2})\s+(\d{1,4})\b',
 
-        if mmddyyyy_format:  # Handles 08312024 (MMDDYYYY)
-            try:
-                parsed_date = datetime.datetime.strptime(mmddyyyy_format, "%m%d%Y")
-                month_num = parsed_date.strftime('%m')
-                month_name = parsed_date.strftime('%B')
-                year = parsed_date.strftime('%Y')
-                return year, f"{month_num}-{month_name}"
-            except ValueError:
-                pass
+        # Match compact dates: MMDDYYYY or YYYYMMDD
+        r'\b(\d{8})\b',
 
-        if mmddyy_format:  # Handles 083124 (MMDDYY)
-            try:
-                parsed_date = datetime.datetime.strptime(mmddyy_format, "%m%d%y")
-                month_num = parsed_date.strftime('%m')
-                month_name = parsed_date.strftime('%B')
-                year = parsed_date.strftime('%Y')
-                return year, f"{month_num}-{month_name}"
-            except ValueError:
-                pass
+        # Match year and month: YYYY MM or MM YYYY
+        r'\b(\d{4})\s+(\d{1,2})\b',
+        r'\b(\d{1,2})\s+(\d{4})\b',
 
-        if date_format:  # Handles 08-31-2024, 08.31.2024, 2024-08-31
-            try:
-                parsed_date = datetime.datetime.strptime(date_format, "%m-%d-%Y" if "-" in date_format else "%m.%d.%Y")
-                month_num = parsed_date.strftime('%m')
-                month_name = parsed_date.strftime('%B')
-                year = parsed_date.strftime('%Y')
-                return year, f"{month_num}-{month_name}"
-            except ValueError:
-                pass
+        # Match month and year with dot separator: MM.YYYY
+        r'\b(\d{1,2})\.(\d{4})\b',
 
-        quarter_mappings = {'Q1': '03-March', 'Q2': '06-June', 'Q3': '09-September', 'Q4': '12-December'}
-        
-        if quarter_1 and quarter_year_1:
-            quarter = quarter_mappings[quarter_1.upper()]
-            year = f"20{quarter_year_1}" if len(quarter_year_1) == 2 else quarter_year_1
-            return year, quarter
+        # Match month and year without separator: MMYYYY or YYYYMM
+        r'\b(\d{2})(\d{4})\b',
+        r'\b(\d{4})(\d{2})\b',
 
-        if quarter_2 and quarter_year_2:
-            quarter = quarter_mappings[f'Q{quarter_2[0]}']
-            year = f"20{quarter_year_2}" if len(quarter_year_2) == 2 else quarter_year_2
-            return year, quarter
+        # Match quarters: Q1 2024 or 1Q 2024
+        r'\b(Q[1-4]|[1-4]Q)[\s]*(\d{2,4})\b',
+    ]
 
-        if month_year_2:  # Handles 082024 (MMYYYY)
-            try:
-                month_num = month_year_2[:2]
-                year = month_year_2[2:]
-                month_name = datetime.datetime.strptime(month_num, "%m").strftime("%B")
-                return year, f"{month_num}-{month_name}"
-            except ValueError:
-                pass
+    for pattern in patterns:
+        matches = re.findall(pattern, text)
+        for match in matches:
+            # Handle month name patterns
+            if len(match) == 3 and re.match(r'(?i)^(January|February|March|April|May|June|July|August|September|October|November|December|'
+                                            r'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)$', match[1]):
+                day, month_str, year = match
+                day = day.strip() if day else '1'  # Default to first day if not provided
+                year = year.strip() if year else default_year
+                if not year:
+                    continue
+                # Handle two-digit years
+                if len(year) == 2:
+                    year = '20' + year
+                date_str = f"{day} {month_str} {year}"
+                date_formats = ['%d %B %Y', '%d %b %Y']
+            # Handle numeric date patterns
+            elif len(match) == 3 and all(part.isdigit() for part in match):
+                part1, part2, part3 = match
+                combinations = [
+                    (f"{part1} {part2} {part3}", ['%m %d %Y', '%d %m %Y', '%Y %m %d']),
+                    (f"{part1} {part2} {part3}", ['%m %d %y', '%d %m %y', '%y %m %d']),
+                ]
+                parsed = False
+                for date_str, date_formats in combinations:
+                    for fmt in date_formats:
+                        try:
+                            parsed_date = datetime.datetime.strptime(date_str, fmt)
+                            month_num = parsed_date.strftime('%m')
+                            month_name = parsed_date.strftime('%B')
+                            year = parsed_date.strftime('%Y')
+                            return year, f"{month_num}-{month_name}"
+                        except ValueError:
+                            continue
+                    if parsed:
+                        break
+                if not parsed:
+                    continue
+            # Handle compact date patterns
+            elif len(match) == 1 and len(match[0]) == 8 and match[0].isdigit():
+                date_str = match[0]
+                date_formats = ['%m%d%Y', '%Y%m%d', '%d%m%Y', '%Y%d%m']
+                for fmt in date_formats:
+                    try:
+                        parsed_date = datetime.datetime.strptime(date_str, fmt)
+                        month_num = parsed_date.strftime('%m')
+                        month_name = parsed_date.strftime('%B')
+                        year = parsed_date.strftime('%Y')
+                        return year, f"{month_num}-{month_name}"
+                    except ValueError:
+                        continue
+            # Handle year and month patterns with space separator
+            elif len(match) == 2 and match[0].isdigit() and match[1].isdigit():
+                num1, num2 = match
+                if len(num1) == 4 and len(num2) <= 2:
+                    date_str = f"{num1} {num2}"
+                    date_formats = ['%Y %m']
+                elif len(num2) == 4 and len(num1) <= 2:
+                    date_str = f"{num1} {num2}"
+                    date_formats = ['%m %Y']
+                else:
+                    continue
+                for fmt in date_formats:
+                    try:
+                        parsed_date = datetime.datetime.strptime(date_str, fmt)
+                        month_num = parsed_date.strftime('%m')
+                        month_name = parsed_date.strftime('%B')
+                        year = parsed_date.strftime('%Y')
+                        return year, f"{month_num}-{month_name}"
+                    except ValueError:
+                        continue
+            # Handle month and year with dot separator: MM.YYYY
+            elif len(match) == 2 and match[0].isdigit() and match[1].isdigit():
+                month_part, year_part = match
+                if len(year_part) == 4 and len(month_part) <= 2:
+                    date_str = f"{month_part} {year_part}"
+                    date_formats = ['%m %Y']
+                    for fmt in date_formats:
+                        try:
+                            parsed_date = datetime.datetime.strptime(date_str, fmt)
+                            month_num = parsed_date.strftime('%m')
+                            month_name = parsed_date.strftime('%B')
+                            year = parsed_date.strftime('%Y')
+                            return year, f"{month_num}-{month_name}"
+                        except ValueError:
+                            continue
+            # Handle month and year without separator: MMYYYY or YYYYMM
+            elif len(match) == 2 and match[0].isdigit() and match[1].isdigit():
+                part1, part2 = match
+                if len(part1) == 2 and len(part2) == 4:
+                    date_str = f"{part1} {part2}"
+                    date_formats = ['%m %Y']
+                elif len(part1) == 4 and len(part2) == 2:
+                    date_str = f"{part1} {part2}"
+                    date_formats = ['%Y %m']
+                else:
+                    continue
+                for fmt in date_formats:
+                    try:
+                        parsed_date = datetime.datetime.strptime(date_str, fmt)
+                        month_num = parsed_date.strftime('%m')
+                        month_name = parsed_date.strftime('%B')
+                        year = parsed_date.strftime('%Y')
+                        return year, f"{month_num}-{month_name}"
+                    except ValueError:
+                        continue
+            # Handle quarter patterns
+            elif len(match) == 2:
+                quarter_str, year = match
+                quarter = re.sub(r'[^1-4]', '', quarter_str)
+                if not quarter:
+                    continue
+                year = year.strip()
+                if len(year) == 2:
+                    year = '20' + year
+                if year and quarter in quarter_mappings:
+                    return year, quarter_mappings[quarter]
+                else:
+                    continue
+            else:
+                continue
 
-        if year_month_2:  # Handles 202408 (YYYYMM)
-            try:
-                year = year_month_2[:4]
-                month_num = year_month_2[4:]
-                month_name = datetime.datetime.strptime(month_num, "%m").strftime("%B")
-                return year, f"{month_num}-{month_name}"
-            except ValueError:
-                pass
-
+    # If no date is found, return default_year and None
     return default_year, None
 
 def find_save_path(sender, subject, sender_path_table):
@@ -190,7 +246,7 @@ def find_save_path(sender, subject, sender_path_table):
             if keyword.lower() in subject.lower():
                 return row['keyword_path'], False, True  # Save in keyword path
         # Check if it's a special case
-        special_case_value = row['special_case'].strip().lower() == 'yes'
+        special_case_value = str(row.get('special_case', '')).strip().lower() == 'yes'
         return row['save_path'], special_case_value, True  # Save in save path or special case path
 
 def update_excel_summary(date_str, total_emails, saved_default, saved_actual, not_saved, failed_emails):
@@ -389,7 +445,11 @@ def index():
             try:
                 sender_path_table = pd.read_csv(filepath, encoding='utf-8')
             except UnicodeDecodeError:
-                sender_path_table = pd.read_csv(filepath, encoding='latin1')
+                try:
+                    sender_path_table = pd.read_csv(filepath, encoding='latin1')
+                except Exception as e:
+                    flash("Error reading the CSV file. Please ensure it's properly formatted.", 'error')
+                    return redirect(url_for('index'))
 
             account_email_address = "hf_data@bofa.com"
             socketio.start_background_task(save_emails_from_senders_on_date, account_email_address, date_str, sender_path_table, default_year)
@@ -406,12 +466,7 @@ def results():
 
     return render_template('results.html', logs=logs)
 
-def run_app():
-    socketio.run(app, debug=True, use_reloader=False, allow_unsafe_werkzeug=True)
-
 if __name__ == '__main__':
     os.makedirs('uploads', exist_ok=True)
     os.makedirs(DEFAULT_SAVE_PATH, exist_ok=True)
-
-    thread = Thread(target=run_app)
-    thread.start()
+    socketio.run(app, debug=True, use_reloader=False)
