@@ -232,8 +232,10 @@ def find_save_path(sender, subject, sender_path_table):
                 keywords = str(row.get('keywords', '')).split(';')
                 for keyword in keywords:
                     if keyword.lower() in subject.lower():
-                        return row['keyword_path'], False, True  # Save in keyword path
-                return row['save_path'], False, True  # Save in save path if no keywords match
+                        keyword_path = row.get('keyword_path', '')
+                        return keyword_path, False, True  # Save in keyword path
+                save_path = row.get('save_path', '')
+                return save_path, False, True  # Save in save path if no keywords match
         # If no coper_name matches, return None to indicate default save path
         return None, None, False  # Indicate that this is a default path email
 
@@ -243,10 +245,12 @@ def find_save_path(sender, subject, sender_path_table):
         keywords = str(row.get('keywords', '')).split(';')
         for keyword in keywords:
             if keyword.lower() in subject.lower():
-                return row['keyword_path'], False, True  # Save in keyword path
+                keyword_path = row.get('keyword_path', '')
+                return keyword_path, False, True  # Save in keyword path
         # Check if it's a special case
         special_case_value = str(row.get('special_case', '')).strip().lower() == 'yes'
-        return row['save_path'], special_case_value, True  # Save in save path or special case path
+        save_path = row.get('save_path', '')
+        return save_path, special_case_value, True  # Save in save path or special case path
 
 def update_excel_summary(date_str, total_emails, saved_default, saved_actual, not_saved, failed_emails):
     if os.path.exists(EXCEL_FILE_PATH):
@@ -357,6 +361,12 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
                     else:
                         save_path = os.path.join(base_path, str(year))
 
+            # Debugging statements to verify the save path
+            print(f"Email from: {sender_email}")
+            print(f"Subject: {item.Subject}")
+            print(f"Special Case: {special_case}")
+            print(f"Save Path: {save_path}")
+
             filename = save_email(item, save_path, special_case)
             logs.append(f"Saved: {filename} to {save_path}")
             processed = True
@@ -449,6 +459,9 @@ def index():
                 except Exception as e:
                     flash("Error reading the CSV file. Please ensure it's properly formatted.", 'error')
                     return redirect(url_for('index'))
+
+            # Standardize column names to lowercase
+            sender_path_table.columns = sender_path_table.columns.str.lower()
 
             account_email_address = "hf_data@bofa.com"
             socketio.start_background_task(save_emails_from_senders_on_date, account_email_address, date_str, sender_path_table, default_year)
