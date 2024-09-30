@@ -1,42 +1,26 @@
 import os
 import pandas as pd
-import sys
 
-def main():
-    # Check if a directory was provided as a command-line argument
-    if len(sys.argv) > 1:
-        directory = sys.argv[1]
-    else:
-        directory = '.'
+# Function to extract filenames from the provided directory
+def extract_filenames_to_excel(directory_path, output_excel):
+    # Check if the provided path is a valid directory
+    if not os.path.isdir(directory_path):
+        print(f"The path '{directory_path}' is not a valid directory.")
+        return
 
-    # Verify if the provided directory exists
-    if not os.path.isdir(directory):
-        print(f"The directory {directory} does not exist.")
-        sys.exit(1)
+    # Extract filenames
+    filenames = os.listdir(directory_path)
 
-    # List all files in the directory
-    try:
-        files = os.listdir(directory)
-    except Exception as e:
-        print(f"An error occurred while listing files in {directory}: {e}")
-        sys.exit(1)
+    # Create a DataFrame
+    df = pd.DataFrame(filenames, columns=["Filename"])
 
-    # Filter out directories, only include files
-    file_list = [f for f in files if os.path.isfile(os.path.join(directory, f))]
+    # Save to Excel
+    df.to_excel(output_excel, index=False)
+    print(f"Filenames have been extracted to '{output_excel}' successfully.")
 
-    # Create a DataFrame from the list of files
-    df = pd.DataFrame(file_list, columns=['File Name'])
+# User inputs for directory path and output Excel file
+directory_path = input("Enter the directory path: ")
+output_excel = input("Enter the output Excel filename (e.g., filenames.xlsx): ")
 
-    # Specify the output Excel file path
-    output_file = os.path.join(directory, 'filenames.xlsx')
-
-    # Write the DataFrame to an Excel file
-    try:
-        df.to_excel(output_file, index=False)
-        print(f"File names have been written to {output_file}")
-    except Exception as e:
-        print(f"An error occurred while writing to Excel: {e}")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+# Extract filenames and save to Excel
+extract_filenames_to_excel(directory_path, output_excel)
