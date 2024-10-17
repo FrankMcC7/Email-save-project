@@ -1,0 +1,18 @@
+<script type="text/javascript">
+    document.addEventListener("DOMContentLoaded", function() {
+        // Function to get query parameters from the URL
+        function getQueryParam(param) {
+            var urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(param);
+        }
+
+        // Capture the Parent ID from the current page URL (adjust this as needed)
+        var parentId = getQueryParam("ParentID"); // You can also fetch this from a known variable or element on the page
+
+        // Modify the "Add new item" link in the child list web part
+        var newItemButton = document.querySelector("a[data-command='new']"); // Adjust this selector if needed
+        if (newItemButton && parentId) {
+            newItemButton.href = "/sites/yoursite/Lists/ChildList/NewForm.aspx?ParentID=" + encodeURIComponent(parentId);
+        }
+    });
+</script>
