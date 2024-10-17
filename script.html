@@ -1,18 +1,55 @@
 <script type="text/javascript">
     document.addEventListener("DOMContentLoaded", function() {
-        // Function to get query parameters from the URL
-        function getQueryParam(param) {
-            var urlParams = new URLSearchParams(window.location.search);
-            return urlParams.get(param);
+        // Function to capture values from the parent details
+        function getParentDetails() {
+            // Replace these selectors with the actual selectors for each field
+            var parentIdElement = document.querySelector(".parent-id-class"); // Update this selector
+            var parentNameElement = document.querySelector(".parent-name-class"); // Update this selector
+            var managerNameElement = document.querySelector(".manager-name-class"); // Update this selector
+            
+            // Get the text content of each element, trim any extra whitespace, and return them
+            return {
+                parentId: parentIdElement ? parentIdElement.textContent.trim() : null,
+                parentName: parentNameElement ? parentNameElement.textContent.trim() : null,
+                managerName: managerNameElement ? managerNameElement.textContent.trim() : null
+            };
         }
 
-        // Capture the Parent ID from the current page URL (adjust this as needed)
-        var parentId = getQueryParam("ParentID"); // You can also fetch this from a known variable or element on the page
+        // Capture the details from the parent details panel
+        var parentDetails = getParentDetails();
 
-        // Modify the "Add new item" link in the child list web part
-        var newItemButton = document.querySelector("a[data-command='new']"); // Adjust this selector if needed
-        if (newItemButton && parentId) {
-            newItemButton.href = "/sites/yoursite/Lists/ChildList/NewForm.aspx?ParentID=" + encodeURIComponent(parentId);
+        // Check if all required details are present and modify the "Add new item" link in the child list web part
+        if (parentDetails.parentId && parentDetails.parentName && parentDetails.managerName) {
+            // Select the "Add new item" button in the child list web part
+            var newItemButton = document.querySelector("a[data-command='new']"); // Adjust this selector if necessary
+
+            if (newItemButton) {
+                // Build the URL with all parameters
+                var childFormUrl = "/sites/yoursite/Lists/ChildList/NewForm.aspx?ParentID=" + encodeURIComponent(parentDetails.parentId) +
+                                   "&ParentName=" + encodeURIComponent(parentDetails.parentName) +
+                                   "&ManagerName=" + encodeURIComponent(parentDetails.managerName);
+                // Set the href attribute of the button to the modified URL
+                newItemButton.href = childFormUrl;
+            }
+        }
+
+        // If on the child form page, pre-fill the fields using the URL parameters
+        if (window.location.pathname.includes("NewForm.aspx")) {
+            var urlParams = new URLSearchParams(window.location.search);
+            
+            // Retrieve each parameter from the URL
+            var parentIDParam = urlParams.get("ParentID");
+            var parentNameParam = urlParams.get("ParentName");
+            var managerNameParam = urlParams.get("ManagerName");
+
+            // Set the corresponding fields in the child form - Update these IDs to match your form fields
+            var parentIdField = document.getElementById("Parent_Reference_ID_Field_ID");
+            var parentNameField = document.getElementById("Parent_Name_Field_ID");
+            var managerNameField = document.getElementById("Manager_Name_Field_ID");
+
+            if (parentIdField && parentIDParam) parentIdField.value = parentIDParam;
+            if (parentNameField && parentNameParam) parentNameField.value = parentNameParam;
+            if (managerNameField && managerNameParam) managerNameField.value = managerNameParam;
         }
     });
 </script>
