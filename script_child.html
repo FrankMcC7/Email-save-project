@@ -1,0 +1,25 @@
+<script type="text/javascript">
+    document.addEventListener("DOMContentLoaded", function() {
+        // Function to get query string parameters
+        function getQueryParam(param) {
+            var params = new URLSearchParams(window.location.search);
+            return params.get(param);
+        }
+
+        // Auto-fill fields using the URL parameters
+        var managerID = getQueryParam("Manager_ID");
+        var manager = getQueryParam("Manager");
+        var managerName = getQueryParam("Manager_Name");
+        var region = getQueryParam("Region");
+        var frequency = getQueryParam("Frequency");
+        var vLookupParentID = getQueryParam("vLookupParentID");
+
+        // Set the values in the form fields (replace the selectors with actual field IDs)
+        if (managerID) document.querySelector("[FieldInternalName='Manager_ID'] input").value = managerID;
+        if (manager) document.querySelector("[FieldInternalName='Manager'] input").value = manager;
+        if (managerName) document.querySelector("[FieldInternalName='Manager_Name'] input").value = managerName;
+        if (region) document.querySelector("[FieldInternalName='Region'] input").value = region;
+        if (frequency) document.querySelector("[FieldInternalName='Frequency'] input").value = frequency;
+        if (vLookupParentID) document.querySelector("[FieldInternalName='vLookupParentID'] input").value = vLookupParentID;
+    });
+</script>
