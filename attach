@@ -1,0 +1,83 @@
+import os
+import re
+import win32com.client
+from datetime import datetime
+
+def download_attachments(save_folder: str) -> str:
+    # Connect to Outlook
+    outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+    inbox = outlook.GetDefaultFolder(6)  # 6 represents the Inbox folder
+
+    # Define the folder structure
+    subfolder_name = "Ask Compass"
+    sub_subfolder_name = "Forward Meeting Dashboard"
+
+    # Access each level of nested folder
+    try:
+        subfolder = inbox.Folders(subfolder_name)
+        target_folder = subfolder.Folders(sub_subfolder_name)
+        print(f"Successfully accessed folder path {sub_subfolder_name}")
+    except Exception as e:
+        print(f"Error accessing folders: {e}")
+        return "Folder access error"
+
+    # Define regex pattern for subject line with today's date
+    today_date = datetime.now().strftime("%d %B")  # Adjust date format as needed
+    subject_pattern = rf"CalendarMeeting as of {today_date}"
+    print(f"Expected subject pattern: {subject_pattern}")
+
+    # Search for today’s email
+    messages = target_folder.Items
+    message = None
+    for msg in messages:
+        if re.match(subject_pattern, msg.Subject):
+            message = msg
+            break
+
+    # Process attachments if email with the subject is found
+    if message is not None:
+        print(f"Email found with subject line: {message.Subject}")
+        print(f"Received time: {message.ReceivedTime}")
+        print(f"Number of attachments: {message.Attachments.Count}")
+
+        if message.Attachments.Count > 0:
+            # Ensure save folder exists
+            if not os.path.exists(save_folder):
+                try:
+                    os.makedirs(save_folder)
+                except OSError as e:
+                    print(f"Error creating directory '{save_folder}': {e}")
+                    return "Directory creation error"
+
+            # Save attachments
+            attachments_saved = False
+            for i in range(message.Attachments.Count):
+                try:
+                    attachment = message.Attachments.Item(i + 1)
+                    attachment_name = attachment.FileName or f"attachment_{i + 1}"  # Fallback name
+                    file_path = os.path.join(save_folder, attachment_name)
+                    print(f"Attempting to save attachment with name: {attachment_name}")
+                    attachment.SaveAsFile(file_path)
+                    print(f"Attachment saved as: {file_path}")
+                    attachments_saved = True
+                except Exception as e:
+                    print(f"Error saving attachment '{attachment_name}': {e}")
+                    
+            return "Attachments downloaded successfully" if attachments_saved else "No attachments saved"
+        else:
+            print("Email has no attachments.")
+            return "No attachments available in the email"
+    else:
+        print("Email with specified subject not found.")
+        print("Debug information:")
+        print(f"Target folder: {target_folder}")
+        print(f"Expected subject pattern: {subject_pattern}")
+        return "Email not found or subject pattern mismatch"
+
+def main():
+    save_folder = r"C:/Users/xyz/Downloads"
+    result = download_attachments(save_folder)
+    print(result)
+
+if __name__ == "__main__":
+    main()
