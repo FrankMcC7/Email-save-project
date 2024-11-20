@@ -2,6 +2,10 @@ import os
 import datetime
 import pythoncom
 import win32com.client as win32
+import openpyxl
+from openpyxl import Workbook
+
+METRICS_FILE = "backup_metrics.xlsx"  # File to store backup metrics
 
 def sanitize_filename(filename):
     """
@@ -35,8 +39,28 @@ def save_email(item, save_path):
         # Save the email as a .msg file
         item.SaveAs(save_path, 3)  # 3 refers to the MSG format
         print(f"Saved email: {save_path}")
+        return True
     except Exception as e:
         print(f"Failed to save email '{item.Subject}': {str(e)}")
+        return False
+
+def log_metrics(date, total_emails, saved_emails, failed_emails):
+    """
+    Log the backup metrics in an Excel workbook.
+    """
+    if not os.path.exists(METRICS_FILE):
+        # Create a new workbook if it doesn't exist
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Backup Metrics"
+        ws.append(["Date", "Total Emails", "Saved Emails", "Failed Emails"])
+        wb.save(METRICS_FILE)
+
+    # Open the workbook and append the metrics
+    wb = openpyxl.load_workbook(METRICS_FILE)
+    ws = wb["Backup Metrics"]
+    ws.append([date, total_emails, saved_emails, failed_emails])
+    wb.save(METRICS_FILE)
 
 def generate_date_range(start_date, end_date):
     """
@@ -106,10 +130,14 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
             total_messages = len(filtered_messages)
             print(f"Found {total_messages} messages received on {backup_date.strftime('%Y-%m-%d')} in '{mailbox_name}' inbox.")
 
+            saved_emails = 0
+            failed_emails = 0
+
             for idx, message in enumerate(filtered_messages):
                 try:
-                    # Construct a filename using only the subject
-                    subject = sanitize_filename(message.Subject) or "No Subject"
+                    # Handle cases with no sender or subject
+                    subject = sanitize_filename(message.Subject or "No Subject")
+                    sender = sanitize_filename(message.SenderName or "Unknown Sender")
                     filename = f"{subject}.msg"
 
                     # Truncate the filename if necessary
@@ -126,12 +154,18 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
                         counter += 1
 
                     # Save the email
-                    save_email(message, full_path)
+                    if save_email(message, full_path):
+                        saved_emails += 1
+                    else:
+                        failed_emails += 1
 
                 except Exception as e:
                     print(f"Error processing email '{message.Subject}': {str(e)}")
+                    failed_emails += 1
                     continue
 
+            # Log metrics for the date
+            log_metrics(backup_date.strftime('%Y-%m-%d'), total_messages, saved_emails, failed_emails)
             print(f"Backup for {backup_date.strftime('%Y-%m-%d')} completed successfully.\n")
 
     except Exception as e:
