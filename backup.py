@@ -127,11 +127,10 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
             messages = inbox.Items
 
             # Set the date range for the filter (from start to end of the backup date)
-            start_date = backup_date.strftime('%m/%d/%Y %I:%M %p')
-            end_date = (backup_date + datetime.timedelta(days=1)).strftime('%m/%d/%Y %I:%M %p')
+            start_date = backup_date.strftime('%m/%d/%Y %H:%M')
+            end_date = (backup_date + datetime.timedelta(days=1)).strftime('%m/%d/%Y %H:%M')
 
-            # Enclose dates in # symbols for proper Outlook formatting
-            restriction = f"[ReceivedTime] >= #{start_date}# AND [ReceivedTime] < #{end_date}#"
+            restriction = f"[ReceivedTime] >= '{start_date}' AND [ReceivedTime] < '{end_date}'"
             filtered_messages = messages.Restrict(restriction)
 
             total_messages = len(filtered_messages)
@@ -170,7 +169,7 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
         pythoncom.CoUninitialize()
 
 if __name__ == "__main__":
-    mailbox_name = "Mailbox"
+    mailbox_name = "ailbox"
     backup_root_directory = r"C:\EmailBackups"
 
     print("Enter start date (YYYY-MM-DD): ")
