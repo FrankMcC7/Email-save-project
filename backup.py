@@ -82,7 +82,7 @@ def log_metrics(date, total_emails, saved_emails, fallback_emails, processing_er
         ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Processing Errors"])
         # Create the 'Failed Emails' sheet
         ws_failed = wb.create_sheet(title="Failed Emails")
-        ws_failed.append(["Date", "Sender Address", "Subject"])
+        ws_failed.append(["Date", "Sender Address", "Subject", "Error Message"])
         wb.save(METRICS_FILE)
 
     # Open the workbook and append the metrics
@@ -94,11 +94,11 @@ def log_metrics(date, total_emails, saved_emails, fallback_emails, processing_er
     if failed_emails:
         if "Failed Emails" not in wb.sheetnames:
             ws_failed = wb.create_sheet(title="Failed Emails")
-            ws_failed.append(["Date", "Sender Address", "Subject"])
+            ws_failed.append(["Date", "Sender Address", "Subject", "Error Message"])
         else:
             ws_failed = wb["Failed Emails"]
         for failed_email in failed_emails:
-            ws_failed.append(failed_email)  # Each failed_email is a tuple (date, sender_address, subject)
+            ws_failed.append(failed_email)  # Each failed_email is a tuple (date, sender_address, subject, error_message)
 
     wb.save(METRICS_FILE)
 
@@ -187,19 +187,23 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
                     else:
                         # Save failed
                         processing_errors += 1
+                        error_message = f"Failed to save email '{subject}'"
                         failed_emails.append((
                             backup_date.strftime('%Y-%m-%d'),
                             getattr(message, 'SenderEmailAddress', 'Unknown'),
-                            getattr(message, 'Subject', 'No Subject')
+                            subject,
+                            error_message
                         ))
                 except Exception as e:
-                    print(f"Error processing email '{getattr(message, 'Subject', 'No Subject')}': {str(e)}")
+                    error_message = str(e)
+                    print(f"Error processing email '{getattr(message, 'Subject', 'No Subject')}': {error_message}")
                     processing_errors += 1
                     # Record the failed email
                     failed_emails.append((
                         backup_date.strftime('%Y-%m-%d'),
                         getattr(message, 'SenderEmailAddress', 'Unknown'),
-                        getattr(message, 'Subject', 'No Subject')
+                        getattr(message, 'Subject', 'No Subject'),
+                        error_message
                     ))
                     continue
 
@@ -220,7 +224,7 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
         pythoncom.CoUninitialize()
 
 if __name__ == "__main__":
-    mailbox_name = "GMailbox"
+    mailbox_name = "Gbox"
     backup_root_directory = r"C:\EmailBackups"
 
     print("Select backup option:")
