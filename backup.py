@@ -14,6 +14,41 @@ def sanitize_filename(filename):
     filename = ''.join(c for c in filename if c.isprintable())
     return filename.strip()
 
+def truncate_filename(full_path, filename, max_path_length=255):
+    """
+    Truncate the filename to ensure the total path length is less than 255 characters.
+    """
+    save_path_length = len(os.path.dirname(full_path)) + 1  # Include the directory path and slash
+    max_filename_length = max_path_length - save_path_length
+
+    # Ensure filename doesn't exceed the max length
+    if len(filename) > max_filename_length:
+        filename = filename[:max_filename_length - 4] + ".msg"  # Reserve space for ".msg"
+
+    return filename
+
+def save_email(item, save_path):
+    """
+    Save an email as a .msg file.
+    """
+    try:
+        # Save the email as a .msg file
+        item.SaveAs(save_path, 3)  # 3 refers to the MSG format
+        print(f"Saved email: {save_path}")
+    except Exception as e:
+        print(f"Failed to save email '{item.Subject}': {str(e)}")
+
+def generate_date_range(start_date, end_date):
+    """
+    Generate a list of dates from start_date to end_date inclusive.
+    """
+    date_range = []
+    current_date = start_date
+    while current_date <= end_date:
+        date_range.append(current_date.strftime('%Y-%m-%d'))
+        current_date += datetime.timedelta(days=1)
+    return date_range
+
 def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
     """
     Backs up all emails from the specified shared mailbox received on the backup_dates to the specified directory.
@@ -73,36 +108,28 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
 
             for idx, message in enumerate(filtered_messages):
                 try:
-                    # Construct a filename for the email
-                    received_time = message.ReceivedTime.strftime('%Y-%m-%d_%H-%M-%S')
+                    # Construct a filename using only the subject
                     subject = sanitize_filename(message.Subject) or "No Subject"
-                    sender = sanitize_filename(message.SenderName) or "Unknown Sender"
-                    filename = f"{received_time} - {sender} - {subject}.msg"
+                    filename = f"{subject}.msg"
 
-                    # Ensure the filename is not too long
-                    if len(filename) > 255:
-                        filename = filename[:250] + ".msg"
-
-                    # Define the full path to save the email
+                    # Truncate the filename if necessary
+                    full_path = os.path.join(save_directory, filename)
+                    filename = truncate_filename(full_path, filename)
                     full_path = os.path.join(save_directory, filename)
 
-                    # Check if file already exists
-                    if os.path.exists(full_path):
-                        # Append a counter to the filename
-                        counter = 1
-                        base_filename, ext = os.path.splitext(filename)
-                        while os.path.exists(full_path):
-                            filename = f"{base_filename}_{counter}{ext}"
-                            full_path = os.path.join(save_directory, filename)
-                            counter += 1
+                    # Ensure uniqueness by appending a counter if the file already exists
+                    counter = 1
+                    while os.path.exists(full_path):
+                        filename = f"{subject}_{counter}.msg"
+                        filename = truncate_filename(os.path.join(save_directory, filename), filename)
+                        full_path = os.path.join(save_directory, filename)
+                        counter += 1
 
-                    # Save the email as a .msg file
-                    message.SaveAs(full_path, 3)  # 3 refers to the MSG format
-
-                    print(f"[{idx+1}/{total_messages}] Saved email: {filename}")
+                    # Save the email
+                    save_email(message, full_path)
 
                 except Exception as e:
-                    print(f"Failed to save email '{message.Subject}': {str(e)}")
+                    print(f"Error processing email '{message.Subject}': {str(e)}")
                     continue
 
             print(f"Backup for {backup_date.strftime('%Y-%m-%d')} completed successfully.\n")
@@ -120,13 +147,30 @@ if __name__ == "__main__":
     backup_root_directory = r"C:\EmailBackups"  # Replace with your desired backup root directory
 
     # Prompt the user for dates
-    print("Enter the dates for which you want to backup emails.")
-    print("You can enter multiple dates separated by commas.")
-    print("Dates should be in YYYY-MM-DD format.")
-    dates_input = input("Enter date(s): ")
+    print("Would you like to provide:")
+    print("1. Specific dates (comma-separated, e.g., 2024-11-19,2024-11-20)")
+    print("2. A date range (e.g., 2024-11-19 to 2024-11-25)")
+    choice = input("Enter 1 or 2: ").strip()
 
-    # Split the input into a list of dates
-    backup_dates = [date.strip() for date in dates_input.split(",")]
+    if choice == "1":
+        dates_input = input("Enter date(s) (YYYY-MM-DD, comma-separated): ")
+        backup_dates = [date.strip() for date in dates_input.split(",")]
+    elif choice == "2":
+        start_date_input = input("Enter start date (YYYY-MM-DD): ").strip()
+        end_date_input = input("Enter end date (YYYY-MM-DD): ").strip()
+        try:
+            start_date = datetime.datetime.strptime(start_date_input, '%Y-%m-%d')
+            end_date = datetime.datetime.strptime(end_date_input, '%Y-%m-%d')
+            if start_date > end_date:
+                print("Start date cannot be after end date. Exiting.")
+                exit()
+            backup_dates = generate_date_range(start_date, end_date)
+        except ValueError:
+            print("Invalid date format. Please use YYYY-MM-DD.")
+            exit()
+    else:
+        print("Invalid choice. Exiting.")
+        exit()
 
     if not backup_dates or backup_dates == ['']:
         print("No dates entered. Exiting the script.")
