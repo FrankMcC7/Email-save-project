@@ -1,5 +1,4 @@
 import os
-import sys
 import datetime
 import pythoncom
 import win32com.client as win32
@@ -15,29 +14,32 @@ def sanitize_filename(filename):
     filename = ''.join(c for c in filename if c.isprintable())
     return filename.strip()
 
-def backup_inbox(email_address, backup_root_directory, backup_dates):
+def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
     """
-    Backs up all emails from the specified Outlook inbox received on the backup_dates to the specified directory.
+    Backs up all emails from the specified shared mailbox received on the backup_dates to the specified directory.
     """
     pythoncom.CoInitialize()
     try:
         outlook = win32.Dispatch("Outlook.Application").GetNamespace("MAPI")
 
-        inbox = None
-        # Iterate through all accounts to find the matching email address
-        for account in outlook.Folders:
-            if account.Name.lower() == email_address.lower():
-                inbox = account.Folders["Inbox"]
+        # Locate the shared mailbox by name
+        shared_mailbox = None
+        for folder in outlook.Folders:
+            if folder.Name.lower() == mailbox_name.lower():
+                shared_mailbox = folder
                 break
 
-        if inbox is None:
-            print(f"Could not find inbox for email address: {email_address}")
+        if not shared_mailbox:
+            print(f"Could not find the shared mailbox: {mailbox_name}")
             return
+
+        # Get the Inbox folder of the shared mailbox
+        inbox = shared_mailbox.Folders["Inbox"]
 
         # Process each date in the backup_dates list
         for backup_date_str in backup_dates:
-            # Convert backup_date string to datetime object
             try:
+                # Convert backup_date string to datetime object
                 backup_date = datetime.datetime.strptime(backup_date_str, '%Y-%m-%d')
             except ValueError:
                 print(f"Invalid date format: {backup_date_str}. Please use YYYY-MM-DD format.")
@@ -67,7 +69,7 @@ def backup_inbox(email_address, backup_root_directory, backup_dates):
             filtered_messages = messages.Restrict(restriction)
 
             total_messages = len(filtered_messages)
-            print(f"Found {total_messages} messages received on {backup_date.strftime('%Y-%m-%d')} in inbox '{email_address}'.")
+            print(f"Found {total_messages} messages received on {backup_date.strftime('%Y-%m-%d')} in '{mailbox_name}' inbox.")
 
             for idx, message in enumerate(filtered_messages):
                 try:
@@ -111,8 +113,8 @@ def backup_inbox(email_address, backup_root_directory, backup_dates):
         pythoncom.CoUninitialize()
 
 if __name__ == "__main__":
-    # Hardcoded email address of the inbox
-    email_address = "your_inbox_email@example.com"  # Replace with your inbox email address
+    # Hardcoded shared mailbox name
+    mailbox_name = "Mailbox"  # Replace with the exact name of your shared mailbox
 
     # Hardcoded backup root directory
     backup_root_directory = r"C:\EmailBackups"  # Replace with your desired backup root directory
@@ -129,4 +131,4 @@ if __name__ == "__main__":
     if not backup_dates or backup_dates == ['']:
         print("No dates entered. Exiting the script.")
     else:
-        backup_inbox(email_address, backup_root_directory, backup_dates)
+        backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates)
