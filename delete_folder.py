@@ -1,5 +1,4 @@
 import os
-import sys
 
 def remove_empty_dirs(path):
     """Recursively delete empty folders within the provided directory."""
@@ -13,13 +12,10 @@ def remove_empty_dirs(path):
                 print(f"Error removing {dirpath}: {e}")
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print("Usage: python script_name.py <directory>")
-        sys.exit(1)
+    # Hardcoded directory path
+    root_dir = '/path/to/your/directory'  # Replace with your directory path
 
-    root_dir = sys.argv[1]
     if not os.path.isdir(root_dir):
         print(f"Error: {root_dir} is not a valid directory.")
-        sys.exit(1)
-
-    remove_empty_dirs(root_dir)
+    else:
+        remove_empty_dirs(root_dir)
