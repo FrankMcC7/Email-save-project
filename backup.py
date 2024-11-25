@@ -8,7 +8,8 @@ from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font
 
-EMAIL_LOG_FILE = "backup_email_log.xlsx"  # File to log email details
+METRICS_FILE = "backup_metrics.xlsx"       # File to store backup metrics
+EMAIL_LOG_FILE = "backup_email_log.xlsx"   # File to log email details
 
 def sanitize_filename(filename, max_length=100):
     """
@@ -69,6 +70,44 @@ def save_email(item, save_path):
         print(f"Failed to save email: {getattr(item, 'Subject', 'No Subject')} - Error: {str(e)}")
         return False
 
+def log_metrics(date, total_emails, saved_emails, fallback_emails, processing_errors, failed_emails):
+    """
+    Log the backup metrics in an Excel workbook.
+    Also, log the failed emails in a separate sheet.
+    """
+    try:
+        if os.path.exists(METRICS_FILE):
+            wb = openpyxl.load_workbook(METRICS_FILE)
+        else:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Backup Metrics"
+            ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Processing Errors"])
+            ws_failed = wb.create_sheet(title="Failed Emails")
+            ws_failed.append(["Date", "Sender Address", "Subject", "Error Message"])
+
+        # Get or create the sheets
+        if "Backup Metrics" in wb.sheetnames:
+            ws = wb["Backup Metrics"]
+        else:
+            ws = wb.create_sheet(title="Backup Metrics")
+            ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Processing Errors"])
+
+        ws.append([date, total_emails, saved_emails, fallback_emails, processing_errors])
+
+        if failed_emails:
+            if "Failed Emails" in wb.sheetnames:
+                ws_failed = wb["Failed Emails"]
+            else:
+                ws_failed = wb.create_sheet(title="Failed Emails")
+                ws_failed.append(["Date", "Sender Address", "Subject", "Error Message"])
+            for failed_email in failed_emails:
+                ws_failed.append(failed_email)
+
+        wb.save(METRICS_FILE)
+    except Exception as e:
+        print(f"Failed to log metrics: {str(e)}")
+
 def log_email_details(backup_date, sender_email, subject, file_path):
     """
     Log email details into the Excel file for easy search and access.
@@ -95,11 +134,15 @@ def log_email_details(backup_date, sender_email, subject, file_path):
         new_row = ws.max_row + 1
         ws.cell(row=new_row, column=1, value=backup_date)  # Date
         ws.cell(row=new_row, column=2, value=sender_email)  # Sender Email
-        
+
         # Add subject as a hyperlink
         subject_cell = ws.cell(row=new_row, column=3, value=subject)
         subject_cell.hyperlink = file_path
         subject_cell.font = Font(color="0000FF", underline="single")
+
+        # Apply AutoFilter to the header row
+        if ws.auto_filter.ref is None:
+            ws.auto_filter.ref = f"A1:C{ws.max_row}"
 
         wb.save(EMAIL_LOG_FILE)
     except Exception as e:
@@ -159,9 +202,21 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
             total_messages = len(messages)
             print(f"Found {total_messages} messages for {backup_date_str} in '{mailbox_name}'.")
 
+            saved_emails = 0
+            fallback_emails = 0
+            processing_errors = 0
+            failed_emails = []
+
             for message in messages:
                 try:
                     if not hasattr(message, "SaveAs"):
+                        failed_emails.append((
+                            backup_date.strftime('%Y-%m-%d'),
+                            getattr(message, 'SenderEmailAddress', 'Unknown'),
+                            getattr(message, 'Subject', 'No Subject'),
+                            "Unsupported item type"
+                        ))
+                        processing_errors += 1
                         continue
 
                     subject = sanitize_filename(message.Subject or "No Subject")
@@ -170,15 +225,44 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
                     full_path = os.path.join(save_directory, filename)
 
                     if save_email(message, full_path):
+                        if filename != f"{subject}.msg":
+                            fallback_emails += 1
+                        saved_emails += 1
+
+                        # Log email details with hyperlink
                         log_email_details(
                             backup_date.strftime('%Y-%m-%d'),
                             sender_email,
                             subject,
                             full_path
                         )
+                    else:
+                        processing_errors += 1
+                        failed_emails.append((
+                            backup_date.strftime('%Y-%m-%d'),
+                            sender_email,
+                            subject,
+                            "Save failed"
+                        ))
                 except Exception as e:
-                    print(f"Failed to process email: {str(e)}")
+                    failed_emails.append((
+                        backup_date.strftime('%Y-%m-%d'),
+                        getattr(message, 'SenderEmailAddress', 'Unknown'),
+                        getattr(message, 'Subject', 'No Subject'),
+                        str(e)
+                    ))
+                    processing_errors += 1
                     continue
+
+            log_metrics(
+                backup_date.strftime('%Y-%m-%d'),
+                total_messages,
+                saved_emails,
+                fallback_emails,
+                processing_errors,
+                failed_emails
+            )
+            print(f"Backup for {backup_date_str} completed.\n")
 
         # Release Outlook COM objects
         inbox = None
