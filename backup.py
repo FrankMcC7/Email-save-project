@@ -5,8 +5,9 @@ import pythoncom
 import win32com.client as win32
 import openpyxl
 from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font
 
-METRICS_FILE = "backup_metrics.xlsx"  # File to store backup metrics
 EMAIL_LOG_FILE = "backup_email_log.xlsx"  # File to log email details
 
 def sanitize_filename(filename, max_length=100):
@@ -71,6 +72,7 @@ def save_email(item, save_path):
 def log_email_details(backup_date, sender_email, subject, file_path):
     """
     Log email details into the Excel file for easy search and access.
+    Converts the subject to a hyperlink pointing to the saved file.
     """
     try:
         if os.path.exists(EMAIL_LOG_FILE):
@@ -79,17 +81,26 @@ def log_email_details(backup_date, sender_email, subject, file_path):
             wb = Workbook()
             ws = wb.active
             ws.title = "Email Logs"
-            ws.append(["Date", "Sender Email", "Subject", "File Path"])
+            ws.append(["Date", "Sender Email", "Subject"])
 
         # Get or create the worksheet
         if "Email Logs" in wb.sheetnames:
             ws = wb["Email Logs"]
         else:
             ws = wb.create_sheet(title="Email Logs")
-            ws.append(["Date", "Sender Email", "Subject", "File Path"])
+            ws.append(["Date", "Sender Email", "Subject"])
 
         # Append the email details
-        ws.append([backup_date, sender_email, subject, file_path])
+        ws = wb["Email Logs"]
+        new_row = ws.max_row + 1
+        ws.cell(row=new_row, column=1, value=backup_date)  # Date
+        ws.cell(row=new_row, column=2, value=sender_email)  # Sender Email
+        
+        # Add subject as a hyperlink
+        subject_cell = ws.cell(row=new_row, column=3, value=subject)
+        subject_cell.hyperlink = file_path
+        subject_cell.font = Font(color="0000FF", underline="single")
+
         wb.save(EMAIL_LOG_FILE)
     except Exception as e:
         print(f"Failed to log email details: {str(e)}")
