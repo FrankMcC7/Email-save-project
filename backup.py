@@ -7,6 +7,7 @@ import openpyxl
 from openpyxl import Workbook
 
 METRICS_FILE = "backup_metrics.xlsx"  # File to store backup metrics
+EMAIL_LOG_FILE = "backup_email_log.xlsx"  # File to log email details
 
 def sanitize_filename(filename, max_length=100):
     """
@@ -67,50 +68,31 @@ def save_email(item, save_path):
         print(f"Failed to save email: {getattr(item, 'Subject', 'No Subject')} - Error: {str(e)}")
         return False
 
-def log_metrics(date, total_emails, saved_emails, fallback_emails, processing_errors, failed_emails):
+def log_email_details(backup_date, sender_email, subject, file_path):
     """
-    Log the backup metrics in an Excel workbook.
-    Also, log the failed emails in a separate sheet.
+    Log email details into the Excel file for easy search and access.
     """
     try:
-        if os.path.exists(METRICS_FILE):
-            wb = openpyxl.load_workbook(METRICS_FILE)
+        if os.path.exists(EMAIL_LOG_FILE):
+            wb = openpyxl.load_workbook(EMAIL_LOG_FILE)
         else:
             wb = Workbook()
             ws = wb.active
-            ws.title = "Backup Metrics"
-            ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Processing Errors"])
-            ws_failed = wb.create_sheet(title="Failed Emails")
-            ws_failed.append(["Date", "Sender Address", "Subject", "Error Message"])
-    except Exception as e:
-        print(f"Failed to open or create metrics file '{METRICS_FILE}': {str(e)}")
-        # Recreate the workbook
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Backup Metrics"
-        ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Processing Errors"])
-        ws_failed = wb.create_sheet(title="Failed Emails")
-        ws_failed.append(["Date", "Sender Address", "Subject", "Error Message"])
+            ws.title = "Email Logs"
+            ws.append(["Date", "Sender Email", "Subject", "File Path"])
 
-    # Get or create the sheets
-    if "Backup Metrics" in wb.sheetnames:
-        ws = wb["Backup Metrics"]
-    else:
-        ws = wb.create_sheet(title="Backup Metrics")
-        ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Processing Errors"])
-
-    ws.append([date, total_emails, saved_emails, fallback_emails, processing_errors])
-
-    if failed_emails:
-        if "Failed Emails" in wb.sheetnames:
-            ws_failed = wb["Failed Emails"]
+        # Get or create the worksheet
+        if "Email Logs" in wb.sheetnames:
+            ws = wb["Email Logs"]
         else:
-            ws_failed = wb.create_sheet(title="Failed Emails")
-            ws_failed.append(["Date", "Sender Address", "Subject", "Error Message"])
-        for failed_email in failed_emails:
-            ws_failed.append(failed_email)
+            ws = wb.create_sheet(title="Email Logs")
+            ws.append(["Date", "Sender Email", "Subject", "File Path"])
 
-    wb.save(METRICS_FILE)
+        # Append the email details
+        ws.append([backup_date, sender_email, subject, file_path])
+        wb.save(EMAIL_LOG_FILE)
+    except Exception as e:
+        print(f"Failed to log email details: {str(e)}")
 
 def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
     """
@@ -166,58 +148,26 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
             total_messages = len(messages)
             print(f"Found {total_messages} messages for {backup_date_str} in '{mailbox_name}'.")
 
-            saved_emails = 0
-            fallback_emails = 0
-            processing_errors = 0
-            failed_emails = []
-
             for message in messages:
                 try:
                     if not hasattr(message, "SaveAs"):
-                        failed_emails.append((
-                            backup_date.strftime('%Y-%m-%d'),
-                            getattr(message, 'SenderEmailAddress', 'Unknown'),
-                            getattr(message, 'Subject', 'No Subject'),
-                            "Unsupported item type"
-                        ))
-                        processing_errors += 1
                         continue
 
                     subject = sanitize_filename(message.Subject or "No Subject")
+                    sender_email = getattr(message, "SenderEmailAddress", "Unknown")
                     filename = truncate_or_fallback_filename(save_directory, subject)
                     full_path = os.path.join(save_directory, filename)
 
                     if save_email(message, full_path):
-                        if filename != f"{subject}.msg":
-                            fallback_emails += 1
-                        saved_emails += 1
-                    else:
-                        processing_errors += 1
-                        failed_emails.append((
+                        log_email_details(
                             backup_date.strftime('%Y-%m-%d'),
-                            getattr(message, 'SenderEmailAddress', 'Unknown'),
+                            sender_email,
                             subject,
-                            "Save failed"
-                        ))
+                            full_path
+                        )
                 except Exception as e:
-                    failed_emails.append((
-                        backup_date.strftime('%Y-%m-%d'),
-                        getattr(message, 'SenderEmailAddress', 'Unknown'),
-                        getattr(message, 'Subject', 'No Subject'),
-                        str(e)
-                    ))
-                    processing_errors += 1
+                    print(f"Failed to process email: {str(e)}")
                     continue
-
-            log_metrics(
-                backup_date.strftime('%Y-%m-%d'),
-                total_messages,
-                saved_emails,
-                fallback_emails,
-                processing_errors,
-                failed_emails
-            )
-            print(f"Backup for {backup_date_str} completed.\n")
 
         # Release Outlook COM objects
         inbox = None
