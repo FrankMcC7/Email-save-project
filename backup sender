@@ -1,0 +1,26 @@
+def get_sender_email(message):
+    """
+    Retrieve the sender's email address in the correct format.
+    Handles Exchange Distinguished Names and resolves them to SMTP addresses.
+    """
+    try:
+        # Attempt to retrieve the email from the AddressEntry
+        if message.Sender and message.Sender.AddressEntry:
+            address_entry = message.Sender.AddressEntry
+
+            # Check if the address type is Exchange (EX)
+            if address_entry.Type == "EX":  
+                exchange_user = address_entry.GetExchangeUser()
+                if exchange_user:
+                    return exchange_user.PrimarySmtpAddress
+
+            # For non-Exchange addresses, try the Address property
+            return address_entry.Address
+
+        # Fallback to PropertyAccessor (if available)
+        PR_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
+        sender_email = message.PropertyAccessor.GetProperty(PR_SMTP_ADDRESS)
+        return sender_email if sender_email else "Unknown"
+    except Exception as e:
+        print(f"Failed to retrieve sender email: {str(e)}")
+        return "Unknown"
