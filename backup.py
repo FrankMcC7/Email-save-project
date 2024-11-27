@@ -70,29 +70,34 @@ def save_email(item, save_path):
 
 def get_sender_email(message):
     """
-    Retrieve the sender's email address using multiple fallback methods.
+    Retrieve the sender's email address in the correct format.
+    Handles Exchange Distinguished Names and resolves them to SMTP addresses.
     """
     try:
-        # Attempt to retrieve SMTP address directly from the PropertyAccessor
-        PR_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
-        sender_email = message.PropertyAccessor.GetProperty(PR_SMTP_ADDRESS)
-        if sender_email:
-            return sender_email
-
-        # Attempt to retrieve the email from the AddressEntry
+        # Check if the Sender and AddressEntry exist
         if message.Sender and message.Sender.AddressEntry:
             address_entry = message.Sender.AddressEntry
-            if address_entry.Type == "EX":  # If it's an Exchange address
+
+            # Check if the AddressEntry is of type Exchange
+            if address_entry.Type == "EX":  
+                # Try to resolve as an Exchange User
                 exchange_user = address_entry.GetExchangeUser()
                 if exchange_user:
-                    sender_email = exchange_user.PrimarySmtpAddress
-                    return sender_email
-            else:
-                # For non-Exchange addresses, try the Address property
-                return address_entry.Address
+                    return exchange_user.PrimarySmtpAddress  # Return SMTP address
+                
+                # Try to resolve as a Distribution List
+                exchange_dl = address_entry.GetExchangeDistributionList()
+                if exchange_dl:
+                    return exchange_dl.PrimarySmtpAddress  # Return SMTP address
 
-        # Fallback to "Unknown" if no email is found
-        return "Unknown"
+            # If not Exchange type, return the Address property
+            return address_entry.Address
+
+        # As a fallback, try to retrieve via PropertyAccessor
+        PR_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
+        sender_email = message.PropertyAccessor.GetProperty(PR_SMTP_ADDRESS)
+        return sender_email if sender_email else "Unknown"
+
     except Exception as e:
         print(f"Failed to retrieve sender email: {str(e)}")
         return "Unknown"
@@ -242,9 +247,4 @@ if __name__ == "__main__":
     choice = input("Backup for 1) Yesterday or 2) Specific date/range? Enter 1 or 2: ")
     if choice == '1':
         yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
-        backup_shared_mailbox(mailbox_name, backup_root_directory, [yesterday.strftime('%Y-%m-%d')])
-    elif choice == '2':
-        start_date = input("Enter start date (YYYY-MM-DD): ")
-        end_date = input("Enter end date (YYYY-MM-DD): ")
-        dates = [
-            (datetime.datetime.strptime(start_date, '%Y-%m-%
+        backup_shared_mailbox(mailbox_name, backup_root_directory, [yesterday.strftime
