@@ -79,16 +79,17 @@ def get_sender_email(message):
             address_entry = message.Sender.AddressEntry
 
             # Check if the AddressEntry is of type Exchange
-            if address_entry.Type == "EX":  
+            if address_entry.Type == "EX":
                 # Try to resolve as an Exchange User
                 exchange_user = address_entry.GetExchangeUser()
-                if exchange_user:
-                    return exchange_user.PrimarySmtpAddress  # Return SMTP address
-                
-                # Try to resolve as a Distribution List
-                exchange_dl = address_entry.GetExchangeDistributionList()
-                if exchange_dl:
-                    return exchange_dl.PrimarySmtpAddress  # Return SMTP address
+                if exchange_user and exchange_user.PrimarySmtpAddress:
+                    return exchange_user.PrimarySmtpAddress
+
+                # Fallback: Query LDAP using Distinguished Name
+                dn = address_entry.Address  # This will be the X.500 DN
+                smtp_address = query_ldap_for_smtp(dn)
+                if smtp_address:
+                    return smtp_address
 
             # If not Exchange type, return the Address property
             return address_entry.Address
@@ -101,6 +102,28 @@ def get_sender_email(message):
     except Exception as e:
         print(f"Failed to retrieve sender email: {str(e)}")
         return "Unknown"
+
+
+def query_ldap_for_smtp(distinguished_name):
+    """
+    Query Active Directory via LDAP to resolve the SMTP address for a given DN.
+    """
+    try:
+        # Initialize LDAP connection
+        ldap_conn = win32.Dispatch("ADsNameSpaces").GetObject("", "LDAP:")
+        ldap_object = ldap_conn.OpenDSObject(
+            f"LDAP://{distinguished_name}",  # Distinguished Name (DN)
+            None,  # User credentials (if needed)
+            None,
+            1  # Read access
+        )
+
+        # Get the SMTP address
+        smtp_address = ldap_object.Get("mail")
+        return smtp_address if smtp_address else None
+    except Exception as e:
+        print(f"LDAP query failed for DN '{distinguished_name}': {str(e)}")
+        return None
 
 
 def log_email_details(backup_date, sender_name, sender_email, subject, file_path):
@@ -228,8 +251,12 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
                     print(f"Failed to process email: {str(e)}")
                     errors += 1
 
+
+
+# Log metrics for the current date
             log_metrics(backup_date.strftime('%Y-%m-%d'), total_messages, saved_emails, fallback_emails, errors)
 
+        # Release Outlook COM objects
         inbox = None
         shared_mailbox = None
         outlook = None
@@ -244,7 +271,54 @@ if __name__ == "__main__":
     mailbox_name = "GMailbox"
     backup_root_directory = r"C:\EmailBackups"
 
-    choice = input("Backup for 1) Yesterday or 2) Specific date/range? Enter 1 or 2: ")
-    if choice == '1':
-        yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
-        backup_shared_mailbox(mailbox_name, backup_root_directory, [yesterday.strftime
+    while True:
+        print("Select backup option:")
+        print("1. Backup emails for yesterday")
+        print("2. Backup emails for a specific date or range of dates")
+        choice = input("Enter 1 or 2: ")
+
+        if choice == '1':
+            yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+            backup_dates = [yesterday.strftime('%Y-%m-%d')]
+            break
+        elif choice == '2':
+            while True:
+                print("Do you want to backup emails for:")
+                print("1. A single date")
+                print("2. A range of dates")
+                date_choice = input("Enter 1 or 2: ")
+
+                if date_choice == '1':
+                    date_input = input("Enter the date (YYYY-MM-DD): ")
+                    try:
+                        backup_date = datetime.datetime.strptime(date_input, '%Y-%m-%d')
+                        backup_dates = [backup_date.strftime('%Y-%m-%d')]
+                        break
+                    except ValueError:
+                        print("Invalid date format. Please use YYYY-MM-DD.")
+                        continue
+                elif date_choice == '2':
+                    start_date = input("Enter start date (YYYY-MM-DD): ")
+                    end_date = input("Enter end date (YYYY-MM-DD): ")
+                    try:
+                        start_dt = datetime.datetime.strptime(start_date, '%Y-%m-%d')
+                        end_dt = datetime.datetime.strptime(end_date, '%Y-%m-%d')
+                        if start_dt > end_dt:
+                            print("Start date cannot be after end date.")
+                            continue
+                        backup_dates = [
+                            (start_dt + datetime.timedelta(days=i)).strftime('%Y-%m-%d')
+                            for i in range((end_dt - start_dt).days + 1)
+                        ]
+                        break
+                    except ValueError:
+                        print("Invalid date format. Please use YYYY-MM-DD.")
+                        continue
+                else:
+                    print("Invalid choice. Please enter 1 or 2.")
+            break
+        else:
+            print("Invalid choice. Please enter 1 or 2.")
+
+    # Execute the backup
+    backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates)
