@@ -1,19 +1,18 @@
 import os
-import sys
 import datetime
 import pythoncom
 import win32com.client as win32
 import openpyxl
 from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font
 
-METRICS_FILE = "backup_metrics.xlsx"       # File to store backup metrics
-EMAIL_LOG_FILE = "backup_email_log.xlsx"   # File to log email details
+EMAIL_LOG_FILE = "backup_email_log.xlsm"  # Macro-enabled file to log email details
+METRICS_FILE = "backup_metrics.xlsx"  # File to log backup metrics
+
 
 def sanitize_filename(filename, max_length=100):
     """
-    Remove or replace characters that are invalid in Windows filenames.
+    Remove or replace invalid characters from filenames.
     """
     invalid_chars = '<>:"/\\|?*'
     filename = ''.join(c if c not in invalid_chars else '_' for c in filename)
@@ -23,11 +22,12 @@ def sanitize_filename(filename, max_length=100):
         filename = filename[:max_length]
     return filename
 
+
 def truncate_or_fallback_filename(save_directory, subject, max_path_length=255):
     """
     Generate a unique filename by appending a counter if necessary.
     """
-    max_filename_length = max_path_length - len(save_directory) - len(os.sep) - len('.msg')
+    max_filename_length = max_path_length - len(save_directory) - len('.msg') - len(os.sep)
     if max_filename_length <= 0:
         raise Exception("Save directory path is too long.")
 
@@ -54,6 +54,7 @@ def truncate_or_fallback_filename(save_directory, subject, max_path_length=255):
             return filename
         counter += 1
 
+
 def save_email(item, save_path):
     """
     Save an email as a .msg file.
@@ -61,19 +62,61 @@ def save_email(item, save_path):
     try:
         if hasattr(item, "SaveAs"):
             item.SaveAs(save_path, 3)  # 3 refers to the MSG format
-            print(f"Saved email: {save_path}")
             return True
-        else:
-            print(f"Item does not support SaveAs: {getattr(item, 'Subject', 'No Subject')}")
-            return False
-    except Exception as e:
-        print(f"Failed to save email: {getattr(item, 'Subject', 'No Subject')} - Error: {str(e)}")
+        return False
+    except Exception:
         return False
 
-def log_metrics(date, total_emails, saved_emails, fallback_emails, processing_errors, failed_emails):
+
+def get_sender_email(message):
     """
-    Log the backup metrics in an Excel workbook.
-    Also, log the failed emails in a separate sheet.
+    Retrieve the sender's email address in the correct format.
+    """
+    try:
+        # Use PropertyAccessor to extract the email address
+        PR_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
+        sender_email = message.PropertyAccessor.GetProperty(PR_SMTP_ADDRESS)
+        return sender_email if sender_email else "Unknown"
+    except Exception:
+        return "Unknown"
+
+
+def log_email_details(backup_date, sender_name, sender_email, subject, file_path):
+    """
+    Log email details into the macro-enabled Excel file.
+    """
+    try:
+        if os.path.exists(EMAIL_LOG_FILE):
+            wb = openpyxl.load_workbook(EMAIL_LOG_FILE, keep_vba=True)
+        else:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Email Logs"
+            ws.append(["Date", "Sender Name", "Sender Email", "Subject"])
+
+        if "Email Logs" in wb.sheetnames:
+            ws = wb["Email Logs"]
+        else:
+            ws = wb.create_sheet(title="Email Logs")
+            ws.append(["Date", "Sender Name", "Sender Email", "Subject"])
+
+        ws = wb["Email Logs"]
+        new_row = ws.max_row + 1
+        ws.cell(row=new_row, column=1, value=backup_date)  # Date
+        ws.cell(row=new_row, column=2, value=sender_name)  # Sender Name
+        ws.cell(row=new_row, column=3, value=sender_email)  # Sender Email
+        subject_cell = ws.cell(row=new_row, column=4, value=subject)  # Subject
+        subject_cell.hyperlink = file_path
+        subject_cell.font = Font(color="0000FF", underline="single")
+
+        wb.save(EMAIL_LOG_FILE)
+    except Exception as e:
+        print(f"Failed to log email details: {str(e)}")
+
+
+def log_metrics(backup_date, total_emails, saved_emails, fallback_emails, errors):
+    """
+    Log backup metrics in a separate Excel file.
     """
     try:
         if os.path.exists(METRICS_FILE):
@@ -82,71 +125,20 @@ def log_metrics(date, total_emails, saved_emails, fallback_emails, processing_er
             wb = Workbook()
             ws = wb.active
             ws.title = "Backup Metrics"
-            ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Processing Errors"])
-            ws_failed = wb.create_sheet(title="Failed Emails")
-            ws_failed.append(["Date", "Sender Address", "Subject", "Error Message"])
+            ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Errors"])
 
-        # Get or create the sheets
         if "Backup Metrics" in wb.sheetnames:
             ws = wb["Backup Metrics"]
         else:
             ws = wb.create_sheet(title="Backup Metrics")
-            ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Processing Errors"])
+            ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Errors"])
 
-        ws.append([date, total_emails, saved_emails, fallback_emails, processing_errors])
-
-        if failed_emails:
-            if "Failed Emails" in wb.sheetnames:
-                ws_failed = wb["Failed Emails"]
-            else:
-                ws_failed = wb.create_sheet(title="Failed Emails")
-                ws_failed.append(["Date", "Sender Address", "Subject", "Error Message"])
-            for failed_email in failed_emails:
-                ws_failed.append(failed_email)
-
+        ws = wb["Backup Metrics"]
+        ws.append([backup_date, total_emails, saved_emails, fallback_emails, errors])
         wb.save(METRICS_FILE)
     except Exception as e:
         print(f"Failed to log metrics: {str(e)}")
 
-def log_email_details(backup_date, sender_email, subject, file_path):
-    """
-    Log email details into the Excel file for easy search and access.
-    Converts the subject to a hyperlink pointing to the saved file.
-    """
-    try:
-        if os.path.exists(EMAIL_LOG_FILE):
-            wb = openpyxl.load_workbook(EMAIL_LOG_FILE)
-        else:
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Email Logs"
-            ws.append(["Date", "Sender Email", "Subject"])
-
-        # Get or create the worksheet
-        if "Email Logs" in wb.sheetnames:
-            ws = wb["Email Logs"]
-        else:
-            ws = wb.create_sheet(title="Email Logs")
-            ws.append(["Date", "Sender Email", "Subject"])
-
-        # Append the email details
-        ws = wb["Email Logs"]
-        new_row = ws.max_row + 1
-        ws.cell(row=new_row, column=1, value=backup_date)  # Date
-        ws.cell(row=new_row, column=2, value=sender_email)  # Sender Email
-
-        # Add subject as a hyperlink
-        subject_cell = ws.cell(row=new_row, column=3, value=subject)
-        subject_cell.hyperlink = file_path
-        subject_cell.font = Font(color="0000FF", underline="single")
-
-        # Apply AutoFilter to the header row
-        if ws.auto_filter.ref is None:
-            ws.auto_filter.ref = f"A1:C{ws.max_row}"
-
-        wb.save(EMAIL_LOG_FILE)
-    except Exception as e:
-        print(f"Failed to log email details: {str(e)}")
 
 def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
     """
@@ -156,7 +148,6 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
     try:
         outlook = win32.Dispatch("Outlook.Application").GetNamespace("MAPI")
 
-        # Locate the shared mailbox by name
         shared_mailbox = None
         for folder in outlook.Folders:
             if folder.Name.lower() == mailbox_name.lower():
@@ -165,62 +156,36 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
 
         if not shared_mailbox:
             print(f"Could not find the shared mailbox: {mailbox_name}")
-            print("Available mailboxes are:")
-            for folder in outlook.Folders:
-                print(f"- {folder.Name}")
             return
 
         inbox = shared_mailbox.Folders["Inbox"]
 
         for backup_date_str in backup_dates:
-            try:
-                backup_date = datetime.datetime.strptime(backup_date_str, '%Y-%m-%d')
-            except ValueError:
-                print(f"Invalid date format: {backup_date_str}. Please use YYYY-MM-DD.")
-                continue
+            backup_date = datetime.datetime.strptime(backup_date_str, '%Y-%m-%d')
+            save_directory = os.path.join(
+                backup_root_directory,
+                backup_date.strftime('%Y'),
+                backup_date.strftime('%m-%B'),
+                backup_date.strftime('%d-%m-%Y')
+            )
 
-            year_str = backup_date.strftime('%Y')
-            month_str = backup_date.strftime('%m-%B')
-            date_str = backup_date.strftime('%d-%m-%Y')
-            save_directory = os.path.join(backup_root_directory, year_str, month_str, date_str)
-
-            if not os.path.exists(save_directory):
-                try:
-                    os.makedirs(save_directory)
-                except Exception as e:
-                    print(f"Failed to create directory '{save_directory}': {str(e)}")
-                    continue
+            os.makedirs(save_directory, exist_ok=True)
 
             start_date = backup_date.strftime('%m/%d/%Y 00:00')
             end_date = (backup_date + datetime.timedelta(days=1)).strftime('%m/%d/%Y 00:00')
             restriction = f"[ReceivedTime] >= '{start_date}' AND [ReceivedTime] < '{end_date}'"
-            messages = inbox.Items.Restrict(restriction)
-
-            # Exclude 'Recall' messages
-            messages = messages.Restrict("[MessageClass] <> 'IPM.Outlook.Recall'")
+            messages = inbox.Items.Restrict(restriction).Restrict("[MessageClass] <> 'IPM.Outlook.Recall'")
 
             total_messages = len(messages)
-            print(f"Found {total_messages} messages for {backup_date_str} in '{mailbox_name}'.")
-
             saved_emails = 0
             fallback_emails = 0
-            processing_errors = 0
-            failed_emails = []
+            errors = 0
 
             for message in messages:
                 try:
-                    if not hasattr(message, "SaveAs"):
-                        failed_emails.append((
-                            backup_date.strftime('%Y-%m-%d'),
-                            getattr(message, 'SenderEmailAddress', 'Unknown'),
-                            getattr(message, 'Subject', 'No Subject'),
-                            "Unsupported item type"
-                        ))
-                        processing_errors += 1
-                        continue
-
                     subject = sanitize_filename(message.Subject or "No Subject")
-                    sender_email = getattr(message, "SenderEmailAddress", "Unknown")
+                    sender_name = getattr(message, "SenderName", "Unknown")
+                    sender_email = get_sender_email(message)
                     filename = truncate_or_fallback_filename(save_directory, subject)
                     full_path = os.path.join(save_directory, filename)
 
@@ -228,43 +193,20 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
                         if filename != f"{subject}.msg":
                             fallback_emails += 1
                         saved_emails += 1
-
-                        # Log email details with hyperlink
                         log_email_details(
                             backup_date.strftime('%Y-%m-%d'),
+                            sender_name,
                             sender_email,
                             subject,
                             full_path
                         )
                     else:
-                        processing_errors += 1
-                        failed_emails.append((
-                            backup_date.strftime('%Y-%m-%d'),
-                            sender_email,
-                            subject,
-                            "Save failed"
-                        ))
-                except Exception as e:
-                    failed_emails.append((
-                        backup_date.strftime('%Y-%m-%d'),
-                        getattr(message, 'SenderEmailAddress', 'Unknown'),
-                        getattr(message, 'Subject', 'No Subject'),
-                        str(e)
-                    ))
-                    processing_errors += 1
-                    continue
+                        errors += 1
+                except Exception:
+                    errors += 1
 
-            log_metrics(
-                backup_date.strftime('%Y-%m-%d'),
-                total_messages,
-                saved_emails,
-                fallback_emails,
-                processing_errors,
-                failed_emails
-            )
-            print(f"Backup for {backup_date_str} completed.\n")
+            log_metrics(backup_date.strftime('%Y-%m-%d'), total_messages, saved_emails, fallback_emails, errors)
 
-        # Release Outlook COM objects
         inbox = None
         shared_mailbox = None
         outlook = None
@@ -274,57 +216,21 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
     finally:
         pythoncom.CoUninitialize()
 
+
 if __name__ == "__main__":
     mailbox_name = "GMailbox"
     backup_root_directory = r"C:\EmailBackups"
 
-    while True:
-        print("Select backup option:")
-        print("1. Backup emails for yesterday")
-        print("2. Backup emails for a particular date or range of dates")
-        choice = input("Enter 1 or 2: ")
-
-        if choice == '1':
-            yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
-            backup_dates = [yesterday.strftime('%Y-%m-%d')]
-            break
-        elif choice == '2':
-            while True:
-                print("Do you want to backup emails for:")
-                print("1. A single date")
-                print("2. A range of dates")
-                date_choice = input("Enter 1 or 2: ")
-
-                if date_choice == '1':
-                    date_input = input("Enter the date (YYYY-MM-DD): ")
-                    try:
-                        backup_date = datetime.datetime.strptime(date_input, '%Y-%m-%d')
-                        backup_dates = [backup_date.strftime('%Y-%m-%d')]
-                        break
-                    except ValueError:
-                        print("Invalid date format. Please use YYYY-MM-DD.")
-                        continue
-                elif date_choice == '2':
-                    start_date = input("Enter start date (YYYY-MM-DD): ")
-                    end_date = input("Enter end date (YYYY-MM-DD): ")
-                    try:
-                        start_dt = datetime.datetime.strptime(start_date, '%Y-%m-%d')
-                        end_dt = datetime.datetime.strptime(end_date, '%Y-%m-%d')
-                        if start_dt > end_dt:
-                            print("Start date cannot be after end date.")
-                            continue
-                        backup_dates = [
-                            (start_dt + datetime.timedelta(days=i)).strftime('%Y-%m-%d')
-                            for i in range((end_dt - start_dt).days + 1)
-                        ]
-                        break
-                    except ValueError:
-                        print("Invalid date format. Please use YYYY-MM-DD.")
-                        continue
-                else:
-                    print("Invalid choice. Please enter 1 or 2.")
-            break
-        else:
-            print("Invalid choice. Please enter 1 or 2.")
-
-    backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates)
+    choice = input("Backup for 1) Yesterday or 2) Specific date/range? Enter 1 or 2: ")
+    if choice == '1':
+        yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+        backup_shared_mailbox(mailbox_name, backup_root_directory, [yesterday.strftime('%Y-%m-%d')])
+    elif choice == '2':
+        start_date = input("Enter start date (YYYY-MM-DD): ")
+        end_date = input("Enter end date (YYYY-MM-DD): ")
+        dates = [
+            (datetime.datetime.strptime(start_date, '%Y-%m-%d') + datetime.timedelta(days=i)).strftime('%Y-%m-%d')
+            for i in range((datetime.datetime.strptime(end_date, '%Y-%m-%d') -
+                            datetime.datetime.strptime(start_date, '%Y-%m-%d')).days + 1)
+        ]
+        backup_shared_mailbox(mailbox_name, backup_root_directory, dates)
