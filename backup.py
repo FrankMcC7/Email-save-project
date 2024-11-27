@@ -5,6 +5,7 @@ import win32com.client as win32
 import openpyxl
 from openpyxl import Workbook
 from openpyxl.styles import Font
+import re
 
 EMAIL_LOG_FILE = "backup_email_log.xlsm"  # Macro-enabled file to log email details
 METRICS_FILE = "backup_metrics.xlsx"  # File to log backup metrics
@@ -70,60 +71,24 @@ def save_email(item, save_path):
 
 def get_sender_email(message):
     """
-    Retrieve the sender's email address in the correct format.
-    Handles Exchange Distinguished Names and resolves them to SMTP addresses.
+    Retrieve the sender's email address by parsing the raw email headers.
     """
     try:
-        # Check if the Sender and AddressEntry exist
-        if message.Sender and message.Sender.AddressEntry:
-            address_entry = message.Sender.AddressEntry
+        # Fetch raw email headers
+        headers = message.PropertyAccessor.GetProperty(
+            "http://schemas.microsoft.com/mapi/proptag/0x007D001E"
+        )
+        if headers:
+            # Extract the email address from the "From:" field in the headers
+            match = re.search(r"From:\s.*<(.+?)>", headers)
+            if match:
+                return match.group(1)
 
-            # Check if the AddressEntry is of type Exchange
-            if address_entry.Type == "EX":
-                # Try to resolve as an Exchange User
-                exchange_user = address_entry.GetExchangeUser()
-                if exchange_user and exchange_user.PrimarySmtpAddress:
-                    return exchange_user.PrimarySmtpAddress
-
-                # Fallback: Query LDAP using Distinguished Name
-                dn = address_entry.Address  # This will be the X.500 DN
-                smtp_address = query_ldap_for_smtp(dn)
-                if smtp_address:
-                    return smtp_address
-
-            # If not Exchange type, return the Address property
-            return address_entry.Address
-
-        # As a fallback, try to retrieve via PropertyAccessor
-        PR_SMTP_ADDRESS = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E"
-        sender_email = message.PropertyAccessor.GetProperty(PR_SMTP_ADDRESS)
-        return sender_email if sender_email else "Unknown"
-
+        # Fallback to "Unknown" if no email address is found
+        return "Unknown"
     except Exception as e:
         print(f"Failed to retrieve sender email: {str(e)}")
         return "Unknown"
-
-
-def query_ldap_for_smtp(distinguished_name):
-    """
-    Query Active Directory via LDAP to resolve the SMTP address for a given DN.
-    """
-    try:
-        # Initialize LDAP connection
-        ldap_conn = win32.Dispatch("ADsNameSpaces").GetObject("", "LDAP:")
-        ldap_object = ldap_conn.OpenDSObject(
-            f"LDAP://{distinguished_name}",  # Distinguished Name (DN)
-            None,  # User credentials (if needed)
-            None,
-            1  # Read access
-        )
-
-        # Get the SMTP address
-        smtp_address = ldap_object.Get("mail")
-        return smtp_address if smtp_address else None
-    except Exception as e:
-        print(f"LDAP query failed for DN '{distinguished_name}': {str(e)}")
-        return None
 
 
 def log_email_details(backup_date, sender_name, sender_email, subject, file_path):
@@ -213,7 +178,6 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
                 backup_date.strftime('%m-%B'),
                 backup_date.strftime('%d-%m-%Y')
             )
-
             os.makedirs(save_directory, exist_ok=True)
 
             start_date = backup_date.strftime('%m/%d/%Y 00:00')
@@ -251,12 +215,9 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
                     print(f"Failed to process email: {str(e)}")
                     errors += 1
 
-
-
-# Log metrics for the current date
             log_metrics(backup_date.strftime('%Y-%m-%d'), total_messages, saved_emails, fallback_emails, errors)
+            print(f"Backup for {backup_date.strftime('%Y-%m-%d')} completed.")
 
-        # Release Outlook COM objects
         inbox = None
         shared_mailbox = None
         outlook = None
@@ -292,33 +253,3 @@ if __name__ == "__main__":
                     date_input = input("Enter the date (YYYY-MM-DD): ")
                     try:
                         backup_date = datetime.datetime.strptime(date_input, '%Y-%m-%d')
-                        backup_dates = [backup_date.strftime('%Y-%m-%d')]
-                        break
-                    except ValueError:
-                        print("Invalid date format. Please use YYYY-MM-DD.")
-                        continue
-                elif date_choice == '2':
-                    start_date = input("Enter start date (YYYY-MM-DD): ")
-                    end_date = input("Enter end date (YYYY-MM-DD): ")
-                    try:
-                        start_dt = datetime.datetime.strptime(start_date, '%Y-%m-%d')
-                        end_dt = datetime.datetime.strptime(end_date, '%Y-%m-%d')
-                        if start_dt > end_dt:
-                            print("Start date cannot be after end date.")
-                            continue
-                        backup_dates = [
-                            (start_dt + datetime.timedelta(days=i)).strftime('%Y-%m-%d')
-                            for i in range((end_dt - start_dt).days + 1)
-                        ]
-                        break
-                    except ValueError:
-                        print("Invalid date format. Please use YYYY-MM-DD.")
-                        continue
-                else:
-                    print("Invalid choice. Please enter 1 or 2.")
-            break
-        else:
-            print("Invalid choice. Please enter 1 or 2.")
-
-    # Execute the backup
-    backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates)
