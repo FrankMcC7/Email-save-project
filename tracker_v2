@@ -1,15 +1,15 @@
-Sub ProcessTriggerAndAllFundsData_Optimized()
+Sub ProcessAllData()
     Dim wsPortfolio As Worksheet
     Dim wbMaster As Workbook
-    Dim wbTrigger As Workbook, wbAllFunds As Workbook
-    Dim triggerFile As String, allFundsFile As String
-    Dim triggerSheet As Worksheet, allFundsSheet As Worksheet
-    Dim triggerTable As ListObject, portfolioTable As ListObject, allFundsTable As ListObject
+    Dim wbTrigger As Workbook, wbAllFunds As Workbook, wbNonTrigger As Workbook
+    Dim triggerFile As String, allFundsFile As String, nonTriggerFile As String
+    Dim triggerSheet As Worksheet, allFundsSheet As Worksheet, nonTriggerSheet As Worksheet
+    Dim triggerTable As ListObject, portfolioTable As ListObject, allFundsTable As ListObject, nonTriggerTable As ListObject
     Dim dictFundGCI As Object
     Dim fundGCIArray As Variant, resultArray As Variant
     Dim i As Long, lastRowPortfolio As Long
     Dim fundGCICol As Range, iaGCICol As Range
-    
+
     ' Set up the Portfolio sheet
     Set wbMaster = ThisWorkbook
     Set wsPortfolio = wbMaster.Sheets("Portfolio")
@@ -123,5 +123,49 @@ Sub ProcessTriggerAndAllFundsData_Optimized()
 
     wbAllFunds.Close SaveChanges:=False
 
-    MsgBox "Data from Trigger.csv and All Funds.csv has been processed successfully!", vbInformation
+    ' Step 3: Process Non-Trigger.csv
+    nonTriggerFile = Application.GetOpenFilename("CSV Files (*.csv), *.csv", , "Select Non-Trigger.csv")
+    If nonTriggerFile = "False" Then Exit Sub ' User canceled
+
+    Set wbNonTrigger = Workbooks.Open(nonTriggerFile)
+    Set nonTriggerSheet = wbNonTrigger.Sheets(1)
+
+    ' Convert Non-Trigger data to a table
+    On Error Resume Next
+    Set nonTriggerTable = nonTriggerSheet.ListObjects(1)
+    On Error GoTo 0
+    If nonTriggerTable Is Nothing Then
+        Set nonTriggerTable = nonTriggerSheet.ListObjects.Add(xlSrcRange, nonTriggerSheet.UsedRange, , xlYes)
+        nonTriggerTable.Name = "NonTriggerTable"
+    End If
+
+    ' Filter out rows where FI-ASIA is present
+    nonTriggerTable.Range.AutoFilter Field:=nonTriggerTable.ListColumns("Region").Index, Criteria1:="<>FI-ASIA"
+
+    ' Append Non-Trigger data to Portfolio
+    Dim sourceHeaders As Variant, destHeaders As Variant
+    sourceHeaders = Array("Region", "Family", "Fund Manager GCI", "Fund Manager", "Fund GCI", "Fund Name", "Credit Officer", "Weeks Missing")
+    destHeaders = Array("Region", "Family", "Fund Manager GCI", "Fund Manager", "Fund GCI", "Fund Name", "Credit Officer", "Wks Missing")
+
+    lastRowPortfolio = portfolioTable.DataBodyRange.Rows.Count + portfolioTable.HeaderRowRange.Row
+
+    For i = LBound(sourceHeaders) To UBound(sourceHeaders)
+        With nonTriggerTable.ListColumns(sourceHeaders(i)).DataBodyRange
+            wsPortfolio.Cells(lastRowPortfolio + 1, portfolioTable.ListColumns(destHeaders(i)).Index).Resize(.Rows.Count, 1).Value = .Value
+        End With
+    Next i
+
+    ' Fill Trigger/Non-Trigger column with 'Non-Trigger'
+    Dim triggerColIndex As Long
+    triggerColIndex = portfolioTable.ListColumns("Trigger/Non-Trigger").Index
+    With wsPortfolio
+        .Range(.Cells(lastRowPortfolio + 1, triggerColIndex), .Cells(lastRowPortfolio + nonTriggerTable.ListRows.Count, triggerColIndex)).Value = "Non-Trigger"
+    End With
+
+    ' Clear filters in Non-Trigger table
+    If nonTriggerTable.ShowAutoFilter Then nonTriggerTable.AutoFilter.ShowAllData
+
+    wbNonTrigger.Close SaveChanges:=False
+
+    MsgBox "Data from Trigger.csv, All Funds.csv, and Non-Trigger.csv has been processed successfully!", vbInformation
 End Sub
