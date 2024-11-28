@@ -6,7 +6,7 @@ Sub ProcessAllData()
     Dim triggerSheet As Worksheet, allFundsSheet As Worksheet, nonTriggerSheet As Worksheet
     Dim triggerTable As ListObject, portfolioTable As ListObject, nonTriggerTable As ListObject
     Dim dictFundGCI As Object, dictDataset As Object
-    Dim fundGCIArray As Variant, resultArray As Variant
+    Dim fundGCIArray As Variant
     Dim i As Long, lastRowPortfolio As Long
     Dim triggerColIndex As Long ' Column index for "Trigger/Non-Trigger"
     Dim startTime As Double
@@ -171,15 +171,20 @@ Sub ProcessAllData()
         nonTriggerTable.AutoFilter.ShowAllData
     End If
 
-    ' Apply the filter to exclude 'FI-ASIA' from the 'Business Unit' column
+    ' Verify the "Business Unit" column exists
     Dim businessUnitCol As ListColumn
+    Set businessUnitCol = Nothing
+    On Error Resume Next
     Set businessUnitCol = nonTriggerTable.ListColumns("Business Unit")
+    On Error GoTo 0
+
     If businessUnitCol Is Nothing Then
         MsgBox "The column 'Business Unit' does not exist in Non-Trigger.csv.", vbCritical
         GoTo CleanUp
     End If
 
-    nonTriggerTable.Range.AutoFilter Field:=businessUnitCol.Index, Criteria1:="<>FI-ASIA"
+    ' Apply the filter using wildcards to account for variations
+    nonTriggerTable.Range.AutoFilter Field:=businessUnitCol.Index, Criteria1:="<>*FI-ASIA*", Operator:=xlAnd
 
     ' Append Non-Trigger data to Portfolio
     Dim sourceHeaders As Variant, destHeaders As Variant
@@ -196,38 +201,41 @@ Sub ProcessAllData()
     Dim destRow As Long
     destRow = lastRowPortfolio + 1
 
-    ' Loop through each header to copy data
+    Dim visibleRowCount As Long
+    visibleRowCount = 0
+
+    ' Loop through each area of the visible data
+    Dim area As Range
+    Dim rowOffset As Long
+    rowOffset = 0
+
     For i = LBound(sourceHeaders) To UBound(sourceHeaders)
         Dim sourceColumn As Range
-        Set sourceColumn = Nothing
         On Error Resume Next
         Set sourceColumn = nonTriggerTable.ListColumns(sourceHeaders(i)).DataBodyRange.SpecialCells(xlCellTypeVisible)
+        If Err.Number <> 0 Then
+            ' No visible cells in this column
+            Err.Clear
+            GoTo NextHeader
+        End If
         On Error GoTo 0
 
-        If Not sourceColumn Is Nothing Then
-            ' Loop through each area of visible cells
-            Dim area As Range
-            For Each area In sourceColumn.Areas
-                ' Copy the data area by area
-                wsPortfolio.Cells(destRow, portfolioTable.ListColumns(destHeaders(i)).Index).Resize(area.Rows.Count, 1).Value = area.Value
-
-                ' Update the destination row
-                destRow = destRow + area.Rows.Count
-            Next area
-        End If
-
-        ' Reset the destination row for the next header
-        destRow = lastRowPortfolio + 1
+        ' Loop through each area of visible cells
+        For Each area In sourceColumn.Areas
+            wsPortfolio.Cells(destRow + rowOffset, portfolioTable.ListColumns(destHeaders(i)).Index).Resize(area.Rows.Count, 1).Value = area.Value
+            If i = LBound(sourceHeaders) Then
+                visibleRowCount = visibleRowCount + area.Rows.Count
+                rowOffset = rowOffset + area.Rows.Count
+            End If
+        Next area
+        rowOffset = 0 ' Reset for next column
+NextHeader:
     Next i
 
-    ' Update the number of rows copied
-    Dim numRowsCopied As Long
-    numRowsCopied = destRow - lastRowPortfolio - 1
-
     ' Fill Trigger/Non-Trigger column with 'Non-Trigger'
-    If numRowsCopied > 0 Then
+    If visibleRowCount > 0 Then
         With wsPortfolio
-            .Range(.Cells(lastRowPortfolio + 1, triggerColIndex), .Cells(lastRowPortfolio + numRowsCopied, triggerColIndex)).Value = "Non-Trigger"
+            .Range(.Cells(lastRowPortfolio + 1, triggerColIndex), .Cells(lastRowPortfolio + visibleRowCount, triggerColIndex)).Value = "Non-Trigger"
         End With
     Else
         MsgBox "No data to copy from Non-Trigger.csv after applying the filter.", vbExclamation
