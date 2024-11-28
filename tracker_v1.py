@@ -1,4 +1,4 @@
-Sub ImportTriggerDataWithReset()
+Sub ImportTriggerDataWithAccurateRowDetection()
     Dim wsPortfolio As Worksheet
     Dim wbMaster As Workbook
     Dim wbTrigger As Workbook
@@ -19,13 +19,13 @@ Sub ImportTriggerDataWithReset()
     Set portfolioTable = wsPortfolio.ListObjects("PortfolioTable")
     On Error GoTo 0
     If portfolioTable Is Nothing Then
-        ' Convert the data to a table if it isn't already one
+        ' Convert the range to a table if not already one
         Set portfolioTable = wsPortfolio.ListObjects.Add(xlSrcRange, wsPortfolio.UsedRange, , xlYes)
         portfolioTable.Name = "PortfolioTable"
     End If
 
     ' Clear existing data in the Portfolio table except headers
-    If portfolioTable.ListRows.Count > 0 Then
+    If Not portfolioTable.DataBodyRange Is Nothing Then
         portfolioTable.DataBodyRange.ClearContents
     End If
 
@@ -48,7 +48,11 @@ Sub ImportTriggerDataWithReset()
     End If
     
     ' Determine the starting row for pasting in the Portfolio table
-    pasteStartRow = portfolioTable.ListRows.Count + 1
+    If portfolioTable.ListRows.Count = 0 Then
+        pasteStartRow = portfolioTable.HeaderRowRange.Row + 1 ' Start immediately below headers
+    Else
+        pasteStartRow = portfolioTable.DataBodyRange.Rows(1).Row + portfolioTable.ListRows.Count
+    End If
 
     ' Headers to copy from Trigger.csv
     headers = Array("Region", "Fund Manager", "Fund GCI", "Fund Name", "Wks Missing", "Credit Officer")
