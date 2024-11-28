@@ -4,7 +4,7 @@ Sub ProcessAllData()
     Dim wbTrigger As Workbook, wbAllFunds As Workbook, wbNonTrigger As Workbook
     Dim triggerFile As String, allFundsFile As String, nonTriggerFile As String
     Dim triggerSheet As Worksheet, allFundsSheet As Worksheet, nonTriggerSheet As Worksheet
-    Dim triggerTable As ListObject, portfolioTable As ListObject, allFundsTable As ListObject, nonTriggerTable As ListObject
+    Dim triggerTable As ListObject, portfolioTable As ListObject, nonTriggerTable As ListObject
     Dim dictFundGCI As Object, dictDataset As Object
     Dim fundGCIArray As Variant, resultArray As Variant
     Dim i As Long, lastRowPortfolio As Long
@@ -126,7 +126,7 @@ Sub ProcessAllData()
     ' Loop through the data and add to dictionary where Review Status is "Approved"
     For i = 2 To UBound(allFundsData, 1)
         If allFundsData(i, reviewStatusCol) = "Approved" Then
-            If Not IsEmpty(allFundsData(i, fundGCIColIndex)) And Not dictFundGCI.exists(allFundsData(i, fundGCIColIndex)) Then
+            If Not IsEmpty(allFundsData(i, fundGCIColIndex)) And Not dictFundGCI.Exists(allFundsData(i, fundGCIColIndex)) Then
                 dictFundGCI.Add allFundsData(i, fundGCIColIndex), allFundsData(i, iaGCIColIndex)
             End If
         End If
@@ -138,7 +138,7 @@ Sub ProcessAllData()
     ReDim portfolioFundManagerGCI(1 To numRowsPortfolio, 1 To 1)
 
     For i = 1 To numRowsPortfolio
-        If dictFundGCI.exists(fundGCIArray(i, 1)) Then
+        If dictFundGCI.Exists(fundGCIArray(i, 1)) Then
             portfolioFundManagerGCI(i, 1) = dictFundGCI(fundGCIArray(i, 1))
         Else
             portfolioFundManagerGCI(i, 1) = "No Match Found"
@@ -159,15 +159,36 @@ Sub ProcessAllData()
 
     ' Convert Non-Trigger data to a table
     On Error Resume Next
-    Set nonTriggerTable = nonTriggerSheet.ListObjects(1)
+    Set nonTriggerTable = nonTriggerSheet.ListObjects("NonTriggerTable")
     On Error GoTo 0
     If nonTriggerTable Is Nothing Then
         Set nonTriggerTable = nonTriggerSheet.ListObjects.Add(xlSrcRange, nonTriggerSheet.UsedRange, , xlYes)
         nonTriggerTable.Name = "NonTriggerTable"
     End If
 
-    ' Filter out rows where FI-ASIA is present in the "Business Unit" column
-    nonTriggerTable.Range.AutoFilter Field:=nonTriggerTable.ListColumns("Business Unit").Index, Criteria1:="<>FI-ASIA"
+    ' Clear any existing filters
+    If nonTriggerTable.AutoFilter.FilterMode Then
+        nonTriggerTable.AutoFilter.ShowAllData
+    End If
+
+    ' Apply reverse filter to include only specific Business Units
+    Dim includeBusinessUnits As Variant
+    includeBusinessUnits = Array("FI-US", "FI-EMEA", "FI-GMC-ASIA")
+
+    ' Verify the "Business Unit" column exists
+    Dim businessUnitCol As ListColumn
+    Set businessUnitCol = Nothing
+    On Error Resume Next
+    Set businessUnitCol = nonTriggerTable.ListColumns("Business Unit")
+    On Error GoTo 0
+
+    If businessUnitCol Is Nothing Then
+        MsgBox "The column 'Business Unit' does not exist in Non-Trigger.csv.", vbCritical
+        GoTo CleanUp
+    End If
+
+    ' Apply the filter
+    nonTriggerTable.Range.AutoFilter Field:=businessUnitCol.Index, Criteria1:=includeBusinessUnits, Operator:=xlFilterValues
 
     ' Append Non-Trigger data to Portfolio
     Dim sourceHeaders As Variant, destHeaders As Variant
@@ -182,18 +203,29 @@ Sub ProcessAllData()
     End If
 
     Dim numRowsToCopy As Long
+    On Error Resume Next
     numRowsToCopy = nonTriggerTable.DataBodyRange.SpecialCells(xlCellTypeVisible).Rows.Count
+    On Error GoTo 0
 
-    For i = LBound(sourceHeaders) To UBound(sourceHeaders)
-        With nonTriggerTable.ListColumns(sourceHeaders(i)).DataBodyRange.SpecialCells(xlCellTypeVisible)
-            wsPortfolio.Cells(lastRowPortfolio + 1, portfolioTable.ListColumns(destHeaders(i)).Index).Resize(.Rows.Count, 1).Value = .Value
+    If numRowsToCopy > 0 Then
+        For i = LBound(sourceHeaders) To UBound(sourceHeaders)
+            With nonTriggerTable.ListColumns(sourceHeaders(i)).DataBodyRange.SpecialCells(xlCellTypeVisible)
+                wsPortfolio.Cells(lastRowPortfolio + 1, portfolioTable.ListColumns(destHeaders(i)).Index).Resize(.Rows.Count, 1).Value = .Value
+            End With
+        Next i
+
+        ' Fill Trigger/Non-Trigger column with 'Non-Trigger'
+        With wsPortfolio
+            .Range(.Cells(lastRowPortfolio + 1, triggerColIndex), .Cells(lastRowPortfolio + numRowsToCopy, triggerColIndex)).Value = "Non-Trigger"
         End With
-    Next i
+    Else
+        MsgBox "No data to copy from Non-Trigger.csv after applying the filter.", vbExclamation
+    End If
 
-    ' Fill Trigger/Non-Trigger column with 'Non-Trigger'
-    With wsPortfolio
-        .Range(.Cells(lastRowPortfolio + 1, triggerColIndex), .Cells(lastRowPortfolio + numRowsToCopy, triggerColIndex)).Value = "Non-Trigger"
-    End With
+    ' Clear filters
+    If nonTriggerTable.AutoFilter.FilterMode Then
+        nonTriggerTable.AutoFilter.ShowAllData
+    End If
 
     wbNonTrigger.Close SaveChanges:=False
 
@@ -207,7 +239,17 @@ Sub ProcessAllData()
     Set datasetTable = wsDataset.ListObjects("DatasetTable")
     On Error GoTo 0
     If datasetTable Is Nothing Then
-        Set datasetTable = wsDataset.ListObjects.Add(xlSrcRange, wsDataset.UsedRange, , xlYes)
+        ' Find the last used row and column to define the data range accurately
+        Dim lastRow As Long, lastCol As Long
+        lastRow = wsDataset.Cells(wsDataset.Rows.Count, "A").End(xlUp).Row
+        lastCol = wsDataset.Cells(1, wsDataset.Columns.Count).End(xlToLeft).Column
+
+        ' Define the data range for the table
+        Dim dataRange As Range
+        Set dataRange = wsDataset.Range(wsDataset.Cells(1, 1), wsDataset.Cells(lastRow, lastCol))
+
+        ' Create the table over the data range
+        Set datasetTable = wsDataset.ListObjects.Add(xlSrcRange, dataRange, , xlYes)
         datasetTable.Name = "DatasetTable"
     End If
 
@@ -220,7 +262,7 @@ Sub ProcessAllData()
     ' Create a dictionary for Dataset using Fund Manager GCI as key
     Set dictDataset = CreateObject("Scripting.Dictionary")
     For i = 1 To numRowsDataset
-        If Not dictDataset.exists(datasetFundManagerGCI(i, 1)) Then
+        If Not dictDataset.Exists(datasetFundManagerGCI(i, 1)) Then
             dictDataset.Add datasetFundManagerGCI(i, 1), Array(datasetFamily(i, 1), datasetECAAnalyst(i, 1))
         End If
     Next i
@@ -235,7 +277,7 @@ Sub ProcessAllData()
     For i = 1 To numRowsPortfolio
         ' Update 'Family' only if it is empty
         If IsEmpty(portfolioFamily(i, 1)) Or portfolioFamily(i, 1) = "" Then
-            If dictDataset.exists(portfolioFundManagerGCI(i, 1)) Then
+            If dictDataset.Exists(portfolioFundManagerGCI(i, 1)) Then
                 portfolioFamily(i, 1) = dictDataset(portfolioFundManagerGCI(i, 1))(0)
             Else
                 portfolioFamily(i, 1) = "No Match Found"
@@ -243,7 +285,7 @@ Sub ProcessAllData()
         End If
 
         ' Always update 'ECA India Analyst' from DatasetTable
-        If dictDataset.exists(portfolioFundManagerGCI(i, 1)) Then
+        If dictDataset.Exists(portfolioFundManagerGCI(i, 1)) Then
             portfolioECAAnalyst(i, 1) = dictDataset(portfolioFundManagerGCI(i, 1))(1)
         Else
             portfolioECAAnalyst(i, 1) = "No Match Found"
