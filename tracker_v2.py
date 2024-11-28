@@ -5,11 +5,21 @@ Sub ProcessAllData()
     Dim triggerFile As String, allFundsFile As String, nonTriggerFile As String
     Dim triggerSheet As Worksheet, allFundsSheet As Worksheet, nonTriggerSheet As Worksheet
     Dim triggerTable As ListObject, portfolioTable As ListObject, allFundsTable As ListObject, nonTriggerTable As ListObject
-    Dim dictFundGCI As Object
+    Dim dictFundGCI As Object, dictDataset As Object
     Dim fundGCIArray As Variant, resultArray As Variant
     Dim i As Long, lastRowPortfolio As Long
     Dim triggerColIndex As Long ' Single declaration for use across sections
     Dim startTime As Double
+    Dim wsDataset As Worksheet
+    Dim datasetTable As ListObject
+    Dim portfolioFundManagerGCI As Variant
+    Dim portfolioFamily As Variant
+    Dim portfolioECAAnalyst As Variant
+    Dim datasetFundManagerGCI As Variant
+    Dim datasetFamily As Variant
+    Dim datasetECAAnalyst As Variant
+    Dim numRowsPortfolio As Long
+    Dim numRowsDataset As Long
     
     On Error GoTo ErrorHandler
 
@@ -17,10 +27,10 @@ Sub ProcessAllData()
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
     Application.EnableEvents = False
-    
+
     ' Record the start time
     startTime = Timer
-    
+
     ' Set up the Portfolio sheet
     Set wbMaster = ThisWorkbook
     Set wsPortfolio = wbMaster.Sheets("Portfolio")
@@ -123,24 +133,21 @@ Sub ProcessAllData()
     Next i
 
     ' Match Fund GCI in Portfolio and write IA GCI to Fund Manager GCI
-    Dim portfolioFundGCI As Variant
-    Dim portfolioIA_GCI As Variant
-    Dim numRowsPortfolio As Long
-
     numRowsPortfolio = portfolioTable.DataBodyRange.Rows.Count
-    portfolioFundGCI = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
-    ReDim portfolioIA_GCI(1 To numRowsPortfolio, 1 To 1)
+    fundGCIArray = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
+    Dim portfolioFundManagerGCI As Variant
+    ReDim portfolioFundManagerGCI(1 To numRowsPortfolio, 1 To 1)
 
     For i = 1 To numRowsPortfolio
-        If dictFundGCI.exists(portfolioFundGCI(i, 1)) Then
-            portfolioIA_GCI(i, 1) = dictFundGCI(portfolioFundGCI(i, 1))
+        If dictFundGCI.exists(fundGCIArray(i, 1)) Then
+            portfolioFundManagerGCI(i, 1) = dictFundGCI(fundGCIArray(i, 1))
         Else
-            portfolioIA_GCI(i, 1) = "No Match Found"
+            portfolioFundManagerGCI(i, 1) = "No Match Found"
         End If
     Next i
 
     ' Write results back to Fund Manager GCI column
-    portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value = portfolioIA_GCI
+    portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value = portfolioFundManagerGCI
 
     wbAllFunds.Close SaveChanges:=False
 
@@ -189,12 +196,64 @@ Sub ProcessAllData()
         .Range(.Cells(lastRowPortfolio + 1, triggerColIndex), .Cells(lastRowPortfolio + numRowsToCopy, triggerColIndex)).Value = "Non-Trigger"
     End With
 
-    ' Clear filters in Non-Trigger table
-    If nonTriggerTable.ShowAutoFilter Then nonTriggerTable.AutoFilter.ShowAllData
-
     wbNonTrigger.Close SaveChanges:=False
 
-    MsgBox "Data from Trigger.csv, All Funds.csv, and Non-Trigger.csv has been processed successfully!" & vbCrLf & "Time taken: " & Format(Timer - startTime, "0.00") & " seconds.", vbInformation
+    ' === Step 4: Populate 'Family' and 'ECA India Analyst' from 'Dataset' sheet ===
+
+    ' Set up Dataset sheet
+    Set wsDataset = wbMaster.Sheets("Dataset")
+
+    ' Ensure the Dataset sheet is converted to a table
+    On Error Resume Next
+    Set datasetTable = wsDataset.ListObjects("DatasetTable")
+    On Error GoTo 0
+    If datasetTable Is Nothing Then
+        Set datasetTable = wsDataset.ListObjects.Add(xlSrcRange, wsDataset.UsedRange, , xlYes)
+        datasetTable.Name = "DatasetTable"
+    End If
+
+    ' Read Dataset data into arrays
+    numRowsDataset = datasetTable.DataBodyRange.Rows.Count
+    datasetFundManagerGCI = datasetTable.ListColumns("Fund Manager GCI").DataBodyRange.Value
+    datasetFamily = datasetTable.ListColumns("Family").DataBodyRange.Value
+    datasetECAAnalyst = datasetTable.ListColumns("ECA India Analyst").DataBodyRange.Value
+
+    ' Create a dictionary for Dataset using Fund Manager GCI as key
+    Set dictDataset = CreateObject("Scripting.Dictionary")
+    For i = 1 To numRowsDataset
+        If Not dictDataset.exists(datasetFundManagerGCI(i, 1)) Then
+            dictDataset.Add datasetFundManagerGCI(i, 1), Array(datasetFamily(i, 1), datasetECAAnalyst(i, 1))
+        End If
+    Next i
+
+    ' Read Portfolio data into arrays
+    portfolioFundManagerGCI = portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value
+    portfolioFamily = portfolioTable.ListColumns("Family").DataBodyRange.Value
+    portfolioECAAnalyst = portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value
+
+    ' Populate 'Family' and 'ECA India Analyst' in PortfolioTable
+    For i = 1 To numRowsPortfolio
+        If IsEmpty(portfolioFamily(i, 1)) Or portfolioFamily(i, 1) = "" Then
+            If dictDataset.exists(portfolioFundManagerGCI(i, 1)) Then
+                portfolioFamily(i, 1) = dictDataset(portfolioFundManagerGCI(i, 1))(0)
+            Else
+                portfolioFamily(i, 1) = "No Match Found"
+            End If
+        End If
+        If IsEmpty(portfolioECAAnalyst(i, 1)) Or portfolioECAAnalyst(i, 1) = "" Then
+            If dictDataset.exists(portfolioFundManagerGCI(i, 1)) Then
+                portfolioECAAnalyst(i, 1) = dictDataset(portfolioFundManagerGCI(i, 1))(1)
+            Else
+                portfolioECAAnalyst(i, 1) = "No Match Found"
+            End If
+        End If
+    Next i
+
+    ' Write updated data back to PortfolioTable
+    portfolioTable.ListColumns("Family").DataBodyRange.Value = portfolioFamily
+    portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value = portfolioECAAnalyst
+
+    MsgBox "Data from all files has been processed successfully!" & vbCrLf & "Time taken: " & Format(Timer - startTime, "0.00") & " seconds.", vbInformation
 
 CleanUp:
     ' Reset Application settings
