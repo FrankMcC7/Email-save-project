@@ -1,19 +1,28 @@
-Sub ImportTriggerDataWithHygiene()
+Sub ImportTriggerDataWithAutomaticTableCreation()
     Dim wsPortfolio As Worksheet
     Dim wbMaster As Workbook
     Dim wbTrigger As Workbook
     Dim triggerFile As String
     Dim triggerSheet As Worksheet
-    Dim lastRowTrigger As Long, pasteRow As Long
+    Dim triggerTable As ListObject
+    Dim portfolioTable As ListObject
     Dim headers As Variant
-    Dim headerDict As Object
-    Dim colTrigger As Long, colPortfolio As Long
-    Dim regionCol As Long, triggerCol As Long
+    Dim colPortfolio As ListColumn
+    Dim pasteRow As ListRow
     Dim i As Long
     
     ' Set the Portfolio sheet in the master file
     Set wbMaster = ThisWorkbook
     Set wsPortfolio = wbMaster.Sheets("Portfolio")
+    
+    ' Ensure the Portfolio sheet is converted to a table
+    On Error Resume Next
+    Set portfolioTable = wsPortfolio.ListObjects("PortfolioTable")
+    On Error GoTo 0
+    If portfolioTable Is Nothing Then
+        Set portfolioTable = wsPortfolio.ListObjects.Add(xlSrcRange, wsPortfolio.UsedRange, , xlYes)
+        portfolioTable.Name = "PortfolioTable"
+    End If
     
     ' Prompt for the Trigger.csv file location
     triggerFile = Application.GetOpenFilename("CSV Files (*.csv), *.csv", , "Select Trigger.csv")
@@ -23,55 +32,44 @@ Sub ImportTriggerDataWithHygiene()
     Set wbTrigger = Workbooks.Open(triggerFile)
     Set triggerSheet = wbTrigger.Sheets(1)
     
-    ' Find the last row in the Trigger file
-    lastRowTrigger = triggerSheet.Cells(triggerSheet.Rows.Count, 1).End(xlUp).Row
-
+    ' Ensure the Trigger file data is converted to a table
+    On Error Resume Next
+    Set triggerTable = triggerSheet.ListObjects(1)
+    On Error GoTo 0
+    If triggerTable Is Nothing Then
+        Set triggerTable = triggerSheet.ListObjects.Add(xlSrcRange, triggerSheet.UsedRange, , xlYes)
+        triggerTable.Name = "TriggerTable"
+    End If
+    
     ' Headers to copy from Trigger.csv and paste into Portfolio
     headers = Array("Region", "Fund Manager", "Fund GCI", "Fund Name", "Wks Missing", "Credit Officer")
     
-    ' Create a dictionary to map Trigger file headers to their column numbers
-    Set headerDict = CreateObject("Scripting.Dictionary")
-    For i = 1 To triggerSheet.Cells(1, triggerSheet.Columns.Count).End(xlToLeft).Column
-        headerDict(triggerSheet.Cells(1, i).Value) = i
+    ' Add new rows to the Portfolio table
+    For i = 1 To triggerTable.ListRows.Count
+        Set pasteRow = portfolioTable.ListRows.Add
+        ' Copy data for each header
+        For Each colPortfolio In portfolioTable.ListColumns
+            On Error Resume Next
+            pasteRow.Range(colPortfolio.Index).Value = triggerTable.ListColumns(colPortfolio.Name).DataBodyRange(i, 1).Value
+            On Error GoTo 0
+        Next colPortfolio
     Next i
     
-    ' Find the next empty row in the Portfolio sheet
-    pasteRow = wsPortfolio.Cells(wsPortfolio.Rows.Count, 1).End(xlUp).Row + 1
-    
-    ' Loop through each header and copy data from Trigger file to Portfolio
-    For i = LBound(headers) To UBound(headers)
-        If headerDict.exists(headers(i)) Then
-            colTrigger = headerDict(headers(i)) ' Column number in Trigger.csv
-            colPortfolio = Application.Match(headers(i), wsPortfolio.Rows(1), 0) ' Column number in Portfolio
-            triggerSheet.Range(triggerSheet.Cells(2, colTrigger), triggerSheet.Cells(lastRowTrigger, colTrigger)).Copy _
-                Destination:=wsPortfolio.Cells(pasteRow, colPortfolio)
-        End If
-    Next i
-
     ' Hygiene changes
-    regionCol = Application.Match("Region", wsPortfolio.Rows(1), 0) ' Column number for Region
-    triggerCol = Application.Match("Trigger/Non-Trigger", wsPortfolio.Rows(1), 0) ' Column number for Trigger/Non-Trigger
-
-    With wsPortfolio
-        Dim lastPasteRow As Long
-        lastPasteRow = .Cells(.Rows.Count, 1).End(xlUp).Row ' Determine the last pasted row
-
+    With portfolioTable.DataBodyRange
         ' Replace 'US' with 'AMRS' and 'ASIA' with 'APAC' in the Region column
-        For i = pasteRow To lastPasteRow
-            Select Case .Cells(i, regionCol).Value
-                Case "US"
-                    .Cells(i, regionCol).Value = "AMRS"
-                Case "ASIA"
-                    .Cells(i, regionCol).Value = "APAC"
+        For Each pasteRow In portfolioTable.ListRows
+            Select Case pasteRow.Range(1).Value
+                Case "US": pasteRow.Range(1).Value = "AMRS"
+                Case "ASIA": pasteRow.Range(1).Value = "APAC"
             End Select
-        Next i
-
-        ' Input 'Trigger' in the Trigger/Non-Trigger column for the pasted rows
-        .Range(.Cells(pasteRow, triggerCol), .Cells(lastPasteRow, triggerCol)).Value = "Trigger"
+            ' Add 'Trigger' to the Trigger/Non-Trigger column
+            pasteRow.Range(portfolioTable.ListColumns("Trigger/Non-Trigger").Index).Value = "Trigger"
+        Next pasteRow
     End With
 
     ' Close the Trigger.csv file
     wbTrigger.Close SaveChanges:=False
 
-    MsgBox "Data from Trigger.csv has been successfully imported with hygiene changes.", vbInformation
+    MsgBox "Data from Trigger.csv has been successfully imported into the Portfolio table with hygiene changes.", vbInformation
 End Sub
