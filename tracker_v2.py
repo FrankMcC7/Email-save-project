@@ -20,6 +20,26 @@ Sub ProcessAllData()
     Dim datasetECAAnalyst As Variant
     Dim numRowsPortfolio As Long
     Dim numRowsDataset As Long
+    Dim lastRow As Long, lastCol As Long ' Declare lastRow and lastCol here to avoid duplication
+    Dim headerRow As Range
+    Dim dataRange As Range
+    Dim tblRow As ListRow
+    Dim area As Range
+    Dim rowOffset As Long
+    Dim visibleRowCount As Long
+    Dim key As String
+    Dim fundGCIRange As Range
+    Dim lastDataRow As Long
+    Dim colNames As Object
+    Dim headers As Variant
+    Dim sourceHeaders As Variant, destHeaders As Variant
+    Dim reviewStatusCol As Long, fundGCIColIndex As Long, iaGCIColIndex As Long
+    Dim totalRows As Long
+    Dim allFundsData As Variant
+    Dim excludeUnits As Variant
+    Dim businessUnitCol As ListColumn
+    Dim sourceColumn As Range
+    Dim destRow As Long
 
     On Error GoTo ErrorHandler
 
@@ -55,15 +75,12 @@ Sub ProcessAllData()
     On Error GoTo 0
     If portfolioTable Is Nothing Then
         ' Check if headers exist in row 1
-        Dim headerRow As Range
         Set headerRow = wsPortfolio.Rows(1)
         If Application.WorksheetFunction.CountA(headerRow) > 0 Then
             ' Determine the last used column
-            Dim lastCol As Long
             lastCol = wsPortfolio.Cells(1, wsPortfolio.Columns.Count).End(xlToLeft).Column
 
             ' Define the range including only the header row
-            Dim dataRange As Range
             Set dataRange = wsPortfolio.Range(wsPortfolio.Cells(1, 1), wsPortfolio.Cells(1, lastCol))
 
             ' Convert the header row to a table
@@ -103,7 +120,6 @@ Sub ProcessAllData()
     End If
 
     ' Copy specific columns from Trigger.csv to Portfolio
-    Dim headers As Variant
     headers = Array("Region", "Fund Manager", "Fund GCI", "Fund Name", "Wks Missing", "Credit Officer")
 
     ' Calculate the row to start pasting data
@@ -136,17 +152,12 @@ Sub ProcessAllData()
     allFundsSheet.Rows(1).Delete
 
     ' Read All Funds data into arrays to improve performance
-    Dim allFundsData As Variant
-    Dim reviewStatusCol As Long, fundGCIColIndex As Long, iaGCIColIndex As Long
-    Dim totalRows As Long
-
     totalRows = allFundsSheet.Cells(allFundsSheet.Rows.Count, "A").End(xlUp).Row
 
     ' Read the data into an array
     allFundsData = allFundsSheet.Range("A1").Resize(totalRows, allFundsSheet.UsedRange.Columns.Count).Value
 
     ' Get column indices
-    Dim colNames As Object
     Set colNames = CreateObject("Scripting.Dictionary")
     For i = 1 To UBound(allFundsData, 2)
         colNames(allFundsData(1, i)) = i
@@ -162,7 +173,7 @@ Sub ProcessAllData()
     ' Loop through the data and add to dictionary where Review Status is "Approved"
     For i = 2 To UBound(allFundsData, 1)
         If allFundsData(i, reviewStatusCol) = "Approved" Then
-            If Not IsEmpty(allFundsData(i, fundGCIColIndex)) And Not dictFundGCI.Exists(allFundsData(i, fundGCIColIndex)) Then
+            If Not IsEmpty(allFundsData(i, fundGCIColIndex)) And Not dictFundGCI.Exists(CStr(allFundsData(i, fundGCIColIndex))) Then
                 dictFundGCI.Add CStr(allFundsData(i, fundGCIColIndex)), allFundsData(i, iaGCIColIndex)
             End If
         End If
@@ -212,7 +223,6 @@ Sub ProcessAllData()
     End If
 
     ' Verify the "Business Unit" column exists
-    Dim businessUnitCol As ListColumn
     Set businessUnitCol = Nothing
     On Error Resume Next
     Set businessUnitCol = nonTriggerTable.ListColumns("Business Unit")
@@ -227,7 +237,6 @@ Sub ProcessAllData()
     nonTriggerTable.Range.AutoFilter Field:=businessUnitCol.Index, Criteria1:="<>*FI-ASIA*", Operator:=xlAnd
 
     ' Append Non-Trigger data to Portfolio
-    Dim sourceHeaders As Variant, destHeaders As Variant
     sourceHeaders = Array("Region", "Family", "Fund Manager GCI", "Fund Manager", "Fund GCI", "Fund Name", "Credit Officer", "Weeks Missing")
     destHeaders = Array("Region", "Family", "Fund Manager GCI", "Fund Manager", "Fund GCI", "Fund Name", "Credit Officer", "Wks Missing")
 
@@ -238,19 +247,12 @@ Sub ProcessAllData()
         lastRowPortfolio = portfolioTable.HeaderRowRange.Row
     End If
 
-    Dim destRow As Long
     destRow = lastRowPortfolio + 1
 
-    Dim visibleRowCount As Long
     visibleRowCount = 0
-
-    ' Loop through each area of the visible data
-    Dim area As Range
-    Dim rowOffset As Long
     rowOffset = 0
 
     For i = LBound(sourceHeaders) To UBound(sourceHeaders)
-        Dim sourceColumn As Range
         On Error Resume Next
         Set sourceColumn = nonTriggerTable.ListColumns(sourceHeaders(i)).DataBodyRange.SpecialCells(xlCellTypeVisible)
         If Err.Number <> 0 Then
@@ -290,7 +292,6 @@ NextHeader:
 
     ' === Remove Extra Empty Rows from PortfolioTable ===
     ' Remove empty rows to ensure DataBodyRange is accurate
-    Dim tblRow As ListRow
     For i = portfolioTable.ListRows.Count To 1 Step -1
         Set tblRow = portfolioTable.ListRows(i)
         If Application.WorksheetFunction.CountA(tblRow.Range) = 0 Then
@@ -309,12 +310,10 @@ NextHeader:
     On Error GoTo 0
     If datasetTable Is Nothing Then
         ' Find the last used row and column to define the data range accurately
-        Dim lastRow As Long, lastCol As Long
         lastRow = wsDataset.Cells(wsDataset.Rows.Count, "A").End(xlUp).Row
         lastCol = wsDataset.Cells(1, wsDataset.Columns.Count).End(xlToLeft).Column
 
         ' Define the data range for the table
-        Dim dataRange As Range
         Set dataRange = wsDataset.Range(wsDataset.Cells(1, 1), wsDataset.Cells(lastRow, lastCol))
 
         ' Create the table over the data range
@@ -332,7 +331,6 @@ NextHeader:
     Set dictDataset = CreateObject("Scripting.Dictionary")
     For i = 1 To numRowsDataset
         ' Ensure the key is a string for consistency
-        Dim key As String
         key = CStr(datasetFundManagerGCI(i, 1))
         If Not dictDataset.Exists(key) Then
             dictDataset.Add key, Array(datasetFamily(i, 1), datasetECAAnalyst(i, 1))
@@ -363,8 +361,8 @@ NextHeader:
         If Not IsError(portfolioFundManagerGCI(i, 1)) And Not IsEmpty(portfolioFundManagerGCI(i, 1)) Then
             key = CStr(portfolioFundManagerGCI(i, 1))
 
-            ' Update 'Family' only if it is empty
-            If IsError(portfolioFamily(i, 1)) Or IsEmpty(portfolioFamily(i, 1)) Or portfolioFamily(i, 1) = "" Then
+            ' Update 'Family' only if it is empty or contains "No Match Found"
+            If IsError(portfolioFamily(i, 1)) Or IsEmpty(portfolioFamily(i, 1)) Or portfolioFamily(i, 1) = "" Or portfolioFamily(i, 1) = "No Match Found" Then
                 If dictDataset.Exists(key) Then
                     portfolioFamily(i, 1) = dictDataset(key)(0)
                 Else
