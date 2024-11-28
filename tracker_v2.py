@@ -20,7 +20,7 @@ Sub ProcessAllData()
     Dim datasetECAAnalyst As Variant
     Dim numRowsPortfolio As Long
     Dim numRowsDataset As Long
-    
+
     On Error GoTo ErrorHandler
 
     ' Optimize performance
@@ -135,7 +135,6 @@ Sub ProcessAllData()
     ' Match Fund GCI in Portfolio and write IA GCI to Fund Manager GCI
     numRowsPortfolio = portfolioTable.DataBodyRange.Rows.Count
     fundGCIArray = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
-    Dim portfolioFundManagerGCI As Variant
     ReDim portfolioFundManagerGCI(1 To numRowsPortfolio, 1 To 1)
 
     For i = 1 To numRowsPortfolio
