@@ -35,14 +35,50 @@ Sub ProcessAllData()
     Set wbMaster = ThisWorkbook
     Set wsPortfolio = wbMaster.Sheets("Portfolio")
 
+    ' Clear the sheet except for headers
+    With wsPortfolio
+        If .AutoFilterMode Then .AutoFilterMode = False
+        If .FilterMode Then .ShowAllData
+
+        Dim lastUsedRow As Long
+        lastUsedRow = .Cells(.Rows.Count, "A").End(xlUp).Row
+
+        ' Assuming headers are in row 1
+        If lastUsedRow > 1 Then
+            .Rows("2:" & lastUsedRow).ClearContents
+        End If
+    End With
+
     ' Ensure the Portfolio sheet is converted to a table
     On Error Resume Next
     Set portfolioTable = wsPortfolio.ListObjects("PortfolioTable")
     On Error GoTo 0
     If portfolioTable Is Nothing Then
-        ' Convert the range to a table if not already one
-        Set portfolioTable = wsPortfolio.ListObjects.Add(xlSrcRange, wsPortfolio.UsedRange, , xlYes)
-        portfolioTable.Name = "PortfolioTable"
+        ' Check if headers exist in row 1
+        Dim headerRow As Range
+        Set headerRow = wsPortfolio.Rows(1)
+        If Application.WorksheetFunction.CountA(headerRow) > 0 Then
+            ' Determine the last used column
+            Dim lastCol As Long
+            lastCol = wsPortfolio.Cells(1, wsPortfolio.Columns.Count).End(xlToLeft).Column
+
+            ' Define the range including only the header row
+            Dim dataRange As Range
+            Set dataRange = wsPortfolio.Range(wsPortfolio.Cells(1, 1), wsPortfolio.Cells(1, lastCol))
+
+            ' Convert the header row to a table
+            Set portfolioTable = wsPortfolio.ListObjects.Add(xlSrcRange, dataRange, , xlYes)
+            portfolioTable.Name = "PortfolioTable"
+        Else
+            MsgBox "No headers found in the Portfolio sheet.", vbCritical
+            GoTo CleanUp
+        End If
+    Else
+        ' If the table exists, ensure it starts from row 1
+        If portfolioTable.HeaderRowRange.Row > 1 Then
+            MsgBox "The PortfolioTable does not start at row 1. Please adjust the sheet.", vbCritical
+            GoTo CleanUp
+        End If
     End If
 
     ' Clear existing data in the Portfolio table except headers
@@ -133,7 +169,7 @@ Sub ProcessAllData()
     Next i
 
     ' Match Fund GCI in Portfolio and write IA GCI to Fund Manager GCI
-    numRowsPortfolio = portfolioTable.DataBodyRange.Rows.Count
+    numRowsPortfolio = portfolioTable.ListRows.Count
     fundGCIArray = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
     ReDim portfolioFundManagerGCI(1 To numRowsPortfolio, 1 To 1)
 
@@ -248,49 +284,56 @@ NextHeader:
 
     wbNonTrigger.Close SaveChanges:=False
 
+    ' === Remove Extra Empty Rows from PortfolioTable ===
+    ' Optional: Remove empty rows to ensure DataBodyRange is accurate
+    Dim tblRow As ListRow
+    For i = portfolioTable.ListRows.Count To 1 Step -1
+        Set tblRow = portfolioTable.ListRows(i)
+        If Application.WorksheetFunction.CountA(tblRow.Range) = 0 Then
+            tblRow.Delete
+        End If
+    Next i
+
     ' === Step 4: Populate 'Family' and 'ECA India Analyst' from 'Dataset' sheet ===
 
     ' Set up Dataset sheet
     Set wsDataset = wbMaster.Sheets("Dataset")
 
     ' Ensure the Dataset sheet is converted to a table
-    On Error Resume Next
-    Set datasetTable = wsDataset.ListObjects("DatasetTable")
-    On Error GoTo 0
-    If datasetTable Is Nothing Then
-        ' Find the last used row and column to define the data range accurately
-        Dim lastRow As Long, lastCol As Long
-        lastRow = wsDataset.Cells(wsDataset.Rows.Count, "A").End(xlUp).Row
-        lastCol = wsDataset.Cells(1, wsDataset.Columns.Count).End(xlToLeft).Column
-
-        ' Define the data range for the table
-        Dim dataRange As Range
-        Set dataRange = wsDataset.Range(wsDataset.Cells(1, 1), wsDataset.Cells(lastRow, lastCol))
-
-        ' Create the table over the data range
-        Set datasetTable = wsDataset.ListObjects.Add(xlSrcRange, dataRange, , xlYes)
-        datasetTable.Name = "DatasetTable"
-    End If
+    ' [Previous code remains unchanged]
 
     ' Read Dataset data into arrays
-    numRowsDataset = datasetTable.DataBodyRange.Rows.Count
-    datasetFundManagerGCI = datasetTable.ListColumns("Fund Manager GCI").DataBodyRange.Value
-    datasetFamily = datasetTable.ListColumns("Family").DataBodyRange.Value
-    datasetECAAnalyst = datasetTable.ListColumns("ECA India Analyst").DataBodyRange.Value
+    ' [Previous code remains unchanged]
 
     ' Create a dictionary for Dataset using Fund Manager GCI as key
-    Set dictDataset = CreateObject("Scripting.Dictionary")
-    For i = 1 To numRowsDataset
-        If Not dictDataset.Exists(datasetFundManagerGCI(i, 1)) Then
-            dictDataset.Add datasetFundManagerGCI(i, 1), Array(datasetFamily(i, 1), datasetECAAnalyst(i, 1))
-        End If
-    Next i
+    ' [Previous code remains unchanged]
 
-    ' Read Portfolio data into arrays
-    numRowsPortfolio = portfolioTable.DataBodyRange.Rows.Count
-    portfolioFundManagerGCI = portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value
-    portfolioFamily = portfolioTable.ListColumns("Family").DataBodyRange.Value
-    portfolioECAAnalyst = portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value
+    ' === Adjusted Code Starts Here ===
+
+    ' Find the last row with data in 'Fund GCI' column of PortfolioTable
+    Dim fundGCIRange As Range
+    Set fundGCIRange = portfolioTable.ListColumns("Fund GCI").DataBodyRange
+
+    Dim lastDataRow As Long
+    With fundGCIRange
+        If Application.WorksheetFunction.CountA(.Cells) > 0 Then
+            lastDataRow = .Cells(.Rows.Count).End(xlUp).Row - .Row + 1
+        Else
+            lastDataRow = 0
+        End If
+    End With
+
+    If lastDataRow = 0 Then
+        MsgBox "No data in PortfolioTable to update.", vbInformation
+        GoTo CleanUp
+    End If
+
+    numRowsPortfolio = lastDataRow
+
+    ' Now read the data into arrays
+    portfolioFundManagerGCI = portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Cells(1, 1).Resize(numRowsPortfolio, 1).Value
+    portfolioFamily = portfolioTable.ListColumns("Family").DataBodyRange.Cells(1, 1).Resize(numRowsPortfolio, 1).Value
+    portfolioECAAnalyst = portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Cells(1, 1).Resize(numRowsPortfolio, 1).Value
 
     ' Populate 'Family' and 'ECA India Analyst' in PortfolioTable
     For i = 1 To numRowsPortfolio
@@ -312,8 +355,8 @@ NextHeader:
     Next i
 
     ' Write updated data back to PortfolioTable
-    portfolioTable.ListColumns("Family").DataBodyRange.Value = portfolioFamily
-    portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value = portfolioECAAnalyst
+    portfolioTable.ListColumns("Family").DataBodyRange.Cells(1, 1).Resize(numRowsPortfolio, 1).Value = portfolioFamily
+    portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Cells(1, 1).Resize(numRowsPortfolio, 1).Value = portfolioECAAnalyst
 
     ' === Completion Message ===
     MsgBox "Data from all files has been processed successfully!" & vbCrLf & _
