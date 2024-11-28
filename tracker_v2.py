@@ -20,6 +20,15 @@ Sub ProcessAllData()
     Dim datasetECAAnalyst As Variant
     Dim numRowsPortfolio As Long
     Dim numRowsDataset As Long
+    Dim colNames As Object
+    Dim headers As Variant
+    Dim sourceHeaders As Variant, destHeaders As Variant
+    Dim reviewStatusCol As Long, fundGCIColIndex As Long, iaGCIColIndex As Long
+    Dim totalRows As Long
+    Dim allFundsData As Variant
+    Dim businessUnitColIndex As Long
+    Dim fundGCIKey As String
+    Dim key As String
 
     On Error GoTo ErrorHandler
 
@@ -41,7 +50,12 @@ Sub ProcessAllData()
     On Error GoTo 0
     If portfolioTable Is Nothing Then
         ' Convert the range to a table if not already one
-        Set portfolioTable = wsPortfolio.ListObjects.Add(xlSrcRange, wsPortfolio.UsedRange, , xlYes)
+        If wsPortfolio.UsedRange.Rows.Count > 1 Then
+            Set portfolioTable = wsPortfolio.ListObjects.Add(xlSrcRange, wsPortfolio.UsedRange, , xlYes)
+        Else
+            MsgBox "The Portfolio sheet does not contain headers or data.", vbCritical
+            GoTo CleanUp
+        End If
         portfolioTable.Name = "PortfolioTable"
     End If
 
@@ -67,7 +81,6 @@ Sub ProcessAllData()
     End If
 
     ' Copy specific columns from Trigger.csv to Portfolio
-    Dim headers As Variant
     headers = Array("Region", "Fund Manager", "Fund GCI", "Fund Name", "Wks Missing", "Credit Officer")
 
     ' Calculate the row to start pasting data
@@ -100,17 +113,12 @@ Sub ProcessAllData()
     allFundsSheet.Rows(1).Delete
 
     ' Read All Funds data into arrays to improve performance
-    Dim allFundsData As Variant
-    Dim reviewStatusCol As Long, fundGCIColIndex As Long, iaGCIColIndex As Long
-    Dim totalRows As Long
-
     totalRows = allFundsSheet.Cells(allFundsSheet.Rows.Count, "A").End(xlUp).Row
 
     ' Read the data into an array
     allFundsData = allFundsSheet.Range("A1").Resize(totalRows, allFundsSheet.UsedRange.Columns.Count).Value
 
     ' Get column indices
-    Dim colNames As Object
     Set colNames = CreateObject("Scripting.Dictionary")
     For i = 1 To UBound(allFundsData, 2)
         colNames(allFundsData(1, i)) = i
@@ -126,27 +134,30 @@ Sub ProcessAllData()
     ' Loop through the data and add to dictionary where Review Status is "Approved"
     For i = 2 To UBound(allFundsData, 1)
         If allFundsData(i, reviewStatusCol) = "Approved" Then
-            If Not IsEmpty(allFundsData(i, fundGCIColIndex)) And Not dictFundGCI.Exists(allFundsData(i, fundGCIColIndex)) Then
-                dictFundGCI.Add allFundsData(i, fundGCIColIndex), allFundsData(i, iaGCIColIndex)
+            If Not IsEmpty(allFundsData(i, fundGCIColIndex)) And Not dictFundGCI.Exists(CStr(allFundsData(i, fundGCIColIndex))) Then
+                dictFundGCI.Add CStr(allFundsData(i, fundGCIColIndex)), allFundsData(i, iaGCIColIndex)
             End If
         End If
     Next i
 
     ' Match Fund GCI in Portfolio and write IA GCI to Fund Manager GCI
-    numRowsPortfolio = portfolioTable.DataBodyRange.Rows.Count
-    fundGCIArray = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
-    ReDim portfolioFundManagerGCI(1 To numRowsPortfolio, 1 To 1)
+    numRowsPortfolio = portfolioTable.ListRows.Count
+    If numRowsPortfolio > 0 Then
+        fundGCIArray = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
+        ReDim portfolioFundManagerGCI(1 To numRowsPortfolio, 1 To 1)
 
-    For i = 1 To numRowsPortfolio
-        If dictFundGCI.Exists(fundGCIArray(i, 1)) Then
-            portfolioFundManagerGCI(i, 1) = dictFundGCI(fundGCIArray(i, 1))
-        Else
-            portfolioFundManagerGCI(i, 1) = "No Match Found"
-        End If
-    Next i
+        For i = 1 To numRowsPortfolio
+            fundGCIKey = CStr(fundGCIArray(i, 1))
+            If dictFundGCI.Exists(fundGCIKey) Then
+                portfolioFundManagerGCI(i, 1) = dictFundGCI(fundGCIKey)
+            Else
+                portfolioFundManagerGCI(i, 1) = "No Match Found"
+            End If
+        Next i
 
-    ' Write results back to Fund Manager GCI column
-    portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value = portfolioFundManagerGCI
+        ' Write results back to Fund Manager GCI column
+        portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value = portfolioFundManagerGCI
+    End If
 
     wbAllFunds.Close SaveChanges:=False
 
@@ -167,32 +178,16 @@ Sub ProcessAllData()
     End If
 
     ' Delete rows where 'Business Unit' = 'FI-ASIA'
-    Dim businessUnitColIndex As Long
     businessUnitColIndex = nonTriggerTable.ListColumns("Business Unit").Index
 
-    Dim dataRange As Range
-    Dim deleteRange As Range
-
-    Set dataRange = nonTriggerTable.DataBodyRange.Columns(businessUnitColIndex)
-
-    ' Loop backwards to avoid skipping rows after deletion
-    For i = dataRange.Rows.Count To 1 Step -1
-        If Trim(dataRange.Cells(i, 1).Value) = "FI-ASIA" Then
-            If deleteRange Is Nothing Then
-                Set deleteRange = dataRange.Cells(i, 1).EntireRow
-            Else
-                Set deleteRange = Union(deleteRange, dataRange.Cells(i, 1).EntireRow)
-            End If
+    ' Loop backwards through the table's ListRows
+    For i = nonTriggerTable.ListRows.Count To 1 Step -1
+        If Trim(nonTriggerTable.ListRows(i).Range.Cells(1, businessUnitColIndex).Value) = "FI-ASIA" Then
+            nonTriggerTable.ListRows(i).Delete
         End If
     Next i
 
-    ' Delete the rows
-    If Not deleteRange Is Nothing Then
-        deleteRange.Delete
-    End If
-
     ' Append Non-Trigger data to Portfolio
-    Dim sourceHeaders As Variant, destHeaders As Variant
     sourceHeaders = Array("Region", "Family", "Fund Manager GCI", "Fund Manager", "Fund GCI", "Fund Name", "Credit Officer", "Weeks Missing")
     destHeaders = Array("Region", "Family", "Fund Manager GCI", "Fund Manager", "Fund GCI", "Fund Name", "Credit Officer", "Wks Missing")
 
@@ -233,7 +228,12 @@ Sub ProcessAllData()
     Set datasetTable = wsDataset.ListObjects("DatasetTable")
     On Error GoTo 0
     If datasetTable Is Nothing Then
-        Set datasetTable = wsDataset.ListObjects.Add(xlSrcRange, wsDataset.UsedRange, , xlYes)
+        If wsDataset.UsedRange.Rows.Count > 1 Then
+            Set datasetTable = wsDataset.ListObjects.Add(xlSrcRange, wsDataset.UsedRange, , xlYes)
+        Else
+            MsgBox "The Dataset sheet does not contain headers or data.", vbCritical
+            GoTo CleanUp
+        End If
         datasetTable.Name = "DatasetTable"
     End If
 
@@ -246,39 +246,56 @@ Sub ProcessAllData()
     ' Create a dictionary for Dataset using Fund Manager GCI as key
     Set dictDataset = CreateObject("Scripting.Dictionary")
     For i = 1 To numRowsDataset
-        If Not dictDataset.Exists(datasetFundManagerGCI(i, 1)) Then
-            dictDataset.Add datasetFundManagerGCI(i, 1), Array(datasetFamily(i, 1), datasetECAAnalyst(i, 1))
+        key = CStr(datasetFundManagerGCI(i, 1))
+        If Not dictDataset.Exists(key) Then
+            dictDataset.Add key, Array(datasetFamily(i, 1), datasetECAAnalyst(i, 1))
         End If
     Next i
 
     ' Read Portfolio data into arrays
     numRowsPortfolio = portfolioTable.DataBodyRange.Rows.Count
-    portfolioFundManagerGCI = portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value
-    portfolioFamily = portfolioTable.ListColumns("Family").DataBodyRange.Value
-    portfolioECAAnalyst = portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value
+    If numRowsPortfolio > 0 Then
+        portfolioFundManagerGCI = portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value
+        portfolioFamily = portfolioTable.ListColumns("Family").DataBodyRange.Value
+        portfolioECAAnalyst = portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value
 
-    ' Populate 'Family' and 'ECA India Analyst' in PortfolioTable
-    For i = 1 To numRowsPortfolio
-        ' Update 'Family' only if it is empty
-        If IsEmpty(portfolioFamily(i, 1)) Or portfolioFamily(i, 1) = "" Then
-            If dictDataset.Exists(portfolioFundManagerGCI(i, 1)) Then
-                portfolioFamily(i, 1) = dictDataset(portfolioFundManagerGCI(i, 1))(0)
+        ' Ensure arrays are properly dimensioned
+        If Not IsArray(portfolioFundManagerGCI) Then ReDim portfolioFundManagerGCI(1 To 1, 1 To 1)
+        If Not IsArray(portfolioFamily) Then ReDim portfolioFamily(1 To 1, 1 To 1)
+        If Not IsArray(portfolioECAAnalyst) Then ReDim portfolioECAAnalyst(1 To 1, 1 To 1)
+
+        ' Populate 'Family' and 'ECA India Analyst' in PortfolioTable
+        For i = 1 To numRowsPortfolio
+            ' Check for empty or error values in Fund Manager GCI
+            If Not IsError(portfolioFundManagerGCI(i, 1)) And Not IsEmpty(portfolioFundManagerGCI(i, 1)) Then
+                key = CStr(portfolioFundManagerGCI(i, 1))
+
+                ' Update 'Family' only if it is empty or contains "No Match Found"
+                If IsError(portfolioFamily(i, 1)) Or IsEmpty(portfolioFamily(i, 1)) Or portfolioFamily(i, 1) = "" Or portfolioFamily(i, 1) = "No Match Found" Then
+                    If dictDataset.Exists(key) Then
+                        portfolioFamily(i, 1) = dictDataset(key)(0)
+                    Else
+                        portfolioFamily(i, 1) = "No Match Found"
+                    End If
+                End If
+
+                ' Always update 'ECA India Analyst' from DatasetTable
+                If dictDataset.Exists(key) Then
+                    portfolioECAAnalyst(i, 1) = dictDataset(key)(1)
+                Else
+                    portfolioECAAnalyst(i, 1) = "No Match Found"
+                End If
             Else
+                ' Handle empty or error values
                 portfolioFamily(i, 1) = "No Match Found"
+                portfolioECAAnalyst(i, 1) = "No Match Found"
             End If
-        End If
+        Next i
 
-        ' Always update 'ECA India Analyst' from DatasetTable
-        If dictDataset.Exists(portfolioFundManagerGCI(i, 1)) Then
-            portfolioECAAnalyst(i, 1) = dictDataset(portfolioFundManagerGCI(i, 1))(1)
-        Else
-            portfolioECAAnalyst(i, 1) = "No Match Found"
-        End If
-    Next i
-
-    ' Write updated data back to PortfolioTable
-    portfolioTable.ListColumns("Family").DataBodyRange.Value = portfolioFamily
-    portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value = portfolioECAAnalyst
+        ' Write updated data back to PortfolioTable
+        portfolioTable.ListColumns("Family").DataBodyRange.Value = portfolioFamily
+        portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value = portfolioECAAnalyst
+    End If
 
     ' === Completion Message ===
     MsgBox "Data from all files has been processed successfully!" & vbCrLf & _
