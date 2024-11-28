@@ -163,26 +163,30 @@ Sub ProcessAllData()
     For i = 2 To UBound(allFundsData, 1)
         If allFundsData(i, reviewStatusCol) = "Approved" Then
             If Not IsEmpty(allFundsData(i, fundGCIColIndex)) And Not dictFundGCI.Exists(allFundsData(i, fundGCIColIndex)) Then
-                dictFundGCI.Add allFundsData(i, fundGCIColIndex), allFundsData(i, iaGCIColIndex)
+                dictFundGCI.Add CStr(allFundsData(i, fundGCIColIndex)), allFundsData(i, iaGCIColIndex)
             End If
         End If
     Next i
 
     ' Match Fund GCI in Portfolio and write IA GCI to Fund Manager GCI
     numRowsPortfolio = portfolioTable.ListRows.Count
-    fundGCIArray = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
-    ReDim portfolioFundManagerGCI(1 To numRowsPortfolio, 1 To 1)
+    If numRowsPortfolio > 0 Then
+        fundGCIArray = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
+        ReDim portfolioFundManagerGCI(1 To numRowsPortfolio, 1 To 1)
 
-    For i = 1 To numRowsPortfolio
-        If dictFundGCI.Exists(fundGCIArray(i, 1)) Then
-            portfolioFundManagerGCI(i, 1) = dictFundGCI(fundGCIArray(i, 1))
-        Else
-            portfolioFundManagerGCI(i, 1) = "No Match Found"
-        End If
-    Next i
+        For i = 1 To numRowsPortfolio
+            Dim fundGCIKey As String
+            fundGCIKey = CStr(fundGCIArray(i, 1))
+            If dictFundGCI.Exists(fundGCIKey) Then
+                portfolioFundManagerGCI(i, 1) = dictFundGCI(fundGCIKey)
+            Else
+                portfolioFundManagerGCI(i, 1) = "No Match Found"
+            End If
+        Next i
 
-    ' Write results back to Fund Manager GCI column
-    portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value = portfolioFundManagerGCI
+        ' Write results back to Fund Manager GCI column
+        portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value = portfolioFundManagerGCI
+    End If
 
     wbAllFunds.Close SaveChanges:=False
 
@@ -285,7 +289,7 @@ NextHeader:
     wbNonTrigger.Close SaveChanges:=False
 
     ' === Remove Extra Empty Rows from PortfolioTable ===
-    ' Optional: Remove empty rows to ensure DataBodyRange is accurate
+    ' Remove empty rows to ensure DataBodyRange is accurate
     Dim tblRow As ListRow
     For i = portfolioTable.ListRows.Count To 1 Step -1
         Set tblRow = portfolioTable.ListRows(i)
@@ -300,63 +304,90 @@ NextHeader:
     Set wsDataset = wbMaster.Sheets("Dataset")
 
     ' Ensure the Dataset sheet is converted to a table
-    ' [Previous code remains unchanged]
+    On Error Resume Next
+    Set datasetTable = wsDataset.ListObjects("DatasetTable")
+    On Error GoTo 0
+    If datasetTable Is Nothing Then
+        ' Find the last used row and column to define the data range accurately
+        Dim lastRow As Long, lastCol As Long
+        lastRow = wsDataset.Cells(wsDataset.Rows.Count, "A").End(xlUp).Row
+        lastCol = wsDataset.Cells(1, wsDataset.Columns.Count).End(xlToLeft).Column
+
+        ' Define the data range for the table
+        Dim dataRange As Range
+        Set dataRange = wsDataset.Range(wsDataset.Cells(1, 1), wsDataset.Cells(lastRow, lastCol))
+
+        ' Create the table over the data range
+        Set datasetTable = wsDataset.ListObjects.Add(xlSrcRange, dataRange, , xlYes)
+        datasetTable.Name = "DatasetTable"
+    End If
 
     ' Read Dataset data into arrays
-    ' [Previous code remains unchanged]
+    numRowsDataset = datasetTable.DataBodyRange.Rows.Count
+    datasetFundManagerGCI = datasetTable.ListColumns("Fund Manager GCI").DataBodyRange.Value
+    datasetFamily = datasetTable.ListColumns("Family").DataBodyRange.Value
+    datasetECAAnalyst = datasetTable.ListColumns("ECA India Analyst").DataBodyRange.Value
 
     ' Create a dictionary for Dataset using Fund Manager GCI as key
-    ' [Previous code remains unchanged]
-
-    ' === Adjusted Code Starts Here ===
-
-    ' Find the last row with data in 'Fund GCI' column of PortfolioTable
-    Dim fundGCIRange As Range
-    Set fundGCIRange = portfolioTable.ListColumns("Fund GCI").DataBodyRange
-
-    Dim lastDataRow As Long
-    With fundGCIRange
-        If Application.WorksheetFunction.CountA(.Cells) > 0 Then
-            lastDataRow = .Cells(.Rows.Count).End(xlUp).Row - .Row + 1
-        Else
-            lastDataRow = 0
+    Set dictDataset = CreateObject("Scripting.Dictionary")
+    For i = 1 To numRowsDataset
+        ' Ensure the key is a string for consistency
+        Dim key As String
+        key = CStr(datasetFundManagerGCI(i, 1))
+        If Not dictDataset.Exists(key) Then
+            dictDataset.Add key, Array(datasetFamily(i, 1), datasetECAAnalyst(i, 1))
         End If
-    End With
+    Next i
 
-    If lastDataRow = 0 Then
+    ' Find the number of data rows in 'Fund GCI' column
+    numRowsPortfolio = Application.WorksheetFunction.CountA(portfolioTable.ListColumns("Fund GCI").DataBodyRange)
+
+    If numRowsPortfolio = 0 Then
         MsgBox "No data in PortfolioTable to update.", vbInformation
         GoTo CleanUp
     End If
 
-    numRowsPortfolio = lastDataRow
+    ' Read the data into arrays
+    portfolioFundManagerGCI = portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value
+    portfolioFamily = portfolioTable.ListColumns("Family").DataBodyRange.Value
+    portfolioECAAnalyst = portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value
 
-    ' Now read the data into arrays
-    portfolioFundManagerGCI = portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Cells(1, 1).Resize(numRowsPortfolio, 1).Value
-    portfolioFamily = portfolioTable.ListColumns("Family").DataBodyRange.Cells(1, 1).Resize(numRowsPortfolio, 1).Value
-    portfolioECAAnalyst = portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Cells(1, 1).Resize(numRowsPortfolio, 1).Value
+    ' Ensure arrays are properly dimensioned
+    If Not IsArray(portfolioFundManagerGCI) Then ReDim portfolioFundManagerGCI(1 To 1, 1 To 1)
+    If Not IsArray(portfolioFamily) Then ReDim portfolioFamily(1 To 1, 1 To 1)
+    If Not IsArray(portfolioECAAnalyst) Then ReDim portfolioECAAnalyst(1 To 1, 1 To 1)
 
     ' Populate 'Family' and 'ECA India Analyst' in PortfolioTable
     For i = 1 To numRowsPortfolio
-        ' Update 'Family' only if it is empty
-        If IsEmpty(portfolioFamily(i, 1)) Or portfolioFamily(i, 1) = "" Then
-            If dictDataset.Exists(portfolioFundManagerGCI(i, 1)) Then
-                portfolioFamily(i, 1) = dictDataset(portfolioFundManagerGCI(i, 1))(0)
-            Else
-                portfolioFamily(i, 1) = "No Match Found"
-            End If
-        End If
+        ' Check for empty or error values in Fund Manager GCI
+        If Not IsError(portfolioFundManagerGCI(i, 1)) And Not IsEmpty(portfolioFundManagerGCI(i, 1)) Then
+            key = CStr(portfolioFundManagerGCI(i, 1))
 
-        ' Always update 'ECA India Analyst' from DatasetTable
-        If dictDataset.Exists(portfolioFundManagerGCI(i, 1)) Then
-            portfolioECAAnalyst(i, 1) = dictDataset(portfolioFundManagerGCI(i, 1))(1)
+            ' Update 'Family' only if it is empty
+            If IsError(portfolioFamily(i, 1)) Or IsEmpty(portfolioFamily(i, 1)) Or portfolioFamily(i, 1) = "" Then
+                If dictDataset.Exists(key) Then
+                    portfolioFamily(i, 1) = dictDataset(key)(0)
+                Else
+                    portfolioFamily(i, 1) = "No Match Found"
+                End If
+            End If
+
+            ' Always update 'ECA India Analyst' from DatasetTable
+            If dictDataset.Exists(key) Then
+                portfolioECAAnalyst(i, 1) = dictDataset(key)(1)
+            Else
+                portfolioECAAnalyst(i, 1) = "No Match Found"
+            End If
         Else
+            ' Handle empty or error values
+            portfolioFamily(i, 1) = "No Match Found"
             portfolioECAAnalyst(i, 1) = "No Match Found"
         End If
     Next i
 
     ' Write updated data back to PortfolioTable
-    portfolioTable.ListColumns("Family").DataBodyRange.Cells(1, 1).Resize(numRowsPortfolio, 1).Value = portfolioFamily
-    portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Cells(1, 1).Resize(numRowsPortfolio, 1).Value = portfolioECAAnalyst
+    portfolioTable.ListColumns("Family").DataBodyRange.Value = portfolioFamily
+    portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value = portfolioECAAnalyst
 
     ' === Completion Message ===
     MsgBox "Data from all files has been processed successfully!" & vbCrLf & _
