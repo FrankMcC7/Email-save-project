@@ -8,7 +8,7 @@ Sub ProcessAllData()
     Dim dictFundGCI As Object, dictDataset As Object
     Dim fundGCIArray As Variant, resultArray As Variant
     Dim i As Long, lastRowPortfolio As Long
-    Dim triggerColIndex As Long ' Single declaration for use across sections
+    Dim triggerColIndex As Long ' Column index for "Trigger/Non-Trigger"
     Dim startTime As Double
     Dim wsDataset As Worksheet
     Dim datasetTable As ListObject
@@ -31,7 +31,7 @@ Sub ProcessAllData()
     ' Record the start time
     startTime = Timer
 
-    ' Set up the Portfolio sheet
+    ' === Set up the Portfolio sheet ===
     Set wbMaster = ThisWorkbook
     Set wsPortfolio = wbMaster.Sheets("Portfolio")
 
@@ -69,7 +69,7 @@ Sub ProcessAllData()
     ' Copy specific columns from Trigger.csv to Portfolio
     Dim headers As Variant
     headers = Array("Region", "Fund Manager", "Fund GCI", "Fund Name", "Wks Missing", "Credit Officer")
-    
+
     ' Calculate the row to start pasting data
     lastRowPortfolio = portfolioTable.HeaderRowRange.Row + 1
 
@@ -96,7 +96,7 @@ Sub ProcessAllData()
     Set wbAllFunds = Workbooks.Open(allFundsFile)
     Set allFundsSheet = wbAllFunds.Sheets(1)
 
-    ' Delete the first row
+    ' Delete the first row (assuming it's a header row)
     allFundsSheet.Rows(1).Delete
 
     ' Read All Funds data into arrays to improve performance
@@ -226,12 +226,14 @@ Sub ProcessAllData()
     Next i
 
     ' Read Portfolio data into arrays
+    numRowsPortfolio = portfolioTable.DataBodyRange.Rows.Count
     portfolioFundManagerGCI = portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value
     portfolioFamily = portfolioTable.ListColumns("Family").DataBodyRange.Value
     portfolioECAAnalyst = portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value
 
     ' Populate 'Family' and 'ECA India Analyst' in PortfolioTable
     For i = 1 To numRowsPortfolio
+        ' Update 'Family' only if it is empty
         If IsEmpty(portfolioFamily(i, 1)) Or portfolioFamily(i, 1) = "" Then
             If dictDataset.exists(portfolioFundManagerGCI(i, 1)) Then
                 portfolioFamily(i, 1) = dictDataset(portfolioFundManagerGCI(i, 1))(0)
@@ -239,12 +241,12 @@ Sub ProcessAllData()
                 portfolioFamily(i, 1) = "No Match Found"
             End If
         End If
-        If IsEmpty(portfolioECAAnalyst(i, 1)) Or portfolioECAAnalyst(i, 1) = "" Then
-            If dictDataset.exists(portfolioFundManagerGCI(i, 1)) Then
-                portfolioECAAnalyst(i, 1) = dictDataset(portfolioFundManagerGCI(i, 1))(1)
-            Else
-                portfolioECAAnalyst(i, 1) = "No Match Found"
-            End If
+
+        ' Always update 'ECA India Analyst' from DatasetTable
+        If dictDataset.exists(portfolioFundManagerGCI(i, 1)) Then
+            portfolioECAAnalyst(i, 1) = dictDataset(portfolioFundManagerGCI(i, 1))(1)
+        Else
+            portfolioECAAnalyst(i, 1) = "No Match Found"
         End If
     Next i
 
@@ -252,7 +254,9 @@ Sub ProcessAllData()
     portfolioTable.ListColumns("Family").DataBodyRange.Value = portfolioFamily
     portfolioTable.ListColumns("ECA India Analyst").DataBodyRange.Value = portfolioECAAnalyst
 
-    MsgBox "Data from all files has been processed successfully!" & vbCrLf & "Time taken: " & Format(Timer - startTime, "0.00") & " seconds.", vbInformation
+    ' === Completion Message ===
+    MsgBox "Data from all files has been processed successfully!" & vbCrLf & _
+           "Time taken: " & Format(Timer - startTime, "0.00") & " seconds.", vbInformation
 
 CleanUp:
     ' Reset Application settings
