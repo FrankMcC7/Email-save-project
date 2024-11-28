@@ -1,4 +1,4 @@
-Sub ImportTriggerDataWithAutomaticTableCreation()
+Sub ImportTriggerDataWithOptimizedHygiene()
     Dim wsPortfolio As Worksheet
     Dim wbMaster As Workbook
     Dim wbTrigger As Workbook
@@ -8,10 +8,9 @@ Sub ImportTriggerDataWithAutomaticTableCreation()
     Dim portfolioTable As ListObject
     Dim headers As Variant
     Dim colPortfolio As ListColumn
-    Dim pasteRow As ListRow
     Dim i As Long
     
-    ' Set the Portfolio sheet in the master file
+    ' Set the Portfolio sheet and table in the master file
     Set wbMaster = ThisWorkbook
     Set wsPortfolio = wbMaster.Sheets("Portfolio")
     
@@ -46,26 +45,34 @@ Sub ImportTriggerDataWithAutomaticTableCreation()
     
     ' Add new rows to the Portfolio table
     For i = 1 To triggerTable.ListRows.Count
-        Set pasteRow = portfolioTable.ListRows.Add
-        ' Copy data for each header
-        For Each colPortfolio In portfolioTable.ListColumns
-            On Error Resume Next
-            pasteRow.Range(colPortfolio.Index).Value = triggerTable.ListColumns(colPortfolio.Name).DataBodyRange(i, 1).Value
-            On Error GoTo 0
-        Next colPortfolio
+        With portfolioTable.ListRows.Add
+            For Each colPortfolio In portfolioTable.ListColumns
+                On Error Resume Next
+                .Range(colPortfolio.Index).Value = triggerTable.ListColumns(colPortfolio.Name).DataBodyRange(i, 1).Value
+                On Error GoTo 0
+            Next colPortfolio
+        End With
     Next i
     
-    ' Hygiene changes
+    ' Optimized hygiene changes
     With portfolioTable.DataBodyRange
-        ' Replace 'US' with 'AMRS' and 'ASIA' with 'APAC' in the Region column
-        For Each pasteRow In portfolioTable.ListRows
-            Select Case pasteRow.Range(1).Value
-                Case "US": pasteRow.Range(1).Value = "AMRS"
-                Case "ASIA": pasteRow.Range(1).Value = "APAC"
-            End Select
-            ' Add 'Trigger' to the Trigger/Non-Trigger column
-            pasteRow.Range(portfolioTable.ListColumns("Trigger/Non-Trigger").Index).Value = "Trigger"
-        Next pasteRow
+        Dim regionColIndex As Long, triggerColIndex As Long
+        Dim regionRange As Range, triggerRange As Range
+        
+        ' Get column indices for Region and Trigger/Non-Trigger
+        regionColIndex = portfolioTable.ListColumns("Region").Index
+        triggerColIndex = portfolioTable.ListColumns("Trigger/Non-Trigger").Index
+        
+        ' Get ranges for Region and Trigger/Non-Trigger columns
+        Set regionRange = .Columns(regionColIndex)
+        Set triggerRange = .Columns(triggerColIndex)
+        
+        ' Replace 'US' with 'AMRS' and 'ASIA' with 'APAC' in Region column
+        regionRange.Replace What:="US", Replacement:="AMRS", LookAt:=xlWhole
+        regionRange.Replace What:="ASIA", Replacement:="APAC", LookAt:=xlWhole
+        
+        ' Fill 'Trigger' in the Trigger/Non-Trigger column for all rows
+        triggerRange.Value = "Trigger"
     End With
 
     ' Close the Trigger.csv file
