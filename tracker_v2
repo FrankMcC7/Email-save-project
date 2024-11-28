@@ -1,0 +1,117 @@
+Sub ProcessTriggerAndAllFundsData()
+    Dim wsPortfolio As Worksheet
+    Dim wbMaster As Workbook
+    Dim wbTrigger As Workbook, wbAllFunds As Workbook
+    Dim triggerFile As String, allFundsFile As String
+    Dim triggerSheet As Worksheet, allFundsSheet As Worksheet
+    Dim triggerTable As ListObject, portfolioTable As ListObject, allFundsTable As ListObject
+    Dim headers As Variant
+    Dim fundGCI As Range, iaGCI As Range
+    Dim pasteStartRow As Long, i As Long
+    Dim fundGCIValues As Variant
+
+    ' Set up the Portfolio sheet
+    Set wbMaster = ThisWorkbook
+    Set wsPortfolio = wbMaster.Sheets("Portfolio")
+
+    ' Ensure the Portfolio sheet is converted to a table
+    On Error Resume Next
+    Set portfolioTable = wsPortfolio.ListObjects("PortfolioTable")
+    On Error GoTo 0
+    If portfolioTable Is Nothing Then
+        ' Convert the range to a table if not already one
+        Set portfolioTable = wsPortfolio.ListObjects.Add(xlSrcRange, wsPortfolio.UsedRange, , xlYes)
+        portfolioTable.Name = "PortfolioTable"
+    End If
+
+    ' Clear existing data in the Portfolio table except headers
+    If Not portfolioTable.DataBodyRange Is Nothing Then
+        portfolioTable.DataBodyRange.ClearContents
+    End If
+
+    ' Step 1: Process Trigger.csv
+    triggerFile = Application.GetOpenFilename("CSV Files (*.csv), *.csv", , "Select Trigger.csv")
+    If triggerFile = "False" Then Exit Sub ' User canceled
+
+    Set wbTrigger = Workbooks.Open(triggerFile)
+    Set triggerSheet = wbTrigger.Sheets(1)
+
+    ' Convert Trigger data to a table if it isn't already one
+    On Error Resume Next
+    Set triggerTable = triggerSheet.ListObjects(1)
+    On Error GoTo 0
+    If triggerTable Is Nothing Then
+        Set triggerTable = triggerSheet.ListObjects.Add(xlSrcRange, triggerSheet.UsedRange, , xlYes)
+        triggerTable.Name = "TriggerTable"
+    End If
+
+    ' Define headers to copy
+    headers = Array("Region", "Fund Manager", "Fund GCI", "Fund Name", "Wks Missing", "Credit Officer")
+
+    ' Copy data from Trigger.csv to Portfolio
+    pasteStartRow = portfolioTable.HeaderRowRange.Row + 1
+    For i = LBound(headers) To UBound(headers)
+        With triggerTable.ListColumns(headers(i)).DataBodyRange
+            wsPortfolio.Cells(pasteStartRow, portfolioTable.ListColumns(headers(i)).Index).Resize(.Rows.Count, 1).Value = .Value
+        End With
+    Next i
+
+    ' Replace Region values and populate Trigger/Non-Trigger
+    With portfolioTable.DataBodyRange
+        Dim regionColIndex As Long, triggerColIndex As Long
+        regionColIndex = portfolioTable.ListColumns("Region").Index
+        triggerColIndex = portfolioTable.ListColumns("Trigger/Non-Trigger").Index
+
+        .Columns(regionColIndex).Replace What:="US", Replacement:="AMRS", LookAt:=xlWhole
+        .Columns(regionColIndex).Replace What:="ASIA", Replacement:="APAC", LookAt:=xlWhole
+        .Columns(triggerColIndex).Value = "Trigger"
+    End With
+
+    wbTrigger.Close SaveChanges:=False
+
+    ' Step 2: Process All Funds.csv
+    allFundsFile = Application.GetOpenFilename("CSV Files (*.csv), *.csv", , "Select all fund.csv")
+    If allFundsFile = "False" Then Exit Sub ' User canceled
+
+    Set wbAllFunds = Workbooks.Open(allFundsFile)
+    Set allFundsSheet = wbAllFunds.Sheets(1)
+
+    ' Delete the first row
+    allFundsSheet.Rows(1).Delete
+
+    ' Convert All Funds data to a table
+    On Error Resume Next
+    Set allFundsTable = allFundsSheet.ListObjects(1)
+    On Error GoTo 0
+    If allFundsTable Is Nothing Then
+        Set allFundsTable = allFundsSheet.ListObjects.Add(xlSrcRange, allFundsSheet.UsedRange, , xlYes)
+        allFundsTable.Name = "AllFundsTable"
+    End If
+
+    ' Filter Review Status to Approved
+    allFundsTable.Range.AutoFilter Field:=allFundsTable.ListColumns("Review Status").Index, Criteria1:="Approved"
+
+    ' Use Fund GCI from Portfolio to filter All Funds
+    Set fundGCI = portfolioTable.ListColumns("Fund GCI").DataBodyRange
+    fundGCIValues = Application.Transpose(fundGCI.Value)
+
+    allFundsTable.Range.AutoFilter Field:=allFundsTable.ListColumns("Fund GCI").Index, Criteria1:=fundGCIValues, Operator:=xlFilterValues
+
+    ' Copy IA GCI from All Funds to Portfolio
+    For Each cell In fundGCI
+        If Not IsEmpty(cell.Value) Then
+            Dim foundRow As Range
+            Set foundRow = allFundsTable.ListColumns("Fund GCI").DataBodyRange.Find(What:=cell.Value, LookIn:=xlValues, LookAt:=xlWhole)
+            If Not foundRow Is Nothing Then
+                wsPortfolio.Cells(cell.Row, portfolioTable.ListColumns("Fund Manager GCI").Index).Value = foundRow.Offset(0, allFundsTable.ListColumns("IA GCI").Index - allFundsTable.ListColumns("Fund GCI").Index).Value
+            End If
+        End If
+    Next cell
+
+    ' Clear filters in All Funds
+    If allFundsTable.ShowAutoFilter Then allFundsTable.AutoFilter.ShowAllData
+
+    wbAllFunds.Close SaveChanges:=False
+
+    MsgBox "Data from Trigger.csv and All Funds.csv has been processed successfully!", vbInformation
+End Sub
