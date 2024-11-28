@@ -171,24 +171,15 @@ Sub ProcessAllData()
         nonTriggerTable.AutoFilter.ShowAllData
     End If
 
-    ' Apply reverse filter to include only specific Business Units
-    Dim includeBusinessUnits As Variant
-    includeBusinessUnits = Array("FI-US", "FI-EMEA", "FI-GMC-ASIA")
-
-    ' Verify the "Business Unit" column exists
+    ' Apply the filter to exclude 'FI-ASIA' from the 'Business Unit' column
     Dim businessUnitCol As ListColumn
-    Set businessUnitCol = Nothing
-    On Error Resume Next
     Set businessUnitCol = nonTriggerTable.ListColumns("Business Unit")
-    On Error GoTo 0
-
     If businessUnitCol Is Nothing Then
         MsgBox "The column 'Business Unit' does not exist in Non-Trigger.csv.", vbCritical
         GoTo CleanUp
     End If
 
-    ' Apply the filter
-    nonTriggerTable.Range.AutoFilter Field:=businessUnitCol.Index, Criteria1:=includeBusinessUnits, Operator:=xlFilterValues
+    nonTriggerTable.Range.AutoFilter Field:=businessUnitCol.Index, Criteria1:="<>FI-ASIA"
 
     ' Append Non-Trigger data to Portfolio
     Dim sourceHeaders As Variant, destHeaders As Variant
@@ -202,21 +193,41 @@ Sub ProcessAllData()
         lastRowPortfolio = portfolioTable.HeaderRowRange.Row
     End If
 
-    Dim numRowsToCopy As Long
-    On Error Resume Next
-    numRowsToCopy = nonTriggerTable.DataBodyRange.SpecialCells(xlCellTypeVisible).Rows.Count
-    On Error GoTo 0
+    Dim destRow As Long
+    destRow = lastRowPortfolio + 1
 
-    If numRowsToCopy > 0 Then
-        For i = LBound(sourceHeaders) To UBound(sourceHeaders)
-            With nonTriggerTable.ListColumns(sourceHeaders(i)).DataBodyRange.SpecialCells(xlCellTypeVisible)
-                wsPortfolio.Cells(lastRowPortfolio + 1, portfolioTable.ListColumns(destHeaders(i)).Index).Resize(.Rows.Count, 1).Value = .Value
-            End With
-        Next i
+    ' Loop through each header to copy data
+    For i = LBound(sourceHeaders) To UBound(sourceHeaders)
+        Dim sourceColumn As Range
+        Set sourceColumn = Nothing
+        On Error Resume Next
+        Set sourceColumn = nonTriggerTable.ListColumns(sourceHeaders(i)).DataBodyRange.SpecialCells(xlCellTypeVisible)
+        On Error GoTo 0
 
-        ' Fill Trigger/Non-Trigger column with 'Non-Trigger'
+        If Not sourceColumn Is Nothing Then
+            ' Loop through each area of visible cells
+            Dim area As Range
+            For Each area In sourceColumn.Areas
+                ' Copy the data area by area
+                wsPortfolio.Cells(destRow, portfolioTable.ListColumns(destHeaders(i)).Index).Resize(area.Rows.Count, 1).Value = area.Value
+
+                ' Update the destination row
+                destRow = destRow + area.Rows.Count
+            Next area
+        End If
+
+        ' Reset the destination row for the next header
+        destRow = lastRowPortfolio + 1
+    Next i
+
+    ' Update the number of rows copied
+    Dim numRowsCopied As Long
+    numRowsCopied = destRow - lastRowPortfolio - 1
+
+    ' Fill Trigger/Non-Trigger column with 'Non-Trigger'
+    If numRowsCopied > 0 Then
         With wsPortfolio
-            .Range(.Cells(lastRowPortfolio + 1, triggerColIndex), .Cells(lastRowPortfolio + numRowsToCopy, triggerColIndex)).Value = "Non-Trigger"
+            .Range(.Cells(lastRowPortfolio + 1, triggerColIndex), .Cells(lastRowPortfolio + numRowsCopied, triggerColIndex)).Value = "Non-Trigger"
         End With
     Else
         MsgBox "No data to copy from Non-Trigger.csv after applying the filter.", vbExclamation
