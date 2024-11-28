@@ -8,9 +8,19 @@ Sub ProcessAllData()
     Dim dictFundGCI As Object
     Dim fundGCIArray As Variant, resultArray As Variant
     Dim i As Long, lastRowPortfolio As Long
-    Dim fundGCICol As Range, iaGCICol As Range
     Dim triggerColIndex As Long ' Single declaration for use across sections
+    Dim startTime As Double
+    
+    On Error GoTo ErrorHandler
 
+    ' Optimize performance
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.EnableEvents = False
+    
+    ' Record the start time
+    startTime = Timer
+    
     ' Set up the Portfolio sheet
     Set wbMaster = ThisWorkbook
     Set wsPortfolio = wbMaster.Sheets("Portfolio")
@@ -27,12 +37,12 @@ Sub ProcessAllData()
 
     ' Clear existing data in the Portfolio table except headers
     If Not portfolioTable.DataBodyRange Is Nothing Then
-        portfolioTable.DataBodyRange.ClearContents
+        portfolioTable.DataBodyRange.Delete
     End If
 
     ' === Step 1: Process Trigger.csv ===
     triggerFile = Application.GetOpenFilename("CSV Files (*.csv), *.csv", , "Select Trigger.csv")
-    If triggerFile = "False" Then Exit Sub ' User canceled
+    If triggerFile = "False" Then GoTo CleanUp ' User canceled
 
     Set wbTrigger = Workbooks.Open(triggerFile)
     Set triggerSheet = wbTrigger.Sheets(1)
@@ -49,7 +59,10 @@ Sub ProcessAllData()
     ' Copy specific columns from Trigger.csv to Portfolio
     Dim headers As Variant
     headers = Array("Region", "Fund Manager", "Fund GCI", "Fund Name", "Wks Missing", "Credit Officer")
+    
+    ' Calculate the row to start pasting data
     lastRowPortfolio = portfolioTable.HeaderRowRange.Row + 1
+
     For i = LBound(headers) To UBound(headers)
         With triggerTable.ListColumns(headers(i)).DataBodyRange
             wsPortfolio.Cells(lastRowPortfolio, portfolioTable.ListColumns(headers(i)).Index).Resize(.Rows.Count, 1).Value = .Value
@@ -68,7 +81,7 @@ Sub ProcessAllData()
 
     ' === Step 2: Process All Funds.csv ===
     allFundsFile = Application.GetOpenFilename("CSV Files (*.csv), *.csv", , "Select all fund.csv")
-    If allFundsFile = "False" Then Exit Sub ' User canceled
+    If allFundsFile = "False" Then GoTo CleanUp ' User canceled
 
     Set wbAllFunds = Workbooks.Open(allFundsFile)
     Set allFundsSheet = wbAllFunds.Sheets(1)
@@ -76,53 +89,64 @@ Sub ProcessAllData()
     ' Delete the first row
     allFundsSheet.Rows(1).Delete
 
-    ' Convert All Funds data to a table
-    On Error Resume Next
-    Set allFundsTable = allFundsSheet.ListObjects(1)
-    On Error GoTo 0
-    If allFundsTable Is Nothing Then
-        Set allFundsTable = allFundsSheet.ListObjects.Add(xlSrcRange, allFundsSheet.UsedRange, , xlYes)
-        allFundsTable.Name = "AllFundsTable"
-    End If
+    ' Read All Funds data into arrays to improve performance
+    Dim allFundsData As Variant
+    Dim reviewStatusCol As Long, fundGCIColIndex As Long, iaGCIColIndex As Long
+    Dim totalRows As Long
 
-    ' Filter Review Status to Approved
-    allFundsTable.Range.AutoFilter Field:=allFundsTable.ListColumns("Review Status").Index, Criteria1:="Approved"
+    totalRows = allFundsSheet.Cells(allFundsSheet.Rows.Count, "A").End(xlUp).Row
 
-    ' Load Fund GCI and IA GCI from All Funds into a dictionary
+    ' Read the data into an array
+    allFundsData = allFundsSheet.Range("A1").Resize(totalRows, allFundsSheet.UsedRange.Columns.Count).Value
+
+    ' Get column indices
+    Dim colNames As Object
+    Set colNames = CreateObject("Scripting.Dictionary")
+    For i = 1 To UBound(allFundsData, 2)
+        colNames(allFundsData(1, i)) = i
+    Next i
+
+    reviewStatusCol = colNames("Review Status")
+    fundGCIColIndex = colNames("Fund GCI")
+    iaGCIColIndex = colNames("IA GCI")
+
+    ' Initialize dictionary
     Set dictFundGCI = CreateObject("Scripting.Dictionary")
-    Set fundGCICol = allFundsTable.ListColumns("Fund GCI").DataBodyRange
-    Set iaGCICol = allFundsTable.ListColumns("IA GCI").DataBodyRange
 
-    For i = 1 To fundGCICol.Rows.Count
-        If Not IsEmpty(fundGCICol.Cells(i, 1).Value) And Not dictFundGCI.exists(fundGCICol.Cells(i, 1).Value) Then
-            dictFundGCI.Add fundGCICol.Cells(i, 1).Value, iaGCICol.Cells(i, 1).Value
+    ' Loop through the data and add to dictionary where Review Status is "Approved"
+    For i = 2 To UBound(allFundsData, 1)
+        If allFundsData(i, reviewStatusCol) = "Approved" Then
+            If Not IsEmpty(allFundsData(i, fundGCIColIndex)) And Not dictFundGCI.exists(allFundsData(i, fundGCIColIndex)) Then
+                dictFundGCI.Add allFundsData(i, fundGCIColIndex), allFundsData(i, iaGCIColIndex)
+            End If
         End If
     Next i
 
     ' Match Fund GCI in Portfolio and write IA GCI to Fund Manager GCI
-    lastRowPortfolio = portfolioTable.DataBodyRange.Rows.Count
-    fundGCIArray = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
-    ReDim resultArray(1 To lastRowPortfolio, 1 To 1)
+    Dim portfolioFundGCI As Variant
+    Dim portfolioIA_GCI As Variant
+    Dim numRowsPortfolio As Long
 
-    For i = 1 To UBound(fundGCIArray, 1)
-        If dictFundGCI.exists(fundGCIArray(i, 1)) Then
-            resultArray(i, 1) = dictFundGCI(fundGCIArray(i, 1))
+    numRowsPortfolio = portfolioTable.DataBodyRange.Rows.Count
+    portfolioFundGCI = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
+    ReDim portfolioIA_GCI(1 To numRowsPortfolio, 1 To 1)
+
+    For i = 1 To numRowsPortfolio
+        If dictFundGCI.exists(portfolioFundGCI(i, 1)) Then
+            portfolioIA_GCI(i, 1) = dictFundGCI(portfolioFundGCI(i, 1))
         Else
-            resultArray(i, 1) = "No Match Found"
+            portfolioIA_GCI(i, 1) = "No Match Found"
         End If
     Next i
 
     ' Write results back to Fund Manager GCI column
-    portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value = resultArray
-
-    ' Clear filters in All Funds table
-    If allFundsTable.ShowAutoFilter Then allFundsTable.AutoFilter.ShowAllData
+    portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value = portfolioIA_GCI
 
     wbAllFunds.Close SaveChanges:=False
 
     ' === Step 3: Process Non-Trigger.csv ===
     nonTriggerFile = Application.GetOpenFilename("CSV Files (*.csv), *.csv", , "Select Non-Trigger.csv")
-    If nonTriggerFile = "False" Then Exit Sub ' User canceled
+    If nonTriggerFile = "False" Then GoTo CleanUp ' User canceled
 
     Set wbNonTrigger = Workbooks.Open(nonTriggerFile)
     Set nonTriggerSheet = wbNonTrigger.Sheets(1)
@@ -144,17 +168,25 @@ Sub ProcessAllData()
     sourceHeaders = Array("Region", "Family", "Fund Manager GCI", "Fund Manager", "Fund GCI", "Fund Name", "Credit Officer", "Weeks Missing")
     destHeaders = Array("Region", "Family", "Fund Manager GCI", "Fund Manager", "Fund GCI", "Fund Name", "Credit Officer", "Wks Missing")
 
-    lastRowPortfolio = portfolioTable.DataBodyRange.Rows.Count + portfolioTable.HeaderRowRange.Row
+    ' Find the last row with data in the Portfolio table
+    If portfolioTable.ListRows.Count > 0 Then
+        lastRowPortfolio = portfolioTable.Range.Row + portfolioTable.Range.Rows.Count - 1
+    Else
+        lastRowPortfolio = portfolioTable.HeaderRowRange.Row
+    End If
+
+    Dim numRowsToCopy As Long
+    numRowsToCopy = nonTriggerTable.DataBodyRange.SpecialCells(xlCellTypeVisible).Rows.Count
 
     For i = LBound(sourceHeaders) To UBound(sourceHeaders)
-        With nonTriggerTable.ListColumns(sourceHeaders(i)).DataBodyRange
+        With nonTriggerTable.ListColumns(sourceHeaders(i)).DataBodyRange.SpecialCells(xlCellTypeVisible)
             wsPortfolio.Cells(lastRowPortfolio + 1, portfolioTable.ListColumns(destHeaders(i)).Index).Resize(.Rows.Count, 1).Value = .Value
         End With
     Next i
 
     ' Fill Trigger/Non-Trigger column with 'Non-Trigger'
     With wsPortfolio
-        .Range(.Cells(lastRowPortfolio + 1, triggerColIndex), .Cells(lastRowPortfolio + nonTriggerTable.ListRows.Count, triggerColIndex)).Value = "Non-Trigger"
+        .Range(.Cells(lastRowPortfolio + 1, triggerColIndex), .Cells(lastRowPortfolio + numRowsToCopy, triggerColIndex)).Value = "Non-Trigger"
     End With
 
     ' Clear filters in Non-Trigger table
@@ -162,5 +194,17 @@ Sub ProcessAllData()
 
     wbNonTrigger.Close SaveChanges:=False
 
-    MsgBox "Data from Trigger.csv, All Funds.csv, and Non-Trigger.csv has been processed successfully!", vbInformation
+    MsgBox "Data from Trigger.csv, All Funds.csv, and Non-Trigger.csv has been processed successfully!" & vbCrLf & "Time taken: " & Format(Timer - startTime, "0.00") & " seconds.", vbInformation
+
+CleanUp:
+    ' Reset Application settings
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.EnableEvents = True
+
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "An error occurred: " & Err.Description, vbCritical
+    Resume CleanUp
 End Sub
