@@ -166,8 +166,8 @@ Sub ProcessAllData()
         nonTriggerTable.Name = "NonTriggerTable"
     End If
 
-    ' Filter out rows where FI-ASIA is present
-    nonTriggerTable.Range.AutoFilter Field:=nonTriggerTable.ListColumns("Region").Index, Criteria1:="<>FI-ASIA"
+    ' Filter out rows where FI-ASIA is present in the "Business Unit" column
+    nonTriggerTable.Range.AutoFilter Field:=nonTriggerTable.ListColumns("Business Unit").Index, Criteria1:="<>FI-ASIA"
 
     ' Append Non-Trigger data to Portfolio
     Dim sourceHeaders As Variant, destHeaders As Variant
