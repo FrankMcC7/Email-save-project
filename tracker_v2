@@ -1,15 +1,15 @@
-Sub ProcessTriggerAndAllFundsData()
+Sub ProcessTriggerAndAllFundsData_Optimized()
     Dim wsPortfolio As Worksheet
     Dim wbMaster As Workbook
     Dim wbTrigger As Workbook, wbAllFunds As Workbook
     Dim triggerFile As String, allFundsFile As String
     Dim triggerSheet As Worksheet, allFundsSheet As Worksheet
     Dim triggerTable As ListObject, portfolioTable As ListObject, allFundsTable As ListObject
-    Dim headers As Variant
-    Dim fundGCI As Range, iaGCI As Range
-    Dim pasteStartRow As Long, i As Long
-    Dim fundGCIValues As Variant
-
+    Dim dictFundGCI As Object
+    Dim fundGCIArray As Variant, resultArray As Variant
+    Dim i As Long, lastRowPortfolio As Long
+    Dim fundGCICol As Range, iaGCICol As Range
+    
     ' Set up the Portfolio sheet
     Set wbMaster = ThisWorkbook
     Set wsPortfolio = wbMaster.Sheets("Portfolio")
@@ -45,10 +45,10 @@ Sub ProcessTriggerAndAllFundsData()
         triggerTable.Name = "TriggerTable"
     End If
 
-    ' Define headers to copy
+    ' Copy specific columns from Trigger.csv to Portfolio
+    Dim headers As Variant
+    Dim pasteStartRow As Long
     headers = Array("Region", "Fund Manager", "Fund GCI", "Fund Name", "Wks Missing", "Credit Officer")
-
-    ' Copy data from Trigger.csv to Portfolio
     pasteStartRow = portfolioTable.HeaderRowRange.Row + 1
     For i = LBound(headers) To UBound(headers)
         With triggerTable.ListColumns(headers(i)).DataBodyRange
@@ -56,7 +56,7 @@ Sub ProcessTriggerAndAllFundsData()
         End With
     Next i
 
-    ' Replace Region values and populate Trigger/Non-Trigger
+    ' Replace Region values and populate Trigger/Non-Trigger column
     With portfolioTable.DataBodyRange
         Dim regionColIndex As Long, triggerColIndex As Long
         regionColIndex = portfolioTable.ListColumns("Region").Index
@@ -91,24 +91,34 @@ Sub ProcessTriggerAndAllFundsData()
     ' Filter Review Status to Approved
     allFundsTable.Range.AutoFilter Field:=allFundsTable.ListColumns("Review Status").Index, Criteria1:="Approved"
 
-    ' Use Fund GCI from Portfolio to filter All Funds
-    Set fundGCI = portfolioTable.ListColumns("Fund GCI").DataBodyRange
-    fundGCIValues = Application.Transpose(fundGCI.Value)
+    ' Load Fund GCI and IA GCI from All Funds into a dictionary
+    Set dictFundGCI = CreateObject("Scripting.Dictionary")
+    Set fundGCICol = allFundsTable.ListColumns("Fund GCI").DataBodyRange
+    Set iaGCICol = allFundsTable.ListColumns("IA GCI").DataBodyRange
 
-    allFundsTable.Range.AutoFilter Field:=allFundsTable.ListColumns("Fund GCI").Index, Criteria1:=fundGCIValues, Operator:=xlFilterValues
-
-    ' Copy IA GCI from All Funds to Portfolio
-    For Each cell In fundGCI
-        If Not IsEmpty(cell.Value) Then
-            Dim foundRow As Range
-            Set foundRow = allFundsTable.ListColumns("Fund GCI").DataBodyRange.Find(What:=cell.Value, LookIn:=xlValues, LookAt:=xlWhole)
-            If Not foundRow Is Nothing Then
-                wsPortfolio.Cells(cell.Row, portfolioTable.ListColumns("Fund Manager GCI").Index).Value = foundRow.Offset(0, allFundsTable.ListColumns("IA GCI").Index - allFundsTable.ListColumns("Fund GCI").Index).Value
-            End If
+    For i = 1 To fundGCICol.Rows.Count
+        If Not IsEmpty(fundGCICol.Cells(i, 1).Value) And Not dictFundGCI.exists(fundGCICol.Cells(i, 1).Value) Then
+            dictFundGCI.Add fundGCICol.Cells(i, 1).Value, iaGCICol.Cells(i, 1).Value
         End If
-    Next cell
+    Next i
 
-    ' Clear filters in All Funds
+    ' Match Fund GCI in Portfolio and write IA GCI to Fund Manager GCI
+    lastRowPortfolio = portfolioTable.DataBodyRange.Rows.Count
+    fundGCIArray = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
+    ReDim resultArray(1 To lastRowPortfolio, 1 To 1)
+
+    For i = 1 To UBound(fundGCIArray, 1)
+        If dictFundGCI.exists(fundGCIArray(i, 1)) Then
+            resultArray(i, 1) = dictFundGCI(fundGCIArray(i, 1))
+        Else
+            resultArray(i, 1) = "No Match Found"
+        End If
+    Next i
+
+    ' Write results back to Fund Manager GCI column
+    portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value = resultArray
+
+    ' Clear filters in All Funds table
     If allFundsTable.ShowAutoFilter Then allFundsTable.AutoFilter.ShowAllData
 
     wbAllFunds.Close SaveChanges:=False
