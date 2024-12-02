@@ -1,7 +1,7 @@
-Dim currentUser As String
-currentUser = Environ("Username")
-If currentUser <> "YourUsername" Then
-    MsgBox "You do not have permission to run this macro.", vbCritical
+Dim userPassword As String
+userPassword = InputBox("Please enter the password to run this macro:", "Password Required")
+If userPassword <> "YourSecurePassword" Then
+    MsgBox "Incorrect password. You do not have permission to run this macro.", vbCritical
     Exit Sub
 End If
 =ENVIRON("Username")
