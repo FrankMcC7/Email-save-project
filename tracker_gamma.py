@@ -2,15 +2,15 @@ Sub MacroGamma()
     Dim wbMaster As Workbook
     Dim wbPrevious As Workbook
     Dim previousFile As String
-    
+
     Dim wsPortfolio As Worksheet
     Dim wsEMEA As Worksheet, wsAMRS As Worksheet, wsAPAC As Worksheet
     Dim wsEMEAPrev As Worksheet, wsAMRSPrev As Worksheet, wsAPACPrev As Worksheet
-    
+
     Dim portfolioTable As ListObject
     Dim tblEMEA As ListObject, tblAMRS As ListObject, tblAPAC As ListObject
     Dim tblEMEAPrev As ListObject, tblAMRSPrev As ListObject, tblAPACPrev As ListObject
-    
+
     Dim colsToClear As Variant
     Dim colName As Variant
     Dim colIndex As Long
@@ -37,7 +37,7 @@ Sub MacroGamma()
     Dim colNames(1 To 6) As String
     Dim prevColIndices(1 To 6) As Long
     Dim familyCell As Range
-    
+
     ' Variables for Data Validation
     Dim dvType As Long
     Dim dvAlertStyle As Long
@@ -53,21 +53,21 @@ Sub MacroGamma()
     Dim dvShowInput As Boolean
     Dim dvShowError As Boolean
     Dim srcCell As Range
-    
+
     On Error GoTo ErrorHandler
-    
+
     ' Optimize performance
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
     Application.EnableEvents = False
-    
+
     ' Set up workbooks and worksheets
     Set wbMaster = ThisWorkbook
     Set wsPortfolio = wbMaster.Sheets("Portfolio")
     Set wsEMEA = wbMaster.Sheets("EMEA")
     Set wsAMRS = wbMaster.Sheets("AMRS")
     Set wsAPAC = wbMaster.Sheets("APAC")
-    
+
     ' Ensure PortfolioTable exists
     On Error Resume Next
     Set portfolioTable = wsPortfolio.ListObjects("PortfolioTable")
@@ -76,7 +76,7 @@ Sub MacroGamma()
         MsgBox "PortfolioTable does not exist on the Portfolio sheet.", vbCritical
         GoTo CleanUp
     End If
-    
+
     ' Ensure region tables exist
     On Error Resume Next
     Set tblEMEA = wsEMEA.ListObjects("EMEA")
@@ -87,11 +87,12 @@ Sub MacroGamma()
         MsgBox "One or more tables (EMEA, AMRS, APAC) are missing in the current workbook.", vbCritical
         GoTo CleanUp
     End If
-    
+
     ' Step 3: Delete specified columns in all three tables
     colsToClear = Array("Family", "Last Action", "Last Action Date", "Action Taker", "CPO/ECA", "Remediation Action Holder", "Comments")
     arrTables = Array(tblEMEA, tblAMRS, tblAPAC)
-    For Each tbl In arrTables
+    For i = LBound(arrTables) To UBound(arrTables)
+        Set tbl = arrTables(i)
         For Each colName In colsToClear
             On Error Resume Next
             colIndex = tbl.ListColumns(colName).Index
@@ -104,8 +105,8 @@ Sub MacroGamma()
                 MsgBox "Column '" & colName & "' not found in table '" & tbl.Name & "'.", vbExclamation
             End If
         Next colName
-    Next tbl
-    
+    Next i
+
     ' Step 4: Ask user for the previous version of tracker file
     previousFile = Application.GetOpenFilename("Excel Files (*.xls*), *.xls*", , "Select the previous version of the tracker file")
     If previousFile = "False" Then
@@ -113,12 +114,12 @@ Sub MacroGamma()
         GoTo CleanUp
     End If
     Set wbPrevious = Workbooks.Open(previousFile)
-    
+
     ' Ensure previous version's tables exist
     Set wsEMEAPrev = wbPrevious.Sheets("EMEA")
     Set wsAMRSPrev = wbPrevious.Sheets("AMRS")
     Set wsAPACPrev = wbPrevious.Sheets("APAC")
-    
+
     On Error Resume Next
     Set tblEMEAPrev = wsEMEAPrev.ListObjects("EMEA")
     Set tblAMRSPrev = wsAMRSPrev.ListObjects("AMRS")
@@ -129,17 +130,17 @@ Sub MacroGamma()
         wbPrevious.Close SaveChanges:=False
         GoTo CleanUp
     End If
-    
+
     ' Prepare arrays for regions and tables
     arrRegions = Array("EMEA", "AMRS", "APAC")
     arrTables = Array(tblEMEA, tblAMRS, tblAPAC)
     arrPrevTables = Array(tblEMEAPrev, tblAMRSPrev, tblAPACPrev)
-    
+
     ' Get field indices in PortfolioTable
     regionField = portfolioTable.ListColumns("Region").Index
     wksMissingField = portfolioTable.ListColumns("Wks Missing").Index
     familyField = portfolioTable.ListColumns("Family").Index
-    
+
     ' Prepare column names and indices
     colNames(1) = "Last Action"
     colNames(2) = "Last Action Date"
@@ -147,27 +148,27 @@ Sub MacroGamma()
     colNames(4) = "CPO/ECA"
     colNames(5) = "Remediation Action Holder"
     colNames(6) = "Comments"
-    
+
     ' Step 5 & 6: Process each region
-    For i = 0 To UBound(arrRegions)
+    For i = LBound(arrRegions) To UBound(arrRegions)
         region = arrRegions(i)
         Set tbl = arrTables(i)
         Set tblPrev = arrPrevTables(i)
-        
+
         ' Remove any existing filters
         If portfolioTable.AutoFilter.FilterMode Then
             portfolioTable.AutoFilter.ShowAllData
         End If
-        
+
         ' Apply filters to PortfolioTable
         portfolioTable.Range.AutoFilter Field:=regionField, Criteria1:=region
         portfolioTable.Range.AutoFilter Field:=wksMissingField, Criteria1:="<>"
-        
+
         ' Get 'Family' column visible cells
         On Error Resume Next
         Set rngFamily = portfolioTable.ListColumns("Family").DataBodyRange.SpecialCells(xlCellTypeVisible)
         On Error GoTo 0
-        
+
         ' Collect unique 'Family' values
         Set dictFamilies = CreateObject("Scripting.Dictionary")
         If Not rngFamily Is Nothing Then
@@ -177,7 +178,7 @@ Sub MacroGamma()
                 End If
             Next familyCell
         End If
-        
+
         ' Get array of unique families
         If dictFamilies.Count > 0 Then
             arrFamilies = dictFamilies.Keys
@@ -186,55 +187,60 @@ Sub MacroGamma()
             arrFamilies = Array()
             numFamilies = 0
         End If
-        
+
         ' Preserve Data Validation for 'Last Action' column
         If Not tbl.ListColumns("Last Action").DataBodyRange Is Nothing Then
             Set srcCell = tbl.ListColumns("Last Action").DataBodyRange.Cells(1, 1)
-            With srcCell.Validation
-                dvType = .Type
-                dvAlertStyle = .AlertStyle
-                dvOperator = .Operator
-                dvFormula1 = .Formula1
-                dvFormula2 = .Formula2
-                dvIgnoreBlank = .IgnoreBlank
-                dvInCellDropdown = .InCellDropdown
-                dvInputTitle = .InputTitle
-                dvErrorTitle = .ErrorTitle
-                dvInputMessage = .InputMessage
-                dvErrorMessage = .ErrorMessage
-                dvShowInput = .ShowInput
-                dvShowError = .ShowError
-            End With
+            If srcCell.Validation.Type <> xlValidateInputOnly Then
+                With srcCell.Validation
+                    dvType = .Type
+                    dvAlertStyle = .AlertStyle
+                    dvOperator = .Operator
+                    dvFormula1 = .Formula1
+                    dvFormula2 = .Formula2
+                    dvIgnoreBlank = .IgnoreBlank
+                    dvInCellDropdown = .InCellDropdown
+                    dvInputTitle = .InputTitle
+                    dvErrorTitle = .ErrorTitle
+                    dvInputMessage = .InputMessage
+                    dvErrorMessage = .ErrorMessage
+                    dvShowInput = .ShowInput
+                    dvShowError = .ShowError
+                End With
+            Else
+                MsgBox "No data validation found in 'Last Action' column of table '" & tbl.Name & "'.", vbExclamation
+                GoTo NextTable
+            End If
         Else
             MsgBox "No data validation found in 'Last Action' column of table '" & tbl.Name & "'.", vbExclamation
             GoTo NextTable
         End If
-        
+
         ' Adjust the current table rows
         ' Clear existing data in 'Family' column
         If Not tbl.ListColumns("Family").DataBodyRange Is Nothing Then
             tbl.ListColumns("Family").DataBodyRange.ClearContents
         End If
-        
+
         ' Remove extra rows
         If tbl.ListRows.Count > numFamilies Then
             For j = tbl.ListRows.Count To numFamilies + 1 Step -1
                 tbl.ListRows(j).Delete
             Next j
         End If
-        
+
         ' Add missing rows
         If tbl.ListRows.Count < numFamilies Then
             For j = tbl.ListRows.Count + 1 To numFamilies
                 tbl.ListRows.Add
             Next j
         End If
-        
+
         ' Write 'Family' values into the current table
         For j = 1 To numFamilies
             tbl.ListColumns("Family").DataBodyRange.Cells(j, 1).Value = arrFamilies(j - 1)
-        Next j
-        
+        End If
+
         ' Reapply Data Validation to 'Last Action' column
         If Not tbl.ListColumns("Last Action").DataBodyRange Is Nothing Then
             With tbl.ListColumns("Last Action").DataBodyRange.Validation
@@ -250,7 +256,7 @@ Sub MacroGamma()
                 .ShowError = dvShowError
             End With
         End If
-        
+
         ' Create a dictionary from previous table based on 'Family'
         Set dictPrevData = CreateObject("Scripting.Dictionary")
         ' Get indices of the columns in previous table
@@ -265,7 +271,7 @@ Sub MacroGamma()
             End If
         Next k
         prevFamilyField = tblPrev.ListColumns("Family").Index
-        
+
         ' Build the dictionary from previous table
         For Each prevDataRow In tblPrev.DataBodyRange.Rows
             prevFamily = prevDataRow.Cells(1, prevFamilyField).Value
@@ -277,7 +283,7 @@ Sub MacroGamma()
                 dictPrevData.Add prevFamily, dataValues
             End If
         Next prevDataRow
-        
+
         ' Copy data from previous table to current table
         For j = 1 To numFamilies
             currFamily = tbl.ListColumns("Family").DataBodyRange.Cells(j, 1).Value
@@ -288,29 +294,29 @@ Sub MacroGamma()
                 Next k
             End If
         Next j
-        
+
 NextTable:
     Next i
-    
+
     ' Remove filters from PortfolioTable
     If portfolioTable.AutoFilter.FilterMode Then
         portfolioTable.AutoFilter.ShowAllData
     End If
-    
+
     ' Close the previous workbook without saving
     wbPrevious.Close SaveChanges:=False
-    
+
     ' Completion message
     MsgBox "Macro Gamma has successfully updated the tables.", vbInformation
-    
+
 CleanUp:
     ' Reset application settings
     Application.ScreenUpdating = True
     Application.Calculation = xlCalculationAutomatic
     Application.EnableEvents = True
-    
+
     Exit Sub
-    
+
 ErrorHandler:
     MsgBox "An error occurred in Macro Gamma: " & Err.Description, vbCritical
     If Not wbPrevious Is Nothing Then
