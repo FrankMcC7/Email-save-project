@@ -38,6 +38,22 @@ Sub MacroGamma()
     Dim prevColIndices(1 To 6) As Long
     Dim familyCell As Range
     
+    ' Variables for Data Validation
+    Dim dvType As Long
+    Dim dvAlertStyle As Long
+    Dim dvOperator As Long
+    Dim dvFormula1 As String
+    Dim dvFormula2 As String
+    Dim dvIgnoreBlank As Boolean
+    Dim dvInCellDropdown As Boolean
+    Dim dvInputTitle As String
+    Dim dvErrorTitle As String
+    Dim dvInputMessage As String
+    Dim dvErrorMessage As String
+    Dim dvShowInput As Boolean
+    Dim dvShowError As Boolean
+    Dim srcCell As Range
+    
     On Error GoTo ErrorHandler
     
     ' Optimize performance
@@ -171,6 +187,29 @@ Sub MacroGamma()
             numFamilies = 0
         End If
         
+        ' Preserve Data Validation for 'Last Action' column
+        If Not tbl.ListColumns("Last Action").DataBodyRange Is Nothing Then
+            Set srcCell = tbl.ListColumns("Last Action").DataBodyRange.Cells(1, 1)
+            With srcCell.Validation
+                dvType = .Type
+                dvAlertStyle = .AlertStyle
+                dvOperator = .Operator
+                dvFormula1 = .Formula1
+                dvFormula2 = .Formula2
+                dvIgnoreBlank = .IgnoreBlank
+                dvInCellDropdown = .InCellDropdown
+                dvInputTitle = .InputTitle
+                dvErrorTitle = .ErrorTitle
+                dvInputMessage = .InputMessage
+                dvErrorMessage = .ErrorMessage
+                dvShowInput = .ShowInput
+                dvShowError = .ShowError
+            End With
+        Else
+            MsgBox "No data validation found in 'Last Action' column of table '" & tbl.Name & "'.", vbExclamation
+            GoTo NextTable
+        End If
+        
         ' Adjust the current table rows
         ' Clear existing data in 'Family' column
         If Not tbl.ListColumns("Family").DataBodyRange Is Nothing Then
@@ -195,6 +234,22 @@ Sub MacroGamma()
         For j = 1 To numFamilies
             tbl.ListColumns("Family").DataBodyRange.Cells(j, 1).Value = arrFamilies(j - 1)
         Next j
+        
+        ' Reapply Data Validation to 'Last Action' column
+        If Not tbl.ListColumns("Last Action").DataBodyRange Is Nothing Then
+            With tbl.ListColumns("Last Action").DataBodyRange.Validation
+                .Delete
+                .Add Type:=dvType, AlertStyle:=dvAlertStyle, Operator:=dvOperator, Formula1:=dvFormula1, Formula2:=dvFormula2
+                .IgnoreBlank = dvIgnoreBlank
+                .InCellDropdown = dvInCellDropdown
+                .InputTitle = dvInputTitle
+                .ErrorTitle = dvErrorTitle
+                .InputMessage = dvInputMessage
+                .ErrorMessage = dvErrorMessage
+                .ShowInput = dvShowInput
+                .ShowError = dvShowError
+            End With
+        End If
         
         ' Create a dictionary from previous table based on 'Family'
         Set dictPrevData = CreateObject("Scripting.Dictionary")
@@ -233,6 +288,8 @@ Sub MacroGamma()
                 Next k
             End If
         Next j
+        
+NextTable:
     Next i
     
     ' Remove filters from PortfolioTable
