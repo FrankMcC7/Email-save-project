@@ -1,0 +1,7 @@
+Dim currentUser As String
+currentUser = Environ("Username")
+If currentUser <> "YourUsername" Then
+    MsgBox "You do not have permission to run this macro.", vbCritical
+    Exit Sub
+End If
+=ENVIRON("Username")
