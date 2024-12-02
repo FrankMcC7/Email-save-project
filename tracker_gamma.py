@@ -41,7 +41,6 @@ Sub MacroGamma()
     ' Variables for Data Validation
     Dim dvType As Long
     Dim dvAlertStyle As Long
-    Dim dvOperator As Long
     Dim dvFormula1 As String
     Dim dvIgnoreBlank As Boolean
     Dim dvInCellDropdown As Boolean
@@ -144,8 +143,7 @@ Sub MacroGamma()
     ' Define Data Validation settings
     dvType = xlValidateList
     dvAlertStyle = xlValidAlertStop
-    dvOperator = xlBetween
-    dvFormula1 = "=LastActionList"  ' Replace with your named range or list of values
+    dvFormula1 = "Pending,1st Outreach,2nd Outreach,1st Onshore Review,1st Escalation,2nd Escalation,3rd Escalation,Post-Update,In-Closing"
     dvIgnoreBlank = True
     dvInCellDropdown = True
 
@@ -217,7 +215,7 @@ Sub MacroGamma()
         If Not tbl.ListColumns("Last Action").DataBodyRange Is Nothing Then
             With tbl.ListColumns("Last Action").DataBodyRange.Validation
                 .Delete
-                .Add Type:=dvType, AlertStyle:=dvAlertStyle, Operator:=dvOperator, Formula1:=dvFormula1
+                .Add Type:=dvType, AlertStyle:=dvAlertStyle, Formula1:=dvFormula1
                 .IgnoreBlank = dvIgnoreBlank
                 .InCellDropdown = dvInCellDropdown
             End With
