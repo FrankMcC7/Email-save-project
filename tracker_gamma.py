@@ -43,16 +43,8 @@ Sub MacroGamma()
     Dim dvAlertStyle As Long
     Dim dvOperator As Long
     Dim dvFormula1 As String
-    Dim dvFormula2 As String
     Dim dvIgnoreBlank As Boolean
     Dim dvInCellDropdown As Boolean
-    Dim dvInputTitle As String
-    Dim dvErrorTitle As String
-    Dim dvInputMessage As String
-    Dim dvErrorMessage As String
-    Dim dvShowInput As Boolean
-    Dim dvShowError As Boolean
-    Dim srcCell As Range
 
     On Error GoTo ErrorHandler
 
@@ -149,6 +141,14 @@ Sub MacroGamma()
     colNames(5) = "Remediation Action Holder"
     colNames(6) = "Comments"
 
+    ' Define Data Validation settings
+    dvType = xlValidateList
+    dvAlertStyle = xlValidAlertStop
+    dvOperator = xlBetween
+    dvFormula1 = "=LastActionList"  ' Replace with your named range or list of values
+    dvIgnoreBlank = True
+    dvInCellDropdown = True
+
     ' Step 5 & 6: Process each region
     For i = LBound(arrRegions) To UBound(arrRegions)
         region = arrRegions(i)
@@ -188,34 +188,6 @@ Sub MacroGamma()
             numFamilies = 0
         End If
 
-        ' Preserve Data Validation for 'Last Action' column
-        If Not tbl.ListColumns("Last Action").DataBodyRange Is Nothing Then
-            Set srcCell = tbl.ListColumns("Last Action").DataBodyRange.Cells(1, 1)
-            If srcCell.Validation.Type <> xlValidateInputOnly Then
-                With srcCell.Validation
-                    dvType = .Type
-                    dvAlertStyle = .AlertStyle
-                    dvOperator = .Operator
-                    dvFormula1 = .Formula1
-                    dvFormula2 = .Formula2
-                    dvIgnoreBlank = .IgnoreBlank
-                    dvInCellDropdown = .InCellDropdown
-                    dvInputTitle = .InputTitle
-                    dvErrorTitle = .ErrorTitle
-                    dvInputMessage = .InputMessage
-                    dvErrorMessage = .ErrorMessage
-                    dvShowInput = .ShowInput
-                    dvShowError = .ShowError
-                End With
-            Else
-                MsgBox "No data validation found in 'Last Action' column of table '" & tbl.Name & "'.", vbExclamation
-                GoTo NextTable
-            End If
-        Else
-            MsgBox "No data validation found in 'Last Action' column of table '" & tbl.Name & "'.", vbExclamation
-            GoTo NextTable
-        End If
-
         ' Adjust the current table rows
         ' Clear existing data in 'Family' column
         If Not tbl.ListColumns("Family").DataBodyRange Is Nothing Then
@@ -239,21 +211,15 @@ Sub MacroGamma()
         ' Write 'Family' values into the current table
         For j = 1 To numFamilies
             tbl.ListColumns("Family").DataBodyRange.Cells(j, 1).Value = arrFamilies(j - 1)
-        Next j  ' Ensure there is no 'End If' here
+        Next j
 
-        ' Reapply Data Validation to 'Last Action' column
+        ' Apply Data Validation to 'Last Action' column
         If Not tbl.ListColumns("Last Action").DataBodyRange Is Nothing Then
             With tbl.ListColumns("Last Action").DataBodyRange.Validation
                 .Delete
-                .Add Type:=dvType, AlertStyle:=dvAlertStyle, Operator:=dvOperator, Formula1:=dvFormula1, Formula2:=dvFormula2
+                .Add Type:=dvType, AlertStyle:=dvAlertStyle, Operator:=dvOperator, Formula1:=dvFormula1
                 .IgnoreBlank = dvIgnoreBlank
                 .InCellDropdown = dvInCellDropdown
-                .InputTitle = dvInputTitle
-                .ErrorTitle = dvErrorTitle
-                .InputMessage = dvInputMessage
-                .ErrorMessage = dvErrorMessage
-                .ShowInput = dvShowInput
-                .ShowError = dvShowError
             End With
         End If
 
@@ -295,7 +261,6 @@ Sub MacroGamma()
             End If
         Next j
 
-NextTable:
     Next i
 
     ' Remove filters from PortfolioTable
