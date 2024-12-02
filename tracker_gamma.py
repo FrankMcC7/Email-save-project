@@ -239,7 +239,7 @@ Sub MacroGamma()
         ' Write 'Family' values into the current table
         For j = 1 To numFamilies
             tbl.ListColumns("Family").DataBodyRange.Cells(j, 1).Value = arrFamilies(j - 1)
-        End If
+        Next j  ' Ensure there is no 'End If' here
 
         ' Reapply Data Validation to 'Last Action' column
         If Not tbl.ListColumns("Last Action").DataBodyRange Is Nothing Then
