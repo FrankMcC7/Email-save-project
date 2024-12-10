@@ -9,6 +9,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_socketio import SocketIO
 import openpyxl
 import unicodedata
+from dateparser import parse as date_parse
 
 app = Flask(__name__)
 app.secret_key = 'supersecretkey'
@@ -31,12 +32,12 @@ def sanitize_filename(filename):
     normalized_filename = unicodedata.normalize('NFKD', filename).encode('ASCII', 'ignore').decode('ASCII')
 
     # Replace common problematic characters with underscores or remove them
-    sanitized = re.sub(r'[<>:"/\\|?*\'`~!@#$%^&*()+={};,]', '_', normalized_filename)
+    sanitized = re.sub(r'[<>:"/\\|?*\[\]\'`~!@#$%^&*()+={};,]', '_', normalized_filename)
 
     # Replace dots (.) followed by a space or end of the string with an underscore, except for file extensions
     sanitized = re.sub(r'\.(?=\s|$)', '_', sanitized)
 
-    # Replace any sequence of multiple special characters (like "--") with a single underscore
+    # Replace any sequence of multiple underscores with a single underscore
     sanitized = re.sub(r'_+', '_', sanitized)
 
     # Trim leading and trailing underscores or spaces
@@ -49,7 +50,6 @@ def sanitize_filename(filename):
 
 def extract_date_from_text(text, default_year=None):
     import datetime
-    from dateparser import parse as date_parse
 
     # Map quarters to months
     quarter_mappings = {
@@ -202,7 +202,7 @@ def find_save_path(sender, subject, sender_path_table):
     if len(rows) > 1:
         for _, row in rows.iterrows():
             coper_name = str(row.get('coper_name', '')).strip().lower()
-            if coper_name and coper_name in subject.lower():  # Match the coper_name in subject
+            if coper_name and coper_name in subject.lower():
                 keywords = str(row.get('keywords', '')).split(';')
                 for keyword in keywords:
                     if keyword.lower() in subject.lower():
@@ -295,9 +295,23 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
     retries = 3
     processed = False
 
+    # Attempt to extract sender email safely
+    try:
+        if hasattr(item, 'SenderEmailAddress') and item.SenderEmailAddress:
+            sender_email = item.SenderEmailAddress.lower()
+        elif hasattr(item, 'Sender') and item.Sender and hasattr(item.Sender, 'Address') and item.Sender.Address:
+            sender_email = item.Sender.Address.lower()
+        else:
+            # If there's no sender info, skip this email
+            logs.append(f"Skipped email '{item.Subject}' due to missing sender information.")
+            return logs, failed_emails
+    except Exception:
+        # In case of any error accessing sender info, skip
+        logs.append(f"Skipped email '{item.Subject}' due to error fetching sender info.")
+        return logs, failed_emails
+
     while retries > 0 and not processed:
         try:
-            sender_email = item.SenderEmailAddress.lower() if hasattr(item, 'SenderEmailAddress') else item.Sender.Address.lower()
             year, month = extract_date_from_text(item.Subject, default_year)
             if not year or not month:
                 for attachment in item.Attachments:
@@ -338,7 +352,7 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
                 failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
         except Exception as e:
             retries = 0
-            logs.append(f"Error handling email '{item.Subject}': {str(e)}")
+            logs.append(f"Error handling email '{item.Subject}' from '{sender_email}': {str(e)}")
             failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
 
     return logs, failed_emails
@@ -357,15 +371,21 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
         if store.DisplayName.lower() == email_address.lower() or store.ExchangeStoreType == 3:
             try:
                 root_folder = store.GetRootFolder()
+
+                # Locate the Inbox folder
                 inbox = next((folder for folder in root_folder.Folders if folder.Name.lower() == "inbox"), None)
-                malai_folder = next((folder for folder in root_folder.Folders if folder.Name.lower() == "malai"), None)
+
+                # If Inbox is found, try to find 'Malai' folder inside it
+                if inbox:
+                    malai_folder = next((subfolder for subfolder in inbox.Folders if subfolder.Name.lower() == "malai"), None)
+
                 break
             except AttributeError as e:
                 logs.append(f"Error accessing folders: {str(e)}")
                 continue
 
     if not inbox and not malai_folder:
-        logs.append(f"No Inbox or 'Malai' folder found for the account with email address: {email_address}")
+        logs.append(f"No Inbox or 'Malai' subfolder found for the account with email address: {email_address}")
         pythoncom.CoUninitialize()
         with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
             f.writelines("\n".join(logs))
