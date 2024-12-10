@@ -1,0 +1,152 @@
+Option Explicit
+
+Sub CompareCSVsAndGenerateReport()
+    Dim existingFile As String, newFile As String
+    Dim wbExisting As Workbook, wbNew As Workbook
+    Dim wsExisting As Worksheet, wsNew As Worksheet
+    Dim lastRowExisting As Long, lastRowNew As Long
+    Dim colMap As Object ' Dictionary to map column names to indexes
+    Dim dataExisting As Object ' Dictionary to hold existing data keyed by HFAD_Fund_CoperID
+    Dim i As Long
+    Dim key As Variant
+    
+    ' Prompt user to select the existing CSV file
+    existingFile = Application.GetOpenFilename("CSV Files (*.csv), *.csv", , "Select Existing CSV File")
+    If existingFile = "False" Then Exit Sub
+    
+    ' Prompt user to select the new CSV file
+    newFile = Application.GetOpenFilename("CSV Files (*.csv), *.csv", , "Select New CSV File")
+    If newFile = "False" Then Exit Sub
+    
+    ' Open the Existing CSV file as a temporary workbook
+    Set wbExisting = Workbooks.Open(Filename:=existingFile, Local:=True)
+    Set wsExisting = wbExisting.Sheets(1)
+    
+    ' Open the New CSV file as a temporary workbook
+    Set wbNew = Workbooks.Open(Filename:=newFile, Local:=True)
+    Set wsNew = wbNew.Sheets(1)
+    
+    ' Identify the last rows
+    lastRowExisting = wsExisting.Cells(wsExisting.Rows.Count, 1).End(xlUp).Row
+    lastRowNew = wsNew.Cells(wsNew.Rows.Count, 1).End(xlUp).Row
+    
+    ' We need to find the column indexes for our key and other fields:
+    ' Fields: HFAD_Fund_CoperID, HFAD_Fund_Name, HFAD_IM_CoperID, HFAD_IM_Name, Credit Officer, Tier
+    Set colMap = CreateObject("Scripting.Dictionary")
+    Dim headersExisting As Variant
+    headersExisting = wsExisting.Range("A1").CurrentRegion.Rows(1).Value
+    
+    Dim j As Long, colName As String
+    For j = 1 To UBound(headersExisting, 2)
+        colName = CStr(headersExisting(1, j))
+        colMap(colName) = j
+    Next j
+    
+    ' Check if required columns exist in existing:
+    Dim requiredCols As Variant
+    requiredCols = Array("HFAD_Fund_CoperID", "HFAD_Fund_Name", "HFAD_IM_CoperID", "HFAD_IM_Name", "Credit Officer", "Tier")
+    For i = LBound(requiredCols) To UBound(requiredCols)
+        If Not colMap.Exists(requiredCols(i)) Then
+            MsgBox "Column '" & requiredCols(i) & "' not found in Existing file.", vbCritical
+            GoTo Cleanup
+        End If
+    Next i
+    
+    ' Load existing data into a dictionary keyed by HFAD_Fund_CoperID
+    Set dataExisting = CreateObject("Scripting.Dictionary")
+    Dim keyCol As Long
+    keyCol = colMap("HFAD_Fund_CoperID")
+    
+    Dim rowData As Variant
+    rowData = wsExisting.Range("A2").Resize(lastRowExisting - 1, UBound(headersExisting, 2)).Value
+    
+    Dim fundID As String
+    For i = 1 To UBound(rowData, 1)
+        fundID = CStr(rowData(i, keyCol))
+        ' Store the entire row (except header) keyed by fundID
+        dataExisting(fundID) = Application.Index(rowData, i, 0)
+    Next i
+    
+    ' Now, we will process the new data and find changes
+    Dim headersNew As Variant
+    headersNew = wsNew.Range("A1").CurrentRegion.Rows(1).Value
+    Dim colMapNew As Object
+    Set colMapNew = CreateObject("Scripting.Dictionary")
+    
+    For j = 1 To UBound(headersNew, 2)
+        colName = CStr(headersNew(1, j))
+        colMapNew(colName) = j
+    Next j
+    
+    ' Verify new file also has required columns
+    For i = LBound(requiredCols) To UBound(requiredCols)
+        If Not colMapNew.Exists(requiredCols(i)) Then
+            MsgBox "Column '" & requiredCols(i) & "' not found in New file.", vbCritical
+            GoTo Cleanup
+        End If
+    Next i
+    
+    Dim newData As Variant
+    newData = wsNew.Range("A2").Resize(lastRowNew - 1, UBound(headersNew, 2)).Value
+    
+    ' Create a new workbook or worksheet to store changes
+    Dim wbReport As Workbook
+    Set wbReport = Workbooks.Add
+    Dim wsReport As Worksheet
+    Set wsReport = wbReport.Sheets(1)
+    
+    ' Write headers for the changes report
+    ' We'll have: HFAD_Fund_CoperID, ColumnName, ExistingValue, NewValue
+    wsReport.Range("A1").Value = "HFAD_Fund_CoperID"
+    wsReport.Range("B1").Value = "Column Name"
+    wsReport.Range("C1").Value = "Existing Value"
+    wsReport.Range("D1").Value = "New Value"
+    
+    Dim reportRow As Long
+    reportRow = 2
+    
+    ' Compare rows
+    Dim newFundID As String
+    Dim existingValues As Variant, newValues As Variant
+    Dim cName As String
+    For i = 1 To UBound(newData, 1)
+        newFundID = CStr(newData(i, colMapNew("HFAD_Fund_CoperID")))
+        If dataExisting.Exists(newFundID) Then
+            existingValues = dataExisting(newFundID)
+            newValues = Application.Index(newData, i, 0)
+            
+            ' Compare each required column
+            Dim rc As Long
+            For rc = LBound(requiredCols) To UBound(requiredCols)
+                cName = requiredCols(rc)
+                Dim oldVal As Variant, newVal As Variant
+                oldVal = existingValues(colMap(cName))
+                newVal = newValues(colMapNew(cName))
+                
+                If (oldVal <> newVal) Then
+                    ' Record the change
+                    wsReport.Cells(reportRow, 1).Value = newFundID
+                    wsReport.Cells(reportRow, 2).Value = cName
+                    wsReport.Cells(reportRow, 3).Value = oldVal
+                    wsReport.Cells(reportRow, 4).Value = newVal
+                    reportRow = reportRow + 1
+                End If
+            Next rc
+        End If
+    Next i
+    
+    ' Save the changes report as changes_report.xlsx
+    Dim savePath As String
+    savePath = ThisWorkbook.Path & "\changes_report.xlsx"
+    On Error Resume Next
+    wbReport.SaveAs Filename:=savePath, FileFormat:=51 ' xlsx format
+    On Error GoTo 0
+    
+    MsgBox "Changes report generated: " & savePath
+    
+Cleanup:
+    ' Close the source workbooks without saving
+    If Not wbExisting Is Nothing Then wbExisting.Close SaveChanges:=False
+    If Not wbNew Is Nothing Then wbNew.Close SaveChanges:=False
+
+End Sub
