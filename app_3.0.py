@@ -37,13 +37,13 @@ def sanitize_filename(filename):
     # Replace dots (.) followed by a space or end of the string with an underscore, except for file extensions
     sanitized = re.sub(r'\.(?=\s|$)', '_', sanitized)
 
-    # Replace any sequence of multiple underscores with a single underscore
+    # Replace multiple underscores with a single underscore
     sanitized = re.sub(r'_+', '_', sanitized)
 
     # Trim leading and trailing underscores or spaces
     sanitized = sanitized.strip(' _')
 
-    # Limit filename length to avoid filesystem issues (255 characters max, considering extension)
+    # Limit filename length (255 chars total)
     sanitized = sanitized[:255]
 
     return sanitized
@@ -86,12 +86,14 @@ def extract_date_from_text(text, default_year=None):
                 continue
         return None, None
 
+    # Try regex-based patterns first
     for pattern in patterns:
         matches = re.findall(pattern, text)
         if not matches:
             continue
 
         for match in matches:
+            # Month name pattern
             if len(match) == 3 and re.match(
                 r'(?i)^(January|February|March|April|May|June|July|August|September|October|November|December|'
                 r'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)$',
@@ -108,6 +110,7 @@ def extract_date_from_text(text, default_year=None):
                     if year_parsed and month_parsed:
                         return year_parsed, month_parsed
 
+            # YYYY MM or MM YYYY patterns
             elif len(match) == 2 and all(part.isdigit() for part in match):
                 part1, part2 = match
                 # YYYY MM
@@ -123,6 +126,7 @@ def extract_date_from_text(text, default_year=None):
                     if year_parsed and month_parsed:
                         return year_parsed, month_parsed
 
+            # Compact YYYYMM or MMYYYY
             elif len(match) == 2 and all(part.isdigit() for part in match) and (len(match[0]) == 4 or len(match[1]) == 4):
                 part1, part2 = match
                 # YYYYMM
@@ -148,6 +152,7 @@ def extract_date_from_text(text, default_year=None):
                     except ValueError:
                         pass
 
+            # Quarter patterns
             if len(match) == 2 and any('Q' in m for m in match):
                 quarter_str, year = match
                 quarter = re.sub(r'[^1-4]', '', quarter_str)
@@ -159,6 +164,7 @@ def extract_date_from_text(text, default_year=None):
                 if year and quarter in quarter_mappings:
                     return year, quarter_mappings[quarter]
 
+            # Numeric date patterns (DD MM YYYY, YYYY MM DD, etc.)
             if len(match) == 3 and all(part.isdigit() for part in match):
                 part1, part2, part3 = match
                 candidates = [
@@ -177,7 +183,7 @@ def extract_date_from_text(text, default_year=None):
                         except ValueError:
                             continue
 
-    # Try using dateparser as a fallback
+    # Fallback to dateparser
     parsed_date = date_parse(text, settings={'REQUIRE_PARTS': ['year', 'month'], 'PREFER_DATES_FROM': 'past'})
     if parsed_date:
         year = parsed_date.strftime('%Y')
@@ -187,7 +193,7 @@ def extract_date_from_text(text, default_year=None):
             year = default_year
         return year, f"{month_num}-{month_name}"
 
-    # If no date is found, return default_year and None
+    # If no date found
     return default_year, None
 
 def find_save_path(sender, subject, sender_path_table):
@@ -196,9 +202,9 @@ def find_save_path(sender, subject, sender_path_table):
 
     # If the sender is not found in the CSV, treat it as a default path email
     if rows.empty:
-        return None, None, False  # Indicate that this is a default path email
+        return None, None, False
 
-    # If the sender email has multiple entries, apply coper_name matching logic
+    # If multiple entries, apply coper_name logic
     if len(rows) > 1:
         for _, row in rows.iterrows():
             coper_name = str(row.get('coper_name', '')).strip().lower()
@@ -207,12 +213,10 @@ def find_save_path(sender, subject, sender_path_table):
                 for keyword in keywords:
                     if keyword.lower() in subject.lower():
                         keyword_path = row.get('keyword_path', '')
-                        return keyword_path, False, True  # Save in keyword path
+                        return keyword_path, False, True
                 save_path = row.get('save_path', '')
                 return save_path, False, True
         return None, None, False
-
-    # If the sender email has a unique entry
     else:
         row = rows.iloc[0]
         keywords = str(row.get('keywords', '')).split(';')
@@ -302,11 +306,10 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
         elif hasattr(item, 'Sender') and item.Sender and hasattr(item.Sender, 'Address') and item.Sender.Address:
             sender_email = item.Sender.Address.lower()
         else:
-            # If there's no sender info, skip this email
+            # If there's no sender info, skip
             logs.append(f"Skipped email '{item.Subject}' due to missing sender information.")
             return logs, failed_emails
     except Exception:
-        # In case of any error accessing sender info, skip
         logs.append(f"Skipped email '{item.Subject}' due to error fetching sender info.")
         return logs, failed_emails
 
@@ -363,33 +366,48 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     specific_date = datetime.datetime.strptime(specific_date_str, '%Y-%m-%d').date()
     outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
 
+    # Recursive search helper
+    def find_folder_by_name(parent_folder, target_name):
+        for f in parent_folder.Folders:
+            if f.Name.lower() == target_name.lower():
+                return f
+            sub_result = find_folder_by_name(f, target_name)
+            if sub_result is not None:
+                return sub_result
+        return None
+
     inbox = None
     malai_folder = None
 
-    # Find the store for the provided email address
+    # Locate the store
     for store in outlook.Stores:
         if store.DisplayName.lower() == email_address.lower() or store.ExchangeStoreType == 3:
             try:
                 root_folder = store.GetRootFolder()
-
-                # Locate the Inbox folder
                 inbox = next((folder for folder in root_folder.Folders if folder.Name.lower() == "inbox"), None)
 
-                # If Inbox is found, try to find 'Malai' folder inside it
                 if inbox:
-                    malai_folder = next((subfolder for subfolder in inbox.Folders if subfolder.Name.lower() == "malai"), None)
+                    # Find 'Malai' folder recursively under Inbox
+                    malai_folder = find_folder_by_name(inbox, "malai")
 
                 break
             except AttributeError as e:
                 logs.append(f"Error accessing folders: {str(e)}")
                 continue
 
-    if not inbox and not malai_folder:
-        logs.append(f"No Inbox or 'Malai' subfolder found for the account with email address: {email_address}")
+    if not inbox:
+        logs.append(f"No Inbox found for the account with email address: {email_address}")
         pythoncom.CoUninitialize()
         with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
             f.writelines("\n".join(logs))
         return
+    else:
+        logs.append("Inbox found successfully.")
+
+    if not malai_folder:
+        logs.append("No 'Malai' folder found as a subfolder of Inbox.")
+    else:
+        logs.append("Malai folder found successfully.")
 
     def get_items_for_folder(folder, date):
         filtered_items = []
@@ -407,6 +425,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     malai_items = get_items_for_folder(malai_folder, specific_date) if malai_folder else []
 
     all_items = inbox_items + malai_items
+    logs.append(f"Total emails found: {len(all_items)} (Inbox: {len(inbox_items)}, Malai: {len(malai_items)})")
 
     total_emails = len(all_items)
     saved_default, saved_actual, not_saved = 0, 0, 0
