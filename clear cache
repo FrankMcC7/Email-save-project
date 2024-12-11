@@ -1,0 +1,6 @@
+import shutil
+from jupyter_core.paths import jupyter_runtime_dir
+
+runtime_dir = jupyter_runtime_dir()
+shutil.rmtree(runtime_dir)
+print(f"Cleared Jupyter runtime directory: {runtime_dir}")
