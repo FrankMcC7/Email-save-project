@@ -1,0 +1,41 @@
+// Assuming:
+// B1 = Period 1 NAV (in millions) - might be blank for new funds
+// C1 = Period 2 NAV (in millions)
+
+// Formula that returns descriptive text and handles blank initial NAV
+=IF(
+    B1="", 
+    "New Fund - No Review Required",
+    IF(
+        ABS(
+            IFS(B1>=1000,1, B1>=500,2, B1>=200,3, B1>=25,4, TRUE,5) - 
+            IFS(C1>=1000,1, C1>=500,2, C1>=200,3, C1>=25,4, TRUE,5)
+        ) >= 2,
+        "Review Required",
+        "No Review Needed"
+    )
+)
+
+// Alternative version using ISBLANK function (might be preferred in some cases)
+=IF(
+    ISBLANK(B1), 
+    "New Fund - No Review Required",
+    IF(
+        ABS(
+            IFS(B1>=1000,1, B1>=500,2, B1>=200,3, B1>=25,4, TRUE,5) - 
+            IFS(C1>=1000,1, C1>=500,2, C1>=200,3, C1>=25,4, TRUE,5)
+        ) >= 2,
+        "Review Required",
+        "No Review Needed"
+    )
+)
+
+// If you prefer TRUE/FALSE output instead of text (with blank handling)
+=IF(
+    B1="",
+    FALSE,
+    ABS(
+        IFS(B1>=1000,1, B1>=500,2, B1>=200,3, B1>=25,4, TRUE,5) - 
+        IFS(C1>=1000,1, C1>=500,2, C1>=200,3, C1>=25,4, TRUE,5)
+    ) >= 2
+)
