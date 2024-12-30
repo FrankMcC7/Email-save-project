@@ -3,7 +3,7 @@ Sub MacroEpsilon()
     Dim portfolioTable As ListObject, iaTable As ListObject, datasetTable As ListObject
     Dim previousFile As String
     Dim wbPrevious As Workbook, wsIAPrev As Worksheet, iaTablePrev As ListObject
-    Dim numRowsPortfolio As Long, numRowsDataset As Long, numRowsIAPrev As Long
+    Dim numRowsPortfolio As Long, numRowsIAPrev As Long
     Dim uniqueGCI As Object
     Dim regionData As Object, managerData As Object, triggerData As Object
     Dim navSourceData As Object, clientContactData As Object, ecaAnalystData As Object
@@ -11,6 +11,7 @@ Sub MacroEpsilon()
     Dim missingTriggerData As Object, missingNonTriggerData As Object
     Dim manualColumns As Object
     Dim i As Long, j As Long
+    Dim gci As Variant
 
     On Error GoTo ErrorHandler
 
@@ -36,7 +37,7 @@ Sub MacroEpsilon()
     ' Clear IA_Table except headers
     If Not iaTable.DataBodyRange Is Nothing Then iaTable.DataBodyRange.Delete
 
-    ' Prompt user to select previous version of IA_Table
+    ' Prompt user to select the previous version of IA_Table
     previousFile = Application.GetOpenFilename("Excel Files (*.xls*), *.xls*", , "Select the previous version of IA_Table")
     If previousFile = "False" Then
         MsgBox "No file selected.", vbExclamation
@@ -93,7 +94,7 @@ Sub MacroEpsilon()
     Dim portfolioData As Variant
     portfolioData = portfolioTable.DataBodyRange.Value
     For i = 1 To numRowsPortfolio
-        Dim gci As String, region As String, manager As String
+        Dim region As String, manager As String
         Dim triggerStatus As String, navSource As String
         Dim primaryContact As String, secondaryContact As String, wksMissing As String
         gci = portfolioData(i, portfolioTable.ListColumns("Fund Manager GCI").Index)
@@ -152,14 +153,14 @@ Sub MacroEpsilon()
         If manualColumns.exists(gci) Then
             Dim manualValues As Variant
             manualValues = manualColumns(gci)
-            iaData(j, 13) = manualValues(0)
-            iaData(j, 14) = manualValues(1)
-            iaData(j, 15) = manualValues(2)
-            iaData(j, 16) = manualValues(3)
-            iaData(j, 17) = manualValues(4)
-            iaData(j, 18) = manualValues(5)
-            iaData(j, 19) = manualValues(6)
-            iaData(j, 20) = manualValues(7)
+            iaData(j, 13) = manualValues(0) ' Days to Report
+            iaData(j, 14) = manualValues(1) ' 1st Client Outreach Date
+            iaData(j, 15) = manualValues(2) ' 2nd Client Outreach Date
+            iaData(j, 16) = manualValues(3) ' OA Escalation Date
+            iaData(j, 17) = manualValues(4) ' NOA Escalation Date
+            iaData(j, 18) = manualValues(5) ' Escalation Name
+            iaData(j, 19) = manualValues(6) ' Final Status
+            iaData(j, 20) = manualValues(7) ' Comments
         End If
         j = j + 1
     Next gci
