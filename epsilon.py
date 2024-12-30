@@ -39,36 +39,68 @@ Sub MacroEpsilon()
     Application.EnableEvents = False
 
     '---------------------------------------------------------------------------------
-    ' 3. SET REFERENCES TO WORKSHEETS AND TABLES
+    ' 3. SET REFERENCES TO WORKSHEETS
     '---------------------------------------------------------------------------------
     Set wsPortfolio = ThisWorkbook.Sheets("Portfolio")
     Set wsIA = ThisWorkbook.Sheets("IA_Level")
     
-    ' If "Dataset" is truly not used, you may remove these lines:
-    'Dim wsDataset As Worksheet, datasetTable As ListObject
-    'Set wsDataset = ThisWorkbook.Sheets("Dataset")
-    'Set datasetTable = wsDataset.ListObjects("DatasetTable")
+    ' If "Dataset" is truly not used, you may remove the references for it.
+    '
+    ' Dim wsDataset As Worksheet, datasetTable As ListObject
+    ' Set wsDataset = ThisWorkbook.Sheets("Dataset")
+    ' Set datasetTable = wsDataset.ListObjects("DatasetTable")
     
+    '---------------------------------------------------------------------------------
+    ' 4. GET PORTFOLIOTABLE
+    '---------------------------------------------------------------------------------
+    On Error Resume Next
     Set portfolioTable = wsPortfolio.ListObjects("PortfolioTable")
-    Set iaTable = wsIA.ListObjects("IA_Table")
+    On Error GoTo ErrorHandler
     
-    '---------------------------------------------------------------------------------
-    ' 4. VALIDATE REQUIRED TABLES
-    '---------------------------------------------------------------------------------
-    If portfolioTable Is Nothing Or iaTable Is Nothing Then
-        MsgBox "Missing required tables (PortfolioTable or IA_Table).", vbCritical
+    If portfolioTable Is Nothing Then
+        MsgBox "Table 'PortfolioTable' not found on 'Portfolio' sheet.", vbCritical
         GoTo CleanUp
     End If
     
     '---------------------------------------------------------------------------------
-    ' 5. CLEAR IA_TABLE EXCEPT HEADERS
+    ' 5. CHECK IF IA_TABLE EXISTS; IF NOT, CREATE IT
+    '---------------------------------------------------------------------------------
+    On Error Resume Next
+    Set iaTable = wsIA.ListObjects("IA_Table")
+    On Error GoTo ErrorHandler
+    
+    If iaTable Is Nothing Then
+        ' Create the required header row in row 1 (columns A:T = 20 columns)
+        Dim requiredCols As Variant
+        requiredCols = Array( _
+            "Fund Manager GCI", "Region", "Fund Manager", "Trigger/Non-Trigger", "NAV Source", _
+            "Client Contact(s)", "Trigger", "Non-Trigger", "Total Funds", "Missing Trigger", _
+            "Missing Non-Trigger", "Total Missing", "Days to Report", "1st Client Outreach Date", _
+            "2nd Client Outreach Date", "OA Escalation Date", "NOA Escalation Date", _
+            "Escalation Name", "Final Status", "Comments")
+        
+        ' Place headers in Row 1
+        Dim col As Long
+        For col = LBound(requiredCols) To UBound(requiredCols)
+            wsIA.Cells(1, col + 1).Value = requiredCols(col)
+        Next col
+        
+        ' Create a ListObject (table) from A1:T1 (1 row of headers, no data rows yet)
+        Set iaTable = wsIA.ListObjects.Add(SourceType:=xlSrcRange, _
+                                           Source:=wsIA.Range("A1:T1"), _
+                                           XlListObjectHasHeaders:=xlYes)
+        iaTable.Name = "IA_Table"
+    End If
+    
+    '---------------------------------------------------------------------------------
+    ' 6. CLEAR IA_TABLE EXCEPT HEADERS
     '---------------------------------------------------------------------------------
     If Not iaTable.DataBodyRange Is Nothing Then
         iaTable.DataBodyRange.Delete
     End If
     
     '---------------------------------------------------------------------------------
-    ' 6. PROMPT USER FOR MANUAL DATA IMPORT
+    ' 7. PROMPT USER FOR MANUAL DATA IMPORT
     '---------------------------------------------------------------------------------
     userChoice = MsgBox( _
         "Would you like to load manual data from a previous version?", _
@@ -77,7 +109,7 @@ Sub MacroEpsilon()
     wantManualData = (userChoice = vbYes)
     
     '---------------------------------------------------------------------------------
-    ' 7. INITIALIZE DICTIONARIES
+    ' 8. INITIALIZE DICTIONARIES
     '---------------------------------------------------------------------------------
     Set uniqueGCI = CreateObject("Scripting.Dictionary")
     Set regionData = CreateObject("Scripting.Dictionary")
@@ -92,7 +124,7 @@ Sub MacroEpsilon()
     Set manualColumns = CreateObject("Scripting.Dictionary")
     
     '---------------------------------------------------------------------------------
-    ' 8. IF USER WANTS MANUAL DATA, OPEN PREVIOUS WORKBOOK
+    ' 9. IF USER WANTS MANUAL DATA, OPEN PREVIOUS WORKBOOK
     '---------------------------------------------------------------------------------
     If wantManualData Then
         
@@ -121,7 +153,6 @@ Sub MacroEpsilon()
                     wbPrevious.Close SaveChanges:=False
                     wantManualData = False
                 Else
-                    ' Read manual data from previous IA_Table
                     If Not iaTablePrev.DataBodyRange Is Nothing Then
                         numRowsIAPrev = iaTablePrev.DataBodyRange.Rows.Count
                         If numRowsIAPrev > 0 Then
@@ -152,7 +183,7 @@ Sub MacroEpsilon()
     End If
     
     '---------------------------------------------------------------------------------
-    ' 9. READ CURRENT PORTFOLIOTABLE DATA
+    '10. READ CURRENT PORTFOLIOTABLE DATA
     '---------------------------------------------------------------------------------
     If portfolioTable.DataBodyRange Is Nothing Then
         MsgBox "No data found in PortfolioTable.", vbExclamation
@@ -213,7 +244,7 @@ Sub MacroEpsilon()
     Next i
     
     '---------------------------------------------------------------------------------
-    '10. BUILD THE FINAL ARRAY FOR IA_TABLE (20 COLUMNS)
+    '11. BUILD THE FINAL ARRAY FOR IA_TABLE (20 COLUMNS)
     '---------------------------------------------------------------------------------
     numUniqueGCI = uniqueGCI.Count
     ReDim iaData(1 To numUniqueGCI, 1 To 20)
@@ -230,17 +261,17 @@ Sub MacroEpsilon()
         ' 7  - Trigger
         ' 8  - Non-Trigger
         ' 9  - Total Funds
-        '10  - Missing Trigger
-        '11  - Missing Non-Trigger
-        '12  - Total Missing
-        '13  - Days to Report (manual)
-        '14  - 1st Client Outreach Date (manual)
-        '15  - 2nd Client Outreach Date (manual)
-        '16  - OA Escalation Date (manual)
-        '17  - NOA Escalation Date (manual)
-        '18  - Escalation Name (manual)
-        '19  - Final Status (manual)
-        '20  - Comments (manual)
+        '10 - Missing Trigger
+        '11 - Missing Non-Trigger
+        '12 - Total Missing
+        '13 - Days to Report (manual)
+        '14 - 1st Client Outreach Date (manual)
+        '15 - 2nd Client Outreach Date (manual)
+        '16 - OA Escalation Date (manual)
+        '17 - NOA Escalation Date (manual)
+        '18 - Escalation Name (manual)
+        '19 - Final Status (manual)
+        '20 - Comments (manual)
         
         iaData(j, 1) = gci
         iaData(j, 2) = regionData(gci)
@@ -249,13 +280,13 @@ Sub MacroEpsilon()
         iaData(j, 5) = navSourceData(gci)
         iaData(j, 6) = clientContactData(gci)
         
-        iaData(j, 7) = triggerCountData(gci)         ' Column 7:  "Trigger"
-        iaData(j, 8) = nonTriggerCountData(gci)      ' Column 8:  "Non-Trigger"
-        iaData(j, 9) = iaData(j, 7) + iaData(j, 8)   ' Column 9:  "Total Funds"
+        iaData(j, 7) = triggerCountData(gci)         ' "Trigger"
+        iaData(j, 8) = nonTriggerCountData(gci)      ' "Non-Trigger"
+        iaData(j, 9) = iaData(j, 7) + iaData(j, 8)   ' "Total Funds"
         
-        iaData(j, 10) = missingTriggerData(gci)      ' Column 10: "Missing Trigger"
-        iaData(j, 11) = missingNonTriggerData(gci)   ' Column 11: "Missing Non-Trigger"
-        iaData(j, 12) = iaData(j, 10) + iaData(j, 11)' Column 12: "Total Missing"
+        iaData(j, 10) = missingTriggerData(gci)      ' "Missing Trigger"
+        iaData(j, 11) = missingNonTriggerData(gci)   ' "Missing Non-Trigger"
+        iaData(j, 12) = iaData(j, 10) + iaData(j, 11)' "Total Missing"
         
         If wantManualData And manualColumns.Exists(gci) Then
             Dim manualValues As Variant
@@ -285,18 +316,18 @@ Sub MacroEpsilon()
     Next gci
     
     '---------------------------------------------------------------------------------
-    '11. WRITE FINAL ARRAY INTO IA_TABLE
+    '12. WRITE FINAL ARRAY INTO IA_TABLE
     '---------------------------------------------------------------------------------
     iaTable.DataBodyRange.Resize(numUniqueGCI, 20).Value = iaData
     
     '---------------------------------------------------------------------------------
-    '12. COMPLETION MESSAGE
+    '13. COMPLETION MESSAGE
     '---------------------------------------------------------------------------------
-    MsgBox "IA_Table has been populated successfully.", vbInformation
+    MsgBox "IA_Table has been created/populated successfully.", vbInformation
 
 CleanUp:
     '---------------------------------------------------------------------------------
-    '13. RESTORE APPLICATION SETTINGS & CLOSE PREVIOUS WORKBOOK IF OPEN
+    '14. RESTORE APPLICATION SETTINGS & CLOSE PREVIOUS WORKBOOK IF OPEN
     '---------------------------------------------------------------------------------
     Application.ScreenUpdating = True
     Application.Calculation = xlCalculationAutomatic
