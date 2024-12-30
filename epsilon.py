@@ -8,6 +8,7 @@ Sub MacroEpsilon()
     Dim wsPortfolio As Worksheet, wsIA As Worksheet
     Dim portfolioTable As ListObject, iaTable As ListObject
     
+    ' Declare wbPrevious and wsIAPrev here only ONCE to avoid duplication
     Dim wbPrevious As Workbook, wsIAPrev As Worksheet
     Dim iaTablePrev As ListObject
     
@@ -17,7 +18,7 @@ Sub MacroEpsilon()
     Dim triggerCountData As Object, nonTriggerCountData As Object
     Dim missingTriggerData As Object, missingNonTriggerData As Object
     
-    ' We use a dictionary of dictionaries for NAV Source (to store multiple NAVs per GCI)
+    ' Dictionary of dictionaries for NAV Source (to store multiple NAVs per GCI)
     Dim navSourceData As Object
     
     Dim clientContactData As Object, manualColumns As Object
@@ -54,7 +55,7 @@ Sub MacroEpsilon()
     On Error GoTo 0
     
     If portfolioTable Is Nothing Then
-        MsgBox "Table 'PortfolioTable' not found on 'Portfolio' sheet." & vbCrLf & _
+        MsgBox "Table 'PortfolioTable' not found on the 'Portfolio' sheet." & vbCrLf & _
                "Please verify the table name/spelling.", vbCritical
         GoTo CleanUp
     End If
@@ -135,14 +136,11 @@ Sub MacroEpsilon()
     Set clientContactData = CreateObject("Scripting.Dictionary")
     Set manualColumns = CreateObject("Scripting.Dictionary")
     
-    Dim wbPrevious As Workbook
-    
     '---------------------------------------------------------------------------------
     ' 8. IF USER WANTS MANUAL DATA, OPEN PREVIOUS WORKBOOK
     '---------------------------------------------------------------------------------
     If wantManualData Then
         
-        Dim previousFile As Variant
         previousFile = Application.GetOpenFilename( _
             "Excel Files (*.xls*), *.xls*", , "Select the previous version of IA_Table")
         
@@ -323,6 +321,7 @@ Sub MacroEpsilon()
         iaData(j, 3) = managerData(gci)
         
         ' (4) Trigger/Non-Trigger:
+        ' Show "Both" if GCI has both Trigger & Non-Trigger funds
         If triggerCountData(gci) > 0 And nonTriggerCountData(gci) > 0 Then
             iaData(j, 4) = "Both"
         ElseIf triggerCountData(gci) > 0 Then
@@ -333,12 +332,11 @@ Sub MacroEpsilon()
             iaData(j, 4) = ""
         End If
         
-        ' (5) NAV Source: ignore blanks, only list actual NAV Sources
+        ' (5) NAV Source: If no NAV Sources, show "[No NAV Source]"
         Dim arrNav() As String
         arrNav = navSourceData(gci).Keys  ' All distinct NAV Source values
         
         If navSourceData(gci).Count = 0 Then
-            ' No NAV Sources were recorded for this GCI
             iaData(j, 5) = "[No NAV Source]"
         Else
             iaData(j, 5) = Join(arrNav, ";")
@@ -436,6 +434,7 @@ CleanUp:
     End If
     
 End Sub
+
 
 '---------------------------------------------------------------------------------------------
 ' HELPER PROCEDURE: Checks if a given column name exists in a ListObject (table).
