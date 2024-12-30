@@ -26,7 +26,17 @@ Public Sub MacroEpsilon()
     
     ' Initialize core worksheet references
     Dim wsPortfolio As Worksheet: Set wsPortfolio = ThisWorkbook.Sheets("Portfolio")
-    Dim wsIA As Worksheet: Set wsIA = ThisWorkbook.Sheets("IA_Level")
+    Dim wsIA As Worksheet
+    
+    ' Check if IA_Level sheet exists, if not create it
+    On Error Resume Next
+    Set wsIA = ThisWorkbook.Sheets("IA_Level")
+    On Error GoTo 0
+    
+    If wsIA Is Nothing Then
+        Set wsIA = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        wsIA.Name = "IA_Level"
+    End If
     
     ' Initialize and validate tables
     Dim portfolioTable As ListObject: Set portfolioTable = GetTableSafely(wsPortfolio, "PortfolioTable")
@@ -54,6 +64,9 @@ Public Sub MacroEpsilon()
     
     ' Write processed data to IA table
     WriteIATableData iaTable, iaLevelCollection
+    
+    ' Format the IA table
+    FormatIATable iaTable
     
     MsgBox "IA_Table has been updated successfully.", vbInformation
 
@@ -102,8 +115,8 @@ Private Function ProcessPortfolioData(ByVal portfolioTable As ListObject, _
                 ' Initialize data
                 With iaData
                     .GCI = gci
-                    .Region = data(i, colIndices(COL_REGION))
-                    .Manager = data(i, colIndices(COL_FUND_MANAGER))
+                    .Region = SafeString(data(i, colIndices(COL_REGION)))
+                    .Manager = SafeString(data(i, colIndices(COL_FUND_MANAGER)))
                     .ECAIndiaAnalyst = SafeString(data(i, colIndices(COL_ECA_INDIA_ANALYST)))
                 End With
                 
@@ -169,7 +182,7 @@ Private Function ImportManualData(ByRef manualData As Collection) As Boolean
     data = iaPrevTable.DataBodyRange.Value
     
     Dim manualIndices As Variant
-    manualIndices = Array(14, 15, 16, 17, 18, 19, 20, 21) ' Manual column indices adjusted for new column
+    manualIndices = Array(14, 15, 16, 17, 18, 19, 20, 21) ' Manual column indices
     
     Dim r As Long
     For r = 1 To UBound(data, 1)
@@ -195,9 +208,14 @@ End Function
 Private Sub WriteIATableData(ByVal iaTable As ListObject, ByVal data As Collection)
     If data.Count = 0 Then Exit Sub
     
+    ' Clear existing data if any
+    If Not iaTable.DataBodyRange Is Nothing Then
+        iaTable.DataBodyRange.Delete
+    End If
+    
     ' Prepare array for writing
     Dim result() As Variant
-    ReDim result(1 To data.Count, 1 To 21) ' Adjusted for new column
+    ReDim result(1 To data.Count, 1 To 21)
     
     Dim i As Long: i = 1
     Dim item As IALevelData
@@ -229,13 +247,11 @@ Private Sub WriteIATableData(ByVal iaTable As ListObject, ByVal data As Collecti
         i = i + 1
     Next item
     
-    ' Write to table
-    Dim targetRange As Range
-    Set targetRange = iaTable.HeaderRowRange.Offset(1, 0).Resize(data.Count, 21)
-    targetRange.Value = result
-    
-    ' Resize table
-    iaTable.Resize iaTable.Range.Resize(data.Count + 1, 21)
+    ' Write data
+    iaTable.Range.Resize(data.Count + 1).Value = Application.Transpose( _
+        Application.Transpose(iaTable.HeaderRowRange.Value)) ' Copy headers
+    iaTable.ListRows.Add ' Add rows
+    iaTable.DataBodyRange.Value = result
 End Sub
 
 '--------------------------------------------------------------------------------
@@ -255,41 +271,58 @@ Private Function GetTableSafely(ws As Worksheet, tableName As String) As ListObj
 End Function
 
 Private Function InitializeIATable(ws As Worksheet) As ListObject
+    ' Delete existing table if present
     On Error Resume Next
-    Set InitializeIATable = ws.ListObjects("IA_Table")
+    If Not ws.ListObjects("IA_Table") Is Nothing Then
+        ws.ListObjects("IA_Table").Delete
+    End If
     On Error GoTo 0
     
-    If InitializeIATable Is Nothing Then
-        ' Define required columns for IA table
-        Dim requiredCols As Variant
-        requiredCols = Array( _
-            COL_FUND_MANAGER_GCI, COL_REGION, COL_FUND_MANAGER, _
-            COL_ECA_INDIA_ANALYST, _
-            COL_TRIGGER_NON_TRIGGER, COL_NAV_SOURCE, "Client Contact(s)", _
-            "Trigger", "Non-Trigger", "Total Funds", "Missing Trigger", _
-            "Missing Non-Trigger", "Total Missing", "Days to Report", _
-            "1st Client Outreach Date", "2nd Client Outreach Date", _
-            "OA Escalation Date", "NOA Escalation Date", "Escalation Name", _
-            "Final Status", "Comments")
-        
-        ' Create headers
-        Dim col As Long
-        For col = LBound(requiredCols) To UBound(requiredCols)
-            ws.Cells(1, col + 1).Value = requiredCols(col)
-        Next col
-        
-        ' Create table
-        Set InitializeIATable = ws.ListObjects.Add( _
-            SourceType:=xlSrcRange, _
-            Source:=ws.Range("A1:U1"), _
-            XlListObjectHasHeaders:=xlYes)
-        InitializeIATable.Name = "IA_Table"
-    End If
+    ' Define column headers
+    Dim headers As Variant
+    headers = Array( _
+        COL_FUND_MANAGER_GCI, _
+        COL_REGION, _
+        COL_FUND_MANAGER, _
+        COL_ECA_INDIA_ANALYST, _
+        COL_TRIGGER_NON_TRIGGER, _
+        COL_NAV_SOURCE, _
+        "Client Contact(s)", _
+        "Trigger", _
+        "Non-Trigger", _
+        "Total Funds", _
+        "Missing Trigger", _
+        "Missing Non-Trigger", _
+        "Total Missing", _
+        "Days to Report", _
+        "1st Client Outreach Date", _
+        "2nd Client Outreach Date", _
+        "OA Escalation Date", _
+        "NOA Escalation Date", _
+        "Escalation Name", _
+        "Final Status", _
+        "Comments")
     
-    ' Clear existing data
-    If Not InitializeIATable.DataBodyRange Is Nothing Then
-        InitializeIATable.DataBodyRange.Delete
-    End If
+    ' Write headers
+    Dim col As Long
+    For col = LBound(headers) To UBound(headers)
+        ws.Cells(1, col + 1).Value = headers(col)
+    Next col
+    
+    ' Create table
+    Set InitializeIATable = ws.ListObjects.Add( _
+        SourceType:=xlSrcRange, _
+        Source:=ws.Range(ws.Cells(1, 1), ws.Cells(1, UBound(headers) + 1)), _
+        XlListObjectHasHeaders:=xlYes)
+    
+    ' Set table name
+    InitializeIATable.Name = "IA_Table"
+    
+    ' Apply basic formatting
+    With InitializeIATable.HeaderRowRange
+        .Font.Bold = True
+        .Interior.Color = RGB(217, 225, 242)
+    End With
 End Function
 
 Private Function ValidateRequiredColumns(tbl As ListObject) As Boolean
@@ -311,6 +344,52 @@ Private Function ValidateRequiredColumns(tbl As ListObject) As Boolean
     
     ValidateRequiredColumns = True
 End Function
+
+Private Sub FormatIATable(tbl As ListObject)
+    With tbl
+        ' Apply table style
+        .TableStyle = "TableStyleMedium2"
+        
+        ' Format header row
+        With .HeaderRowRange
+            .Font.Bold = True
+            .Interior.Color = RGB(217, 225, 242)
+            .HorizontalAlignment = xlCenter
+        End With
+        
+        ' AutoFit columns
+        .Range.Columns.AutoFit
+        
+        ' Format date columns
+        Dim dateColumns As Variant
+        dateColumns = Array("1st Client Outreach Date", "2nd Client Outreach Date", _
+                          "OA Escalation Date", "NOA Escalation Date")
+        
+        Dim colName As Variant
+        For Each colName In dateColumns
+            On Error Resume Next
+            .ListColumns(CStr(colName)).DataBodyRange.NumberFormat = "dd-mmm-yyyy"
+            On Error GoTo 0
+        Next colName
+        
+        ' Format numeric columns
+        With .ListColumns("Days to Report").DataBodyRange
+            .NumberFormat = "0"
+            .HorizontalAlignment = xlRight
+        End With
+        
+        ' Center align specific columns
+        Dim centerColumns As Variant
+        centerColumns = Array("Trigger", "Non-Trigger", "Total Funds", _
+                            "Missing Trigger", "Missing Non-Trigger", "Total Missing")
+        
+        For Each colName In centerColumns
+            On Error Resume Next
+            .ListColumns(CStr(colName)).DataBodyRange.HorizontalAlignment = xlCenter
+            On Error GoTo 0
+        Next colName
+    End With
+End Sub
 
 Private Function GetUserManualDataPreference() As Boolean
     GetUserManualDataPreference = (MsgBox("Load manual data from previous version?", _
