@@ -11,18 +11,22 @@ Sub MacroEpsilon()
     Dim wbPrevious As Workbook, wsIAPrev As Worksheet
     Dim iaTablePrev As ListObject
     
+    ' Dictionaries for storing data by GCI
     Dim uniqueGCI As Object
-    Dim regionData As Object, managerData As Object, triggerData As Object
-    Dim navSourceData As Object, clientContactData As Object
+    Dim regionData As Object, managerData As Object
     Dim triggerCountData As Object, nonTriggerCountData As Object
     Dim missingTriggerData As Object, missingNonTriggerData As Object
-    Dim manualColumns As Object
+    
+    ' We use a dictionary of dictionaries for NAV Source (to store multiple NAVs per GCI)
+    Dim navSourceData As Object
+    
+    Dim clientContactData As Object, manualColumns As Object
     
     Dim portfolioData As Variant, manualData As Variant, iaData() As Variant
     Dim userChoice As VbMsgBoxResult
     Dim wantManualData As Boolean
     
-    Dim previousFile As Variant  ' for GetOpenFilename (can return False)
+    Dim previousFile As Variant
     Dim numRowsPortfolio As Long, numRowsIAPrev As Long
     Dim numUniqueGCI As Long
     
@@ -57,25 +61,23 @@ Sub MacroEpsilon()
         GoTo CleanUp
     End If
     
-    ' Ensure PortfolioTable has data rows
     If portfolioTable.DataBodyRange Is Nothing Then
         MsgBox "No data found in 'PortfolioTable'. Please ensure it has at least one row.", vbExclamation
         GoTo CleanUp
     End If
     
-    '----- Check that each required column exists in PortfolioTable -----
-    Call CheckColumnExists(portfolioTable, "Fund Manager GCI")
-    Call CheckColumnExists(portfolioTable, "Region")
-    Call CheckColumnExists(portfolioTable, "Fund Manager")
-    Call CheckColumnExists(portfolioTable, "Trigger/Non-Trigger")
-    Call CheckColumnExists(portfolioTable, "NAV Source")
-    Call CheckColumnExists(portfolioTable, "Primary Client Contact")
-    Call CheckColumnExists(portfolioTable, "Secondary Client Contact")
-    Call CheckColumnExists(portfolioTable, "Wks Missing")
-    '----- If the code never stopped, columns exist. -----
+    ' Confirm required columns in PortfolioTable
+    CheckColumnExists portfolioTable, "Fund Manager GCI"
+    CheckColumnExists portfolioTable, "Region"
+    CheckColumnExists portfolioTable, "Fund Manager"
+    CheckColumnExists portfolioTable, "Trigger/Non-Trigger"
+    CheckColumnExists portfolioTable, "NAV Source"
+    CheckColumnExists portfolioTable, "Primary Client Contact"
+    CheckColumnExists portfolioTable, "Secondary Client Contact"
+    CheckColumnExists portfolioTable, "Wks Missing"
     
     '---------------------------------------------------------------------------------
-    ' 5. CHECK IF IA_TABLE EXISTS; IF NOT, CREATE IT
+    ' 5. CHECK IF IA_TABLE EXISTS; IF NOT, CREATE IT (20 columns)
     '---------------------------------------------------------------------------------
     On Error Resume Next
     Set iaTable = wsIA.ListObjects("IA_Table")
@@ -98,9 +100,9 @@ Sub MacroEpsilon()
         
         ' Convert A1:T1 into a table
         Set iaTable = wsIA.ListObjects.Add( _
-                            SourceType:=xlSrcRange, _
-                            Source:=wsIA.Range("A1:T1"), _
-                            XlListObjectHasHeaders:=xlYes)
+                        SourceType:=xlSrcRange, _
+                        Source:=wsIA.Range("A1:T1"), _
+                        XlListObjectHasHeaders:=xlYes)
         iaTable.Name = "IA_Table"
     End If
     
@@ -124,14 +126,19 @@ Sub MacroEpsilon()
     Set uniqueGCI = CreateObject("Scripting.Dictionary")
     Set regionData = CreateObject("Scripting.Dictionary")
     Set managerData = CreateObject("Scripting.Dictionary")
-    Set triggerData = CreateObject("Scripting.Dictionary")
-    Set navSourceData = CreateObject("Scripting.Dictionary")
-    Set clientContactData = CreateObject("Scripting.Dictionary")
     Set triggerCountData = CreateObject("Scripting.Dictionary")
     Set nonTriggerCountData = CreateObject("Scripting.Dictionary")
     Set missingTriggerData = CreateObject("Scripting.Dictionary")
     Set missingNonTriggerData = CreateObject("Scripting.Dictionary")
+    
+    ' navSourceData is a Dictionary of mini-dictionaries
+    Set navSourceData = CreateObject("Scripting.Dictionary")
+    
+    Set clientContactData = CreateObject("Scripting.Dictionary")
     Set manualColumns = CreateObject("Scripting.Dictionary")
+    
+    ' We'll define these here for use below
+    Dim wbPrevious As Workbook
     
     '---------------------------------------------------------------------------------
     ' 8. IF USER WANTS MANUAL DATA, OPEN PREVIOUS WORKBOOK
@@ -145,7 +152,6 @@ Sub MacroEpsilon()
             MsgBox "No file selected. Manual columns will remain blank.", vbExclamation
             wantManualData = False
         Else
-            ' Open the previous workbook
             Set wbPrevious = Workbooks.Open(CStr(previousFile))
             
             Dim wsIAPrev As Worksheet
@@ -158,7 +164,6 @@ Sub MacroEpsilon()
                 wbPrevious.Close SaveChanges:=False
                 wantManualData = False
             Else
-                Set iaTablePrev = Nothing
                 On Error Resume Next
                 Set iaTablePrev = wsIAPrev.ListObjects("IA_Table")
                 On Error GoTo 0
@@ -174,35 +179,34 @@ Sub MacroEpsilon()
                         If numRowsIAPrev > 0 Then
                             manualData = iaTablePrev.DataBodyRange.Value
                             
-                            ' Check columns in the old IA_Table
-                            Call CheckColumnExists(iaTablePrev, "Fund Manager GCI")
-                            Call CheckColumnExists(iaTablePrev, "Days to Report")
-                            Call CheckColumnExists(iaTablePrev, "1st Client Outreach Date")
-                            Call CheckColumnExists(iaTablePrev, "2nd Client Outreach Date")
-                            Call CheckColumnExists(iaTablePrev, "OA Escalation Date")
-                            Call CheckColumnExists(iaTablePrev, "NOA Escalation Date")
-                            Call CheckColumnExists(iaTablePrev, "Escalation Name")
-                            Call CheckColumnExists(iaTablePrev, "Final Status")
-                            Call CheckColumnExists(iaTablePrev, "Comments")
-                            ' If no message popped up, columns exist
+                            ' Check columns in old IA_Table
+                            CheckColumnExists iaTablePrev, "Fund Manager GCI"
+                            CheckColumnExists iaTablePrev, "Days to Report"
+                            CheckColumnExists iaTablePrev, "1st Client Outreach Date"
+                            CheckColumnExists iaTablePrev, "2nd Client Outreach Date"
+                            CheckColumnExists iaTablePrev, "OA Escalation Date"
+                            CheckColumnExists iaTablePrev, "NOA Escalation Date"
+                            CheckColumnExists iaTablePrev, "Escalation Name"
+                            CheckColumnExists iaTablePrev, "Final Status"
+                            CheckColumnExists iaTablePrev, "Comments"
                             
-                            ' Loop old IA_Table rows
-                            For i = 1 To numRowsIAPrev
-                                Dim prevGCI As String
-                                prevGCI = manualData(i, iaTablePrev.ListColumns("Fund Manager GCI").Index)
+                            Dim prevGCI As String
+                            Dim r As Long
+                            For r = 1 To numRowsIAPrev
+                                prevGCI = manualData(r, iaTablePrev.ListColumns("Fund Manager GCI").Index)
                                 
                                 If prevGCI <> "" Then
                                     manualColumns.Add prevGCI, Array( _
-                                        manualData(i, iaTablePrev.ListColumns("Days to Report").Index), _
-                                        manualData(i, iaTablePrev.ListColumns("1st Client Outreach Date").Index), _
-                                        manualData(i, iaTablePrev.ListColumns("2nd Client Outreach Date").Index), _
-                                        manualData(i, iaTablePrev.ListColumns("OA Escalation Date").Index), _
-                                        manualData(i, iaTablePrev.ListColumns("NOA Escalation Date").Index), _
-                                        manualData(i, iaTablePrev.ListColumns("Escalation Name").Index), _
-                                        manualData(i, iaTablePrev.ListColumns("Final Status").Index), _
-                                        manualData(i, iaTablePrev.ListColumns("Comments").Index))
+                                        manualData(r, iaTablePrev.ListColumns("Days to Report").Index), _
+                                        manualData(r, iaTablePrev.ListColumns("1st Client Outreach Date").Index), _
+                                        manualData(r, iaTablePrev.ListColumns("2nd Client Outreach Date").Index), _
+                                        manualData(r, iaTablePrev.ListColumns("OA Escalation Date").Index), _
+                                        manualData(r, iaTablePrev.ListColumns("NOA Escalation Date").Index), _
+                                        manualData(r, iaTablePrev.ListColumns("Escalation Name").Index), _
+                                        manualData(r, iaTablePrev.ListColumns("Final Status").Index), _
+                                        manualData(r, iaTablePrev.ListColumns("Comments").Index))
                                 End If
-                            Next i
+                            Next r
                         End If
                     End If
                 End If
@@ -218,9 +222,9 @@ Sub MacroEpsilon()
     
     Dim colGCI As Long, colRegion As Long, colManager As Long
     Dim colTriggerNonTrigger As Long, colNavSource As Long
-    Dim colPriContact As Long, colSecContact As Long, colWksMissing As Long
+    Dim colPriContact As Long, colSecContact As Long
+    Dim colWksMissing As Long
     
-    ' Retrieve column indexes once for efficiency
     colGCI = portfolioTable.ListColumns("Fund Manager GCI").Index
     colRegion = portfolioTable.ListColumns("Region").Index
     colManager = portfolioTable.ListColumns("Fund Manager").Index
@@ -233,56 +237,66 @@ Sub MacroEpsilon()
     '---------------------------------------------------------------------------------
     '10. LOOP THROUGH PORTFOLIOTABLE ROWS & BUILD DICTIONARIES
     '---------------------------------------------------------------------------------
+    Dim fundGCI As String, navSrc As String
+    Dim region As String, manager As String
+    Dim triggerStatus As String
+    Dim primaryContact As String, secondaryContact As String
+    Dim wksMissing As String
+    
     For i = 1 To numRowsPortfolio
         
-        gci = SafeStringValue(portfolioData(i, colGCI))
-        
-        Dim region As String
-        Dim manager As String
-        Dim triggerStatus As String
-        Dim navSource As String
-        Dim primaryContact As String
-        Dim secondaryContact As String
-        Dim wksMissing As String
-        
+        fundGCI = SafeStringValue(portfolioData(i, colGCI))
         region = SafeStringValue(portfolioData(i, colRegion))
         manager = SafeStringValue(portfolioData(i, colManager))
         triggerStatus = SafeStringValue(portfolioData(i, colTriggerNonTrigger))
-        navSource = SafeStringValue(portfolioData(i, colNavSource))
+        navSrc = SafeStringValue(portfolioData(i, colNavSource))
+        
         primaryContact = SafeStringValue(portfolioData(i, colPriContact))
         secondaryContact = SafeStringValue(portfolioData(i, colSecContact))
         wksMissing = SafeStringValue(portfolioData(i, colWksMissing))
         
-        ' Add to dictionary if not already present
-        If Not uniqueGCI.Exists(gci) And gci <> "" Then
-            uniqueGCI.Add gci, True
+        If fundGCI <> "" Then
             
-            regionData.Add gci, region
-            managerData.Add gci, manager
-            triggerData.Add gci, triggerStatus
-            navSourceData.Add gci, navSource
-            clientContactData.Add gci, _
-                primaryContact & IIf(primaryContact <> "" And secondaryContact <> "", ";", "") & secondaryContact
+            ' If first time seeing this GCI, set up data placeholders
+            If Not uniqueGCI.Exists(fundGCI) Then
+                uniqueGCI.Add fundGCI, True
+                regionData.Add fundGCI, region
+                managerData.Add fundGCI, manager
+                
+                triggerCountData.Add fundGCI, 0
+                nonTriggerCountData.Add fundGCI, 0
+                missingTriggerData.Add fundGCI, 0
+                missingNonTriggerData.Add fundGCI, 0
+                
+                ' For storing multiple NAV sources:
+                Dim navDict As Object
+                Set navDict = CreateObject("Scripting.Dictionary")
+                navSourceData.Add fundGCI, navDict
+                
+                clientContactData.Add fundGCI, _
+                    primaryContact & IIf(primaryContact <> "" And secondaryContact <> "", ";", "") & secondaryContact
+            End If
             
-            triggerCountData.Add gci, 0
-            nonTriggerCountData.Add gci, 0
-            missingTriggerData.Add gci, 0
-            missingNonTriggerData.Add gci, 0
-        End If
-        
-        ' Tally counts only if gci is not blank
-        If gci <> "" Then
-            If triggerStatus = "Trigger" Then
-                triggerCountData(gci) = triggerCountData(gci) + 1
-                If wksMissing <> "" Then
-                    missingTriggerData(gci) = missingTriggerData(gci) + 1
-                End If
-            ElseIf triggerStatus = "Non-Trigger" Then
-                nonTriggerCountData(gci) = nonTriggerCountData(gci) + 1
-                If wksMissing <> "" Then
-                    missingNonTriggerData(gci) = missingNonTriggerData(gci) + 1
+            ' Record this NAV Source if not blank
+            If navSrc <> "" Then
+                If Not navSourceData(fundGCI).Exists(navSrc) Then
+                    navSourceData(fundGCI).Add navSrc, True
                 End If
             End If
+            
+            ' Tally Trigger / Non-Trigger counts
+            If triggerStatus = "Trigger" Then
+                triggerCountData(fundGCI) = triggerCountData(fundGCI) + 1
+                If wksMissing <> "" Then
+                    missingTriggerData(fundGCI) = missingTriggerData(fundGCI) + 1
+                End If
+            ElseIf triggerStatus = "Non-Trigger" Then
+                nonTriggerCountData(fundGCI) = nonTriggerCountData(fundGCI) + 1
+                If wksMissing <> "" Then
+                    missingNonTriggerData(fundGCI) = missingNonTriggerData(fundGCI) + 1
+                End If
+            End If
+            
         End If
     Next i
     
@@ -302,55 +316,66 @@ Sub MacroEpsilon()
     
     For Each gci In uniqueGCI.Keys
         
-        ' 1  - Fund Manager GCI
-        ' 2  - Region
-        ' 3  - Fund Manager
-        ' 4  - Trigger/Non-Trigger
-        ' 5  - NAV Source
-        ' 6  - Client Contact(s)
-        ' 7  - Trigger
-        ' 8  - Non-Trigger
-        ' 9  - Total Funds
-        '10 - Missing Trigger
-        '11 - Missing Non-Trigger
-        '12 - Total Missing
-        '13 - Days to Report (manual)
-        '14 - 1st Client Outreach Date (manual)
-        '15 - 2nd Client Outreach Date (manual)
-        '16 - OA Escalation Date (manual)
-        '17 - NOA Escalation Date (manual)
-        '18 - Escalation Name (manual)
-        '19 - Final Status (manual)
-        '20 - Comments (manual)
-        
+        ' (1) Fund Manager GCI
         iaData(j, 1) = gci
+        
+        ' (2) Region
         iaData(j, 2) = regionData(gci)
+        
+        ' (3) Fund Manager
         iaData(j, 3) = managerData(gci)
-        iaData(j, 4) = triggerData(gci)
-        iaData(j, 5) = navSourceData(gci)
+        
+        ' (4) Trigger/Non-Trigger:
+        ' "Both" if GCI has > 0 Trigger & > 0 Non-Trigger,
+        ' otherwise "Trigger" or "Non-Trigger" or ""
+        If triggerCountData(gci) > 0 And nonTriggerCountData(gci) > 0 Then
+            iaData(j, 4) = "Both"
+        ElseIf triggerCountData(gci) > 0 Then
+            iaData(j, 4) = "Trigger"
+        ElseIf nonTriggerCountData(gci) > 0 Then
+            iaData(j, 4) = "Non-Trigger"
+        Else
+            iaData(j, 4) = ""
+        End If
+        
+        ' (5) NAV Source (all distinct NAVs joined with ";")
+        Dim arrNav() As String
+        arrNav = navSourceData(gci).Keys
+        iaData(j, 5) = Join(arrNav, ";")
+        
+        ' (6) Client Contact(s)
         iaData(j, 6) = clientContactData(gci)
         
-        iaData(j, 7) = triggerCountData(gci)         ' "Trigger"
-        iaData(j, 8) = nonTriggerCountData(gci)      ' "Non-Trigger"
-        iaData(j, 9) = iaData(j, 7) + iaData(j, 8)   ' "Total Funds"
+        ' (7) # of Trigger
+        iaData(j, 7) = triggerCountData(gci)
         
-        iaData(j, 10) = missingTriggerData(gci)      ' "Missing Trigger"
-        iaData(j, 11) = missingNonTriggerData(gci)   ' "Missing Non-Trigger"
-        iaData(j, 12) = iaData(j, 10) + iaData(j, 11)' "Total Missing"
+        ' (8) # of Non-Trigger
+        iaData(j, 8) = nonTriggerCountData(gci)
         
+        ' (9) Total Funds
+        iaData(j, 9) = iaData(j, 7) + iaData(j, 8)
+        
+        ' (10) Missing Trigger
+        iaData(j, 10) = missingTriggerData(gci)
+        
+        ' (11) Missing Non-Trigger
+        iaData(j, 11) = missingNonTriggerData(gci)
+        
+        ' (12) Total Missing
+        iaData(j, 12) = iaData(j, 10) + iaData(j, 11)
+        
+        ' (13–20) Manual columns if user chose to load them
         If wantManualData And manualColumns.Exists(gci) Then
             manualValues = manualColumns(gci)
-            
-            iaData(j, 13) = manualValues(0)   ' Days to Report
-            iaData(j, 14) = manualValues(1)   ' 1st Client Outreach Date
-            iaData(j, 15) = manualValues(2)   ' 2nd Client Outreach Date
-            iaData(j, 16) = manualValues(3)   ' OA Escalation Date
-            iaData(j, 17) = manualValues(4)   ' NOA Escalation Date
-            iaData(j, 18) = manualValues(5)   ' Escalation Name
-            iaData(j, 19) = manualValues(6)   ' Final Status
-            iaData(j, 20) = manualValues(7)   ' Comments
+            iaData(j, 13) = manualValues(0)  ' Days to Report
+            iaData(j, 14) = manualValues(1)  ' 1st Client Outreach Date
+            iaData(j, 15) = manualValues(2)  ' 2nd Client Outreach Date
+            iaData(j, 16) = manualValues(3)  ' OA Escalation Date
+            iaData(j, 17) = manualValues(4)  ' NOA Escalation Date
+            iaData(j, 18) = manualValues(5)  ' Escalation Name
+            iaData(j, 19) = manualValues(6)  ' Final Status
+            iaData(j, 20) = manualValues(7)  ' Comments
         Else
-            ' Leave manual columns blank if not loading from previous
             iaData(j, 13) = ""
             iaData(j, 14) = ""
             iaData(j, 15) = ""
@@ -365,55 +390,41 @@ Sub MacroEpsilon()
     Next gci
     
     '---------------------------------------------------------------------------------
-    '12. WRITE FINAL ARRAY INTO IA_TABLE - AVOID "DATA BODY RANGE" ERRORS
+    '12. WRITE FINAL ARRAY INTO IA_TABLE (RESIZE PROPERLY)
     '---------------------------------------------------------------------------------
     Dim targetRange As Range
     
     If iaTable.DataBodyRange Is Nothing Then
         ' The table has only headers and no data rows:
         
-        ' Start below the header row
         Dim startCell As Range
         Set startCell = iaTable.HeaderRowRange.Offset(1, 0).Cells(1, 1)
         
-        ' Define the full range for numUniqueGCI rows by 20 columns
         Set targetRange = startCell.Resize(numUniqueGCI, 20)
-        
-        ' Write the array
         targetRange.Value = iaData
         
-        ' Resize the entire table to include the new rows
         iaTable.Resize iaTable.Range.Resize(numUniqueGCI + 1, 20)
-        
     Else
-        ' Table already has some rows (or we just cleared them)
+        ' Table has some rows (or zero if just cleared)
         
         Dim existingBody As Range
         Set existingBody = iaTable.DataBodyRange
         
-        ' The top-left cell of the data body
         Dim firstDataCell As Range
         Set firstDataCell = existingBody.Cells(1, 1)
         
-        ' We'll re-dimension this to exactly numUniqueGCI rows x 20 columns
         Set targetRange = firstDataCell.Resize(numUniqueGCI, 20)
-        
-        ' Write the array
         targetRange.Value = iaData
         
-        ' Now resize the entire table to match
         iaTable.Resize iaTable.HeaderRowRange.Resize(numUniqueGCI + 1, 20)
     End If
     
-    '---------------------------------------------------------------------------------
-    '13. COMPLETION MESSAGE
-    '---------------------------------------------------------------------------------
     MsgBox "IA_Table has been created/populated successfully.", vbInformation
 
 CleanUp:
-
+    
     '---------------------------------------------------------------------------------
-    '14. RESTORE APPLICATION SETTINGS & CLOSE PREVIOUS WORKBOOK IF OPEN
+    '13. RESTORE APPLICATION SETTINGS & CLOSE PREVIOUS WORKBOOK IF OPEN
     '---------------------------------------------------------------------------------
     Application.ScreenUpdating = True
     Application.Calculation = xlCalculationAutomatic
@@ -443,7 +454,7 @@ Private Sub CheckColumnExists(ByVal lo As ListObject, ByVal colName As String)
 End Sub
 
 '---------------------------------------------------------------------------------------------
-' HELPER FUNCTION: Safely converts a cell value to string, replacing #N/A (or any error) with ""
+' HELPER FUNCTION: Converts a cell value to string, replacing #N/A (or any error) with ""
 '---------------------------------------------------------------------------------------------
 Private Function SafeStringValue(cellValue As Variant) As String
     If IsError(cellValue) Then
