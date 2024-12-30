@@ -1,10 +1,10 @@
-' ModCoffee.bas
 Option Explicit
 
 ' Constants for column names
 Private Const COL_FUND_MANAGER_GCI As String = "Fund Manager GCI"
 Private Const COL_REGION As String = "Region"
 Private Const COL_FUND_MANAGER As String = "Fund Manager"
+Private Const COL_ECA_INDIA_ANALYST As String = "ECA India Analyst"
 Private Const COL_TRIGGER_NON_TRIGGER As String = "Trigger/Non-Trigger"
 Private Const COL_NAV_SOURCE As String = "NAV Source"
 Private Const COL_PRIMARY_CONTACT As String = "Primary Client Contact"
@@ -38,8 +38,7 @@ Public Sub MacroEpsilon()
     If Not ValidateRequiredColumns(portfolioTable) Then GoTo CleanUp
     
     ' Process manual data import if user wants it
-    Dim manualData As Collection
-    Set manualData = New Collection
+    Dim manualData As New Collection
     Dim wantManualData As Boolean
     wantManualData = GetUserManualDataPreference()
     
@@ -105,6 +104,7 @@ Private Function ProcessPortfolioData(ByVal portfolioTable As ListObject, _
                     .GCI = gci
                     .Region = data(i, colIndices(COL_REGION))
                     .Manager = data(i, colIndices(COL_FUND_MANAGER))
+                    .ECAIndiaAnalyst = SafeString(data(i, colIndices(COL_ECA_INDIA_ANALYST)))
                 End With
                 
                 If hasManualData Then
@@ -169,7 +169,7 @@ Private Function ImportManualData(ByRef manualData As Collection) As Boolean
     data = iaPrevTable.DataBodyRange.Value
     
     Dim manualIndices As Variant
-    manualIndices = Array(13, 14, 15, 16, 17, 18, 19, 20) ' Manual column indices
+    manualIndices = Array(14, 15, 16, 17, 18, 19, 20, 21) ' Manual column indices adjusted for new column
     
     Dim r As Long
     For r = 1 To UBound(data, 1)
@@ -197,7 +197,7 @@ Private Sub WriteIATableData(ByVal iaTable As ListObject, ByVal data As Collecti
     
     ' Prepare array for writing
     Dim result() As Variant
-    ReDim result(1 To data.Count, 1 To 20)
+    ReDim result(1 To data.Count, 1 To 21) ' Adjusted for new column
     
     Dim i As Long: i = 1
     Dim item As IALevelData
@@ -207,21 +207,22 @@ Private Sub WriteIATableData(ByVal iaTable As ListObject, ByVal data As Collecti
             result(i, 1) = .GCI
             result(i, 2) = .Region
             result(i, 3) = .Manager
-            result(i, 4) = GetTriggerStatus(.TriggerCount, .NonTriggerCount)
-            result(i, 5) = GetNavSourcesString(.NavSources)
-            result(i, 6) = .ClientContacts
-            result(i, 7) = .TriggerCount
-            result(i, 8) = .NonTriggerCount
-            result(i, 9) = .TriggerCount + .NonTriggerCount
-            result(i, 10) = .MissingTriggerCount
-            result(i, 11) = .MissingNonTriggerCount
-            result(i, 12) = .MissingTriggerCount + .MissingNonTriggerCount
+            result(i, 4) = .ECAIndiaAnalyst
+            result(i, 5) = GetTriggerStatus(.TriggerCount, .NonTriggerCount)
+            result(i, 6) = GetNavSourcesString(.NavSources)
+            result(i, 7) = .ClientContacts
+            result(i, 8) = .TriggerCount
+            result(i, 9) = .NonTriggerCount
+            result(i, 10) = .TriggerCount + .NonTriggerCount
+            result(i, 11) = .MissingTriggerCount
+            result(i, 12) = .MissingNonTriggerCount
+            result(i, 13) = .MissingTriggerCount + .MissingNonTriggerCount
             
-            ' Manual data columns (13-20)
+            ' Manual data columns (14-21)
             If Not IsEmpty(.ManualData) Then
                 Dim j As Long
                 For j = 1 To 8
-                    result(i, j + 12) = .ManualData(j)
+                    result(i, j + 13) = .ManualData(j)
                 Next j
             End If
         End With
@@ -230,15 +231,15 @@ Private Sub WriteIATableData(ByVal iaTable As ListObject, ByVal data As Collecti
     
     ' Write to table
     Dim targetRange As Range
-    Set targetRange = iaTable.HeaderRowRange.Offset(1, 0).Resize(data.Count, 20)
+    Set targetRange = iaTable.HeaderRowRange.Offset(1, 0).Resize(data.Count, 21)
     targetRange.Value = result
     
     ' Resize table
-    iaTable.Resize iaTable.Range.Resize(data.Count + 1, 20)
+    iaTable.Resize iaTable.Range.Resize(data.Count + 1, 21)
 End Sub
 
 '--------------------------------------------------------------------------------
-' Helper Functions
+' Table Management Functions
 '--------------------------------------------------------------------------------
 Private Function GetTableSafely(ws As Worksheet, tableName As String) As ListObject
     On Error Resume Next
@@ -263,6 +264,7 @@ Private Function InitializeIATable(ws As Worksheet) As ListObject
         Dim requiredCols As Variant
         requiredCols = Array( _
             COL_FUND_MANAGER_GCI, COL_REGION, COL_FUND_MANAGER, _
+            COL_ECA_INDIA_ANALYST, _
             COL_TRIGGER_NON_TRIGGER, COL_NAV_SOURCE, "Client Contact(s)", _
             "Trigger", "Non-Trigger", "Total Funds", "Missing Trigger", _
             "Missing Non-Trigger", "Total Missing", "Days to Report", _
@@ -279,7 +281,7 @@ Private Function InitializeIATable(ws As Worksheet) As ListObject
         ' Create table
         Set InitializeIATable = ws.ListObjects.Add( _
             SourceType:=xlSrcRange, _
-            Source:=ws.Range("A1:T1"), _
+            Source:=ws.Range("A1:U1"), _
             XlListObjectHasHeaders:=xlYes)
         InitializeIATable.Name = "IA_Table"
     End If
@@ -294,6 +296,7 @@ Private Function ValidateRequiredColumns(tbl As ListObject) As Boolean
     Dim requiredCols As Variant
     requiredCols = Array( _
         COL_FUND_MANAGER_GCI, COL_REGION, COL_FUND_MANAGER, _
+        COL_ECA_INDIA_ANALYST, _
         COL_TRIGGER_NON_TRIGGER, COL_NAV_SOURCE, COL_PRIMARY_CONTACT, _
         COL_SECONDARY_CONTACT, COL_WKS_MISSING)
     
@@ -328,6 +331,7 @@ Private Function GetColumnIndices(tbl As ListObject) As Object
     result.Add COL_FUND_MANAGER_GCI, GetColumnIndex(tbl, COL_FUND_MANAGER_GCI)
     result.Add COL_REGION, GetColumnIndex(tbl, COL_REGION)
     result.Add COL_FUND_MANAGER, GetColumnIndex(tbl, COL_FUND_MANAGER)
+    result.Add COL_ECA_INDIA_ANALYST, GetColumnIndex(tbl, COL_ECA_INDIA_ANALYST)
     result.Add COL_TRIGGER_NON_TRIGGER, GetColumnIndex(tbl, COL_TRIGGER_NON_TRIGGER)
     result.Add COL_NAV_SOURCE, GetColumnIndex(tbl, COL_NAV_SOURCE)
     result.Add COL_PRIMARY_CONTACT, GetColumnIndex(tbl, COL_PRIMARY_CONTACT)
