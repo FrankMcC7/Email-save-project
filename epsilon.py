@@ -2,8 +2,6 @@ Option Explicit
 
 Sub MacroEpsilon()
 
-    On Error GoTo ErrorHandler
-    
     '---------------------------------------------------------------------------------
     ' 1. DECLARE & INITIALIZE
     '---------------------------------------------------------------------------------
@@ -24,7 +22,7 @@ Sub MacroEpsilon()
     Dim userChoice As VbMsgBoxResult
     Dim wantManualData As Boolean
     
-    Dim previousFile As String
+    Dim previousFile As Variant  ' using Variant because GetOpenFilename can return False
     Dim numRowsPortfolio As Long, numRowsIAPrev As Long
     Dim numUniqueGCI As Long
     
@@ -37,40 +35,54 @@ Sub MacroEpsilon()
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
     Application.EnableEvents = False
-
+    
     '---------------------------------------------------------------------------------
     ' 3. SET REFERENCES TO WORKSHEETS
     '---------------------------------------------------------------------------------
     Set wsPortfolio = ThisWorkbook.Sheets("Portfolio")
     Set wsIA = ThisWorkbook.Sheets("IA_Level")
     
-    ' If "Dataset" is truly not used, you may remove the references for it.
-    '
-    ' Dim wsDataset As Worksheet, datasetTable As ListObject
-    ' Set wsDataset = ThisWorkbook.Sheets("Dataset")
-    ' Set datasetTable = wsDataset.ListObjects("DatasetTable")
-    
     '---------------------------------------------------------------------------------
-    ' 4. GET PORTFOLIOTABLE
+    ' 4. GET PORTFOLIOTABLE & DO GUARD CHECKS
     '---------------------------------------------------------------------------------
+    Set portfolioTable = Nothing
     On Error Resume Next
     Set portfolioTable = wsPortfolio.ListObjects("PortfolioTable")
-    On Error GoTo ErrorHandler
+    On Error GoTo 0
     
     If portfolioTable Is Nothing Then
-        MsgBox "Table 'PortfolioTable' not found on 'Portfolio' sheet.", vbCritical
+        MsgBox "Table 'PortfolioTable' not found on the 'Portfolio' sheet." & vbCrLf & _
+               "Please verify the table name/spelling.", vbCritical
         GoTo CleanUp
     End If
+    
+    ' Ensure PortfolioTable has data rows
+    If portfolioTable.DataBodyRange Is Nothing Then
+        MsgBox "No data found in 'PortfolioTable'. Please ensure it has at least one row.", vbExclamation
+        GoTo CleanUp
+    End If
+    
+    '----- Check that each required column exists in PortfolioTable -----
+    Call CheckColumnExists(portfolioTable, "Fund Manager GCI")
+    Call CheckColumnExists(portfolioTable, "Region")
+    Call CheckColumnExists(portfolioTable, "Fund Manager")
+    Call CheckColumnExists(portfolioTable, "Trigger/Non-Trigger")
+    Call CheckColumnExists(portfolioTable, "NAV Source")
+    Call CheckColumnExists(portfolioTable, "Primary Client Contact")
+    Call CheckColumnExists(portfolioTable, "Secondary Client Contact")
+    Call CheckColumnExists(portfolioTable, "Wks Missing")
+    '----- If the code never stopped, it means all columns exist. -----
     
     '---------------------------------------------------------------------------------
     ' 5. CHECK IF IA_TABLE EXISTS; IF NOT, CREATE IT
     '---------------------------------------------------------------------------------
+    Set iaTable = Nothing
     On Error Resume Next
     Set iaTable = wsIA.ListObjects("IA_Table")
-    On Error GoTo ErrorHandler
+    On Error GoTo 0
     
     If iaTable Is Nothing Then
-        ' Create the required header row in row 1 (columns A:T = 20 columns)
+        ' Create required header row in row 1 (columns A:T = 20 columns)
         Dim requiredCols As Variant
         requiredCols = Array( _
             "Fund Manager GCI", "Region", "Fund Manager", "Trigger/Non-Trigger", "NAV Source", _
@@ -79,37 +91,35 @@ Sub MacroEpsilon()
             "2nd Client Outreach Date", "OA Escalation Date", "NOA Escalation Date", _
             "Escalation Name", "Final Status", "Comments")
         
-        ' Place headers in Row 1
         Dim col As Long
         For col = LBound(requiredCols) To UBound(requiredCols)
             wsIA.Cells(1, col + 1).Value = requiredCols(col)
         Next col
         
-        ' Create a ListObject (table) from A1:T1 (1 row of headers, no data rows yet)
-        Set iaTable = wsIA.ListObjects.Add(SourceType:=xlSrcRange, _
-                                           Source:=wsIA.Range("A1:T1"), _
-                                           XlListObjectHasHeaders:=xlYes)
+        ' Convert A1:T1 into a table
+        Set iaTable = wsIA.ListObjects.Add( _
+                            SourceType:=xlSrcRange, _
+                            Source:=wsIA.Range("A1:T1"), _
+                            XlListObjectHasHeaders:=xlYes)
         iaTable.Name = "IA_Table"
     End If
     
-    '---------------------------------------------------------------------------------
-    ' 6. CLEAR IA_TABLE EXCEPT HEADERS
-    '---------------------------------------------------------------------------------
+    ' Clear IA_Table except headers
     If Not iaTable.DataBodyRange Is Nothing Then
         iaTable.DataBodyRange.Delete
     End If
     
     '---------------------------------------------------------------------------------
-    ' 7. PROMPT USER FOR MANUAL DATA IMPORT
+    ' 6. PROMPT USER FOR MANUAL DATA IMPORT
     '---------------------------------------------------------------------------------
     userChoice = MsgBox( _
-        "Would you like to load manual data from a previous version?", _
+        "Would you like to load manual data from a previous version of IA_Table?", _
         vbYesNo + vbQuestion, _
         "Load Manual Data?")
     wantManualData = (userChoice = vbYes)
     
     '---------------------------------------------------------------------------------
-    ' 8. INITIALIZE DICTIONARIES
+    ' 7. INITIALIZE DICTIONARIES
     '---------------------------------------------------------------------------------
     Set uniqueGCI = CreateObject("Scripting.Dictionary")
     Set regionData = CreateObject("Scripting.Dictionary")
@@ -124,41 +134,61 @@ Sub MacroEpsilon()
     Set manualColumns = CreateObject("Scripting.Dictionary")
     
     '---------------------------------------------------------------------------------
-    ' 9. IF USER WANTS MANUAL DATA, OPEN PREVIOUS WORKBOOK
+    ' 8. IF USER WANTS MANUAL DATA, OPEN PREVIOUS WORKBOOK
     '---------------------------------------------------------------------------------
     If wantManualData Then
         
         previousFile = Application.GetOpenFilename( _
             "Excel Files (*.xls*), *.xls*", , "Select the previous version of IA_Table")
         
-        If previousFile = "False" Then
+        If VarType(previousFile) = vbBoolean And previousFile = False Then
             MsgBox "No file selected. Manual columns will remain blank.", vbExclamation
             wantManualData = False
         Else
             ' Open the previous workbook
-            Set wbPrevious = Workbooks.Open(previousFile)
+            Set wbPrevious = Workbooks.Open(CStr(previousFile))
             
+            ' Attempt to set references
+            Set wsIAPrev = Nothing
             On Error Resume Next
             Set wsIAPrev = wbPrevious.Sheets("IA_Level")
-            On Error GoTo ErrorHandler
+            On Error GoTo 0
             
             If wsIAPrev Is Nothing Then
-                MsgBox "Sheet 'IA_Level' not found in the previous version. Manual columns will remain blank.", vbCritical
+                MsgBox "Sheet 'IA_Level' not found in the previous file. Manual columns will remain blank.", vbCritical
                 wbPrevious.Close SaveChanges:=False
                 wantManualData = False
             Else
+                Set iaTablePrev = Nothing
+                On Error Resume Next
                 Set iaTablePrev = wsIAPrev.ListObjects("IA_Table")
+                On Error GoTo 0
+                
                 If iaTablePrev Is Nothing Then
-                    MsgBox "IA_Table not found in the previous version. Manual columns will remain blank.", vbCritical
+                    MsgBox "IA_Table not found in 'IA_Level' of the previous file." & _
+                           vbCrLf & "Manual columns will remain blank.", vbCritical
                     wbPrevious.Close SaveChanges:=False
                     wantManualData = False
                 Else
+                    ' If IA_Table has data, read it
                     If Not iaTablePrev.DataBodyRange Is Nothing Then
                         numRowsIAPrev = iaTablePrev.DataBodyRange.Rows.Count
                         If numRowsIAPrev > 0 Then
                             manualData = iaTablePrev.DataBodyRange.Value
                             
-                            ' Loop through old IA_Table rows
+                            ' Check columns in the old IA_Table
+                            Call CheckColumnExists(iaTablePrev, "Fund Manager GCI")
+                            Call CheckColumnExists(iaTablePrev, "Days to Report")
+                            Call CheckColumnExists(iaTablePrev, "1st Client Outreach Date")
+                            Call CheckColumnExists(iaTablePrev, "2nd Client Outreach Date")
+                            Call CheckColumnExists(iaTablePrev, "OA Escalation Date")
+                            Call CheckColumnExists(iaTablePrev, "NOA Escalation Date")
+                            Call CheckColumnExists(iaTablePrev, "Escalation Name")
+                            Call CheckColumnExists(iaTablePrev, "Final Status")
+                            Call CheckColumnExists(iaTablePrev, "Comments")
+                            ' If no message popped up, columns exist
+                            
+                            ' Loop old IA_Table rows
                             For i = 1 To numRowsIAPrev
                                 Dim prevGCI As String
                                 prevGCI = manualData(i, iaTablePrev.ListColumns("Fund Manager GCI").Index)
@@ -183,19 +213,31 @@ Sub MacroEpsilon()
     End If
     
     '---------------------------------------------------------------------------------
-    '10. READ CURRENT PORTFOLIOTABLE DATA
+    ' 9. READ DATA FROM PORTFOLIOTABLE
     '---------------------------------------------------------------------------------
-    If portfolioTable.DataBodyRange Is Nothing Then
-        MsgBox "No data found in PortfolioTable.", vbExclamation
-        GoTo CleanUp
-    End If
-    
     portfolioData = portfolioTable.DataBodyRange.Value
     numRowsPortfolio = UBound(portfolioData, 1)
     
+    Dim colGCI As Long, colRegion As Long, colManager As Long
+    Dim colTriggerNonTrigger As Long, colNavSource As Long
+    Dim colPriContact As Long, colSecContact As Long, colWksMissing As Long
+    
+    ' Retrieve column indexes once for efficiency
+    colGCI = portfolioTable.ListColumns("Fund Manager GCI").Index
+    colRegion = portfolioTable.ListColumns("Region").Index
+    colManager = portfolioTable.ListColumns("Fund Manager").Index
+    colTriggerNonTrigger = portfolioTable.ListColumns("Trigger/Non-Trigger").Index
+    colNavSource = portfolioTable.ListColumns("NAV Source").Index
+    colPriContact = portfolioTable.ListColumns("Primary Client Contact").Index
+    colSecContact = portfolioTable.ListColumns("Secondary Client Contact").Index
+    colWksMissing = portfolioTable.ListColumns("Wks Missing").Index
+    
+    '---------------------------------------------------------------------------------
+    '10. LOOP THROUGH PORTFOLIOTABLE ROWS & BUILD DICTIONARIES
+    '---------------------------------------------------------------------------------
     For i = 1 To numRowsPortfolio
         
-        gci = portfolioData(i, portfolioTable.ListColumns("Fund Manager GCI").Index)
+        gci = portfolioData(i, colGCI)
         
         Dim region As String
         Dim manager As String
@@ -205,17 +247,18 @@ Sub MacroEpsilon()
         Dim secondaryContact As String
         Dim wksMissing As String
         
-        region = portfolioData(i, portfolioTable.ListColumns("Region").Index)
-        manager = portfolioData(i, portfolioTable.ListColumns("Fund Manager").Index)
-        triggerStatus = portfolioData(i, portfolioTable.ListColumns("Trigger/Non-Trigger").Index)
-        navSource = portfolioData(i, portfolioTable.ListColumns("NAV Source").Index)
-        primaryContact = portfolioData(i, portfolioTable.ListColumns("Primary Client Contact").Index)
-        secondaryContact = portfolioData(i, portfolioTable.ListColumns("Secondary Client Contact").Index)
-        wksMissing = portfolioData(i, portfolioTable.ListColumns("Wks Missing").Index)
+        region = portfolioData(i, colRegion)
+        manager = portfolioData(i, colManager)
+        triggerStatus = portfolioData(i, colTriggerNonTrigger)
+        navSource = portfolioData(i, colNavSource)
+        primaryContact = portfolioData(i, colPriContact)
+        secondaryContact = portfolioData(i, colSecContact)
+        wksMissing = portfolioData(i, colWksMissing)
         
         ' Add to dictionary if not already present
         If Not uniqueGCI.Exists(gci) Then
             uniqueGCI.Add gci, True
+            
             regionData.Add gci, region
             managerData.Add gci, manager
             triggerData.Add gci, triggerStatus
@@ -247,6 +290,11 @@ Sub MacroEpsilon()
     '11. BUILD THE FINAL ARRAY FOR IA_TABLE (20 COLUMNS)
     '---------------------------------------------------------------------------------
     numUniqueGCI = uniqueGCI.Count
+    If numUniqueGCI = 0 Then
+        MsgBox "No unique GCIs found in the PortfolioTable. Nothing to populate.", vbExclamation
+        GoTo CleanUp
+    End If
+    
     ReDim iaData(1 To numUniqueGCI, 1 To 20)
     
     j = 1
@@ -326,6 +374,7 @@ Sub MacroEpsilon()
     MsgBox "IA_Table has been created/populated successfully.", vbInformation
 
 CleanUp:
+
     '---------------------------------------------------------------------------------
     '14. RESTORE APPLICATION SETTINGS & CLOSE PREVIOUS WORKBOOK IF OPEN
     '---------------------------------------------------------------------------------
@@ -337,10 +386,23 @@ CleanUp:
         wbPrevious.Close SaveChanges:=False
     End If
     
-    Exit Sub
+End Sub
 
-ErrorHandler:
-    MsgBox "An error occurred: " & Err.Description, vbCritical
-    Resume CleanUp
+'---------------------------------------------------------------------------------------------
+' HELPER PROCEDURE: Checks if a given column name exists in a ListObject.
+' If not, displays a message and stops the code (forces debug).
+'---------------------------------------------------------------------------------------------
+Private Sub CheckColumnExists(ByVal lo As ListObject, ByVal colName As String)
+    Dim foundCol As ListColumn
     
+    ' Attempt to get the ListColumn
+    On Error Resume Next
+    Set foundCol = lo.ListColumns(colName)
+    On Error GoTo 0
+    
+    If foundCol Is Nothing Then
+        MsgBox "Column '" & colName & "' not found in table '" & lo.Name & "'" & vbCrLf & _
+               "Sheet: " & lo.Parent.Name, vbCritical
+        Stop    ' Forces code to halt here in debug mode
+    End If
 End Sub
