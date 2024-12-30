@@ -8,7 +8,6 @@ Sub MacroEpsilon()
     Dim wsPortfolio As Worksheet, wsIA As Worksheet
     Dim portfolioTable As ListObject, iaTable As ListObject
     
-    ' Only one declaration of wbPrevious here:
     Dim wbPrevious As Workbook, wsIAPrev As Worksheet
     Dim iaTablePrev As ListObject
     
@@ -50,14 +49,12 @@ Sub MacroEpsilon()
     '---------------------------------------------------------------------------------
     ' 4. GET PORTFOLIOTABLE & DO GUARD CHECKS
     '---------------------------------------------------------------------------------
-    Dim msg As String
-    
     On Error Resume Next
     Set portfolioTable = wsPortfolio.ListObjects("PortfolioTable")
     On Error GoTo 0
     
     If portfolioTable Is Nothing Then
-        MsgBox "Table 'PortfolioTable' not found on the 'Portfolio' sheet." & vbCrLf & _
+        MsgBox "Table 'PortfolioTable' not found on 'Portfolio' sheet." & vbCrLf & _
                "Please verify the table name/spelling.", vbCritical
         GoTo CleanUp
     End If
@@ -138,11 +135,14 @@ Sub MacroEpsilon()
     Set clientContactData = CreateObject("Scripting.Dictionary")
     Set manualColumns = CreateObject("Scripting.Dictionary")
     
+    Dim wbPrevious As Workbook
+    
     '---------------------------------------------------------------------------------
     ' 8. IF USER WANTS MANUAL DATA, OPEN PREVIOUS WORKBOOK
     '---------------------------------------------------------------------------------
     If wantManualData Then
         
+        Dim previousFile As Variant
         previousFile = Application.GetOpenFilename( _
             "Excel Files (*.xls*), *.xls*", , "Select the previous version of IA_Table")
         
@@ -274,7 +274,7 @@ Sub MacroEpsilon()
                     primaryContact & IIf(primaryContact <> "" And secondaryContact <> "", ";", "") & secondaryContact
             End If
             
-            ' Record this NAV Source if not blank
+            ' If the NAV Source is not blank, add it to the dictionary
             If navSrc <> "" Then
                 If Not navSourceData(fundGCI).Exists(navSrc) Then
                     navSourceData(fundGCI).Add navSrc, True
@@ -333,11 +333,12 @@ Sub MacroEpsilon()
             iaData(j, 4) = ""
         End If
         
-        ' (5) NAV Source: if no NAV sources, use "[No NAV Source]" else join with ";"
+        ' (5) NAV Source: ignore blanks, only list actual NAV Sources
         Dim arrNav() As String
         arrNav = navSourceData(gci).Keys  ' All distinct NAV Source values
+        
         If navSourceData(gci).Count = 0 Then
-            ' No NAV Source found for this GCI
+            ' No NAV Sources were recorded for this GCI
             iaData(j, 5) = "[No NAV Source]"
         Else
             iaData(j, 5) = Join(arrNav, ";")
