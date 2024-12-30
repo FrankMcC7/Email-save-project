@@ -8,6 +8,7 @@ Sub MacroEpsilon()
     Dim wsPortfolio As Worksheet, wsIA As Worksheet
     Dim portfolioTable As ListObject, iaTable As ListObject
     
+    ' Only one declaration of wbPrevious here:
     Dim wbPrevious As Workbook, wsIAPrev As Worksheet
     Dim iaTablePrev As ListObject
     
@@ -137,9 +138,6 @@ Sub MacroEpsilon()
     Set clientContactData = CreateObject("Scripting.Dictionary")
     Set manualColumns = CreateObject("Scripting.Dictionary")
     
-    ' We'll define these here for use below
-    Dim wbPrevious As Workbook
-    
     '---------------------------------------------------------------------------------
     ' 8. IF USER WANTS MANUAL DATA, OPEN PREVIOUS WORKBOOK
     '---------------------------------------------------------------------------------
@@ -154,7 +152,6 @@ Sub MacroEpsilon()
         Else
             Set wbPrevious = Workbooks.Open(CStr(previousFile))
             
-            Dim wsIAPrev As Worksheet
             On Error Resume Next
             Set wsIAPrev = wbPrevious.Sheets("IA_Level")
             On Error GoTo 0
@@ -326,8 +323,6 @@ Sub MacroEpsilon()
         iaData(j, 3) = managerData(gci)
         
         ' (4) Trigger/Non-Trigger:
-        ' "Both" if GCI has > 0 Trigger & > 0 Non-Trigger,
-        ' otherwise "Trigger" or "Non-Trigger" or ""
         If triggerCountData(gci) > 0 And nonTriggerCountData(gci) > 0 Then
             iaData(j, 4) = "Both"
         ElseIf triggerCountData(gci) > 0 Then
@@ -338,10 +333,15 @@ Sub MacroEpsilon()
             iaData(j, 4) = ""
         End If
         
-        ' (5) NAV Source (all distinct NAVs joined with ";")
+        ' (5) NAV Source: if no NAV sources, use "[No NAV Source]" else join with ";"
         Dim arrNav() As String
-        arrNav = navSourceData(gci).Keys
-        iaData(j, 5) = Join(arrNav, ";")
+        arrNav = navSourceData(gci).Keys  ' All distinct NAV Source values
+        If navSourceData(gci).Count = 0 Then
+            ' No NAV Source found for this GCI
+            iaData(j, 5) = "[No NAV Source]"
+        Else
+            iaData(j, 5) = Join(arrNav, ";")
+        End If
         
         ' (6) Client Contact(s)
         iaData(j, 6) = clientContactData(gci)
