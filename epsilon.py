@@ -25,6 +25,9 @@ Private Type IALevelData
     ManualData As Variant
 End Type
 
+'--------------------------------------------------------------------------------
+' Main Procedure
+'--------------------------------------------------------------------------------
 Public Sub MacroEpsilon()
     On Error GoTo ErrorHandler
     
@@ -49,7 +52,8 @@ Public Sub MacroEpsilon()
     If Not ValidateRequiredColumns(portfolioTable) Then GoTo CleanUp
     
     ' Process manual data import if user wants it
-    Dim manualData As Object: Set manualData = New Collection
+    Dim manualData As Collection
+    Set manualData = New Collection
     Dim wantManualData As Boolean
     wantManualData = GetUserManualDataPreference()
     
@@ -81,81 +85,58 @@ ErrorHandler:
     Resume CleanUp
 End Sub
 
-Private Function GetTableSafely(ws As Worksheet, tableName As String) As ListObject
-    On Error Resume Next
-    Set GetTableSafely = ws.ListObjects(tableName)
-    On Error GoTo 0
+'--------------------------------------------------------------------------------
+' Core Processing Functions
+'--------------------------------------------------------------------------------
+Private Function ProcessPortfolioData(ByVal portfolioTable As ListObject, _
+                                    ByVal manualData As Collection, _
+                                    ByVal hasManualData As Boolean) As Collection
+    Dim result As New Collection
     
-    If GetTableSafely Is Nothing Then
-        MsgBox "Table '" & tableName & "' not found on sheet '" & ws.Name & "'", vbCritical
-    ElseIf GetTableSafely.DataBodyRange Is Nothing Then
-        MsgBox "No data found in '" & tableName & "'", vbExclamation
-        Set GetTableSafely = Nothing
-    End If
-End Function
-
-Private Function InitializeIATable(ws As Worksheet) As ListObject
-    On Error Resume Next
-    Set InitializeIATable = ws.ListObjects("IA_Table")
-    On Error GoTo 0
+    ' Get portfolio data
+    Dim data As Variant
+    data = portfolioTable.DataBodyRange.Value
     
-    If InitializeIATable Is Nothing Then
-        ' Define required columns for IA table
-        Dim requiredCols As Variant
-        requiredCols = Array( _
-            COL_FUND_MANAGER_GCI, COL_REGION, COL_FUND_MANAGER, _
-            COL_TRIGGER_NON_TRIGGER, COL_NAV_SOURCE, "Client Contact(s)", _
-            "Trigger", "Non-Trigger", "Total Funds", "Missing Trigger", _
-            "Missing Non-Trigger", "Total Missing", "Days to Report", _
-            "1st Client Outreach Date", "2nd Client Outreach Date", _
-            "OA Escalation Date", "NOA Escalation Date", "Escalation Name", _
-            "Final Status", "Comments")
+    ' Get column indices
+    Dim colIndices As Object
+    Set colIndices = GetColumnIndices(portfolioTable)
+    
+    ' Process each row
+    Dim i As Long
+    Dim iaData As IALevelData
+    
+    For i = 1 To UBound(data, 1)
+        Dim gci As String
+        gci = SafeString(data(i, colIndices(COL_FUND_MANAGER_GCI)))
         
-        ' Create headers
-        Dim col As Long
-        For col = LBound(requiredCols) To UBound(requiredCols)
-            ws.Cells(1, col + 1).Value = requiredCols(col)
-        Next col
-        
-        ' Create table
-        Set InitializeIATable = ws.ListObjects.Add( _
-            SourceType:=xlSrcRange, _
-            Source:=ws.Range("A1:T1"), _
-            XlListObjectHasHeaders:=xlYes)
-        InitializeIATable.Name = "IA_Table"
-    End If
-    
-    ' Clear existing data
-    If Not InitializeIATable.DataBodyRange Is Nothing Then
-        InitializeIATable.DataBodyRange.Delete
-    End If
-End Function
-
-Private Function ValidateRequiredColumns(tbl As ListObject) As Boolean
-    Dim requiredCols As Variant
-    requiredCols = Array( _
-        COL_FUND_MANAGER_GCI, COL_REGION, COL_FUND_MANAGER, _
-        COL_TRIGGER_NON_TRIGGER, COL_NAV_SOURCE, COL_PRIMARY_CONTACT, _
-        COL_SECONDARY_CONTACT, COL_WKS_MISSING)
-    
-    Dim col As Variant
-    For Each col In requiredCols
-        If GetColumnIndex(tbl, CStr(col)) = 0 Then
-            MsgBox "Required column '" & col & "' missing in " & tbl.Name, vbCritical
-            ValidateRequiredColumns = False
-            Exit Function
+        If Len(gci) > 0 Then
+            ' Get or create IALevelData for this GCI
+            If Not CollectionHasKey(result, gci) Then
+                InitializeIALevelData iaData, gci, _
+                    data(i, colIndices(COL_REGION)), _
+                    data(i, colIndices(COL_FUND_MANAGER))
+                    
+                If hasManualData Then
+                    iaData.ManualData = GetManualDataFromCollection(manualData, gci)
+                End If
+                
+                result.Add iaData, gci
+            End If
+            
+            ' Update counts and data
+            UpdateIALevelData result.Item(gci), _
+                data(i, colIndices(COL_TRIGGER_NON_TRIGGER)), _
+                SafeString(data(i, colIndices(COL_NAV_SOURCE))), _
+                SafeString(data(i, colIndices(COL_PRIMARY_CONTACT))), _
+                SafeString(data(i, colIndices(COL_SECONDARY_CONTACT))), _
+                SafeString(data(i, colIndices(COL_WKS_MISSING)))
         End If
-    Next col
+    Next i
     
-    ValidateRequiredColumns = True
+    Set ProcessPortfolioData = result
 End Function
 
-Private Function GetUserManualDataPreference() As Boolean
-    GetUserManualDataPreference = (MsgBox("Load manual data from previous version?", _
-        vbYesNo + vbQuestion, "Manual Data Import") = vbYes)
-End Function
-
-Private Function ImportManualData(ByRef manualData As Object) As Boolean
+Private Function ImportManualData(ByRef manualData As Collection) As Boolean
     Dim previousFile As String
     previousFile = Application.GetOpenFilename( _
         "Excel Files (*.xls*), *.xls*", , _
@@ -209,60 +190,14 @@ Private Function ImportManualData(ByRef manualData As Object) As Boolean
             For i = LBound(manualIndices) To UBound(manualIndices)
                 manualVals(i + 1) = data(r, manualIndices(i))
             Next i
-            manualData.Add manualVals, gci
+            If Not CollectionHasKey(manualData, gci) Then
+                manualData.Add manualVals, gci
+            End If
         End If
     Next r
     
     wbPrev.Close False
     ImportManualData = True
-End Function
-
-Private Function ProcessPortfolioData(ByVal portfolioTable As ListObject, _
-                                    ByVal manualData As Object, _
-                                    ByVal hasManualData As Boolean) As Collection
-    Dim result As New Collection
-    
-    ' Get portfolio data
-    Dim data As Variant
-    data = portfolioTable.DataBodyRange.Value
-    
-    ' Get column indices
-    Dim colIndices As Variant
-    colIndices = GetColumnIndices(portfolioTable)
-    
-    ' Process each row
-    Dim i As Long
-    Dim iaData As IALevelData
-    
-    For i = 1 To UBound(data, 1)
-        Dim gci As String
-        gci = SafeString(data(i, colIndices(COL_FUND_MANAGER_GCI)))
-        
-        If Len(gci) > 0 Then
-            ' Get or create IALevelData for this GCI
-            If Not CollectionHasKey(result, gci) Then
-                InitializeIALevelData iaData, gci, _
-                    data(i, colIndices(COL_REGION)), _
-                    data(i, colIndices(COL_FUND_MANAGER))
-                    
-                If hasManualData Then
-                    iaData.ManualData = GetManualDataForGCI(manualData, gci)
-                End If
-                
-                result.Add iaData, gci
-            End If
-            
-            ' Update counts and data
-            UpdateIALevelData result.Item(gci), _
-                data(i, colIndices(COL_TRIGGER_NON_TRIGGER)), _
-                SafeString(data(i, colIndices(COL_NAV_SOURCE))), _
-                SafeString(data(i, colIndices(COL_PRIMARY_CONTACT))), _
-                SafeString(data(i, colIndices(COL_SECONDARY_CONTACT))), _
-                SafeString(data(i, colIndices(COL_WKS_MISSING)))
-        End If
-    Next i
-    
-    Set ProcessPortfolioData = result
 End Function
 
 Private Sub WriteIATableData(ByVal iaTable As ListObject, ByVal data As Collection)
@@ -306,13 +241,109 @@ Private Sub WriteIATableData(ByVal iaTable As ListObject, ByVal data As Collecti
     
     ' Resize table
     iaTable.Resize iaTable.Range.Resize(data.Count + 1, 20)
+End Sub
+
+'--------------------------------------------------------------------------------
+' Table Management Functions
+'--------------------------------------------------------------------------------
+Private Function GetTableSafely(ws As Worksheet, tableName As String) As ListObject
+    On Error Resume Next
+    Set GetTableSafely = ws.ListObjects(tableName)
+    On Error GoTo 0
+    
+    If GetTableSafely Is Nothing Then
+        MsgBox "Table '" & tableName & "' not found on sheet '" & ws.Name & "'", vbCritical
+    ElseIf GetTableSafely.DataBodyRange Is Nothing Then
+        MsgBox "No data found in '" & tableName & "'", vbExclamation
+        Set GetTableSafely = Nothing
+    End If
 End Function
 
-' Helper functions
+Private Function InitializeIATable(ws As Worksheet) As ListObject
+    On Error Resume Next
+    Set InitializeIATable = ws.ListObjects("IA_Table")
+    On Error GoTo 0
+    
+    If InitializeIATable Is Nothing Then
+        ' Define required columns for IA table
+        Dim requiredCols As Variant
+        requiredCols = Array( _
+            COL_FUND_MANAGER_GCI, COL_REGION, COL_FUND_MANAGER, _
+            COL_TRIGGER_NON_TRIGGER, COL_NAV_SOURCE, "Client Contact(s)", _
+            "Trigger", "Non-Trigger", "Total Funds", "Missing Trigger", _
+            "Missing Non-Trigger", "Total Missing", "Days to Report", _
+            "1st Client Outreach Date", "2nd Client Outreach Date", _
+            "OA Escalation Date", "NOA Escalation Date", "Escalation Name", _
+            "Final Status", "Comments")
+        
+        ' Create headers
+        Dim col As Long
+        For col = LBound(requiredCols) To UBound(requiredCols)
+            ws.Cells(1, col + 1).Value = requiredCols(col)
+        Next col
+        
+        ' Create table
+        Set InitializeIATable = ws.ListObjects.Add( _
+            SourceType:=xlSrcRange, _
+            Source:=ws.Range("A1:T1"), _
+            XlListObjectHasHeaders:=xlYes)
+        InitializeIATable.Name = "IA_Table"
+    End If
+    
+    ' Clear existing data
+    If Not InitializeIATable.DataBodyRange Is Nothing Then
+        InitializeIATable.DataBodyRange.Delete
+    End If
+End Function
+
+'--------------------------------------------------------------------------------
+' Helper Functions
+'--------------------------------------------------------------------------------
+Private Function ValidateRequiredColumns(tbl As ListObject) As Boolean
+    Dim requiredCols As Variant
+    requiredCols = Array( _
+        COL_FUND_MANAGER_GCI, COL_REGION, COL_FUND_MANAGER, _
+        COL_TRIGGER_NON_TRIGGER, COL_NAV_SOURCE, COL_PRIMARY_CONTACT, _
+        COL_SECONDARY_CONTACT, COL_WKS_MISSING)
+    
+    Dim col As Variant
+    For Each col In requiredCols
+        If GetColumnIndex(tbl, CStr(col)) = 0 Then
+            MsgBox "Required column '" & col & "' missing in " & tbl.Name, vbCritical
+            ValidateRequiredColumns = False
+            Exit Function
+        End If
+    Next col
+    
+    ValidateRequiredColumns = True
+End Function
+
+Private Function GetUserManualDataPreference() As Boolean
+    GetUserManualDataPreference = (MsgBox("Load manual data from previous version?", _
+        vbYesNo + vbQuestion, "Manual Data Import") = vbYes)
+End Function
+
 Private Function GetColumnIndex(tbl As ListObject, colName As String) As Long
     On Error Resume Next
     GetColumnIndex = tbl.ListColumns(colName).Index
     On Error GoTo 0
+End Function
+
+Private Function GetColumnIndices(tbl As ListObject) As Object
+    Dim result As Object
+    Set result = CreateObject("Scripting.Dictionary")
+    
+    ' Add required column indices to dictionary
+    result.Add COL_FUND_MANAGER_GCI, GetColumnIndex(tbl, COL_FUND_MANAGER_GCI)
+    result.Add COL_REGION, GetColumnIndex(tbl, COL_REGION)
+    result.Add COL_FUND_MANAGER, GetColumnIndex(tbl, COL_FUND_MANAGER)
+    result.Add COL_TRIGGER_NON_TRIGGER, GetColumnIndex(tbl, COL_TRIGGER_NON_TRIGGER)
+    result.Add COL_NAV_SOURCE, GetColumnIndex(tbl, COL_NAV_SOURCE)
+    result.Add COL_PRIMARY_CONTACT, GetColumnIndex(tbl, COL_PRIMARY_CONTACT)
+    result.Add COL_SECONDARY_CONTACT, GetColumnIndex(tbl, COL_SECONDARY_CONTACT)
+    result.Add COL_WKS_MISSING, GetColumnIndex(tbl, COL_WKS_MISSING)
+    
+    Set GetColumnIndices = result
 End Function
 
 Private Function SafeString(val As Variant) As String
@@ -328,4 +359,110 @@ Private Function CollectionHasKey(col As Collection, key As String) As Boolean
     col.Item key
     CollectionHasKey = (Err.Number = 0)
     On Error GoTo 0
+End Function
+
+Private Function CollectionHasValue(col As Collection, value As String) As Boolean
+    Dim item As Variant
+    For Each item In col
+        If item = value Then
+            CollectionHasValue = True
+            Exit Function
+        End If
+    Next item
+    CollectionHasValue = False
+End Function
+
+Private Function GetManualDataFromCollection(ByVal manualData As Collection, ByVal gci As String) As Variant
+    On Error Resume Next
+    GetManualDataFromCollection = manualData.Item(gci)
+    On Error GoTo 0
+End Function
+
+Private Sub InitializeIALevelData(ByRef iaData As IALevelData, _
+                                ByVal gci As String, _
+                                ByVal region As String, _
+                                ByVal manager As String)
+    With iaData
+        .GCI = gci
+        .Region = region
+        .Manager = manager
+        .TriggerStatus = ""
+        Set .NavSources = New Collection
+        .ClientContacts = ""
+        .TriggerCount = 0
+        .NonTriggerCount = 0
+        .MissingTriggerCount = 0
+        .MissingNonTriggerCount = 0
+        .ManualData = Empty
+    End With
+End Sub
+
+Private Sub UpdateIALevelData(ByRef iaData As IALevelData, _
+                            ByVal triggerStatus As String, _
+                            ByVal navSource As String, _
+                            ByVal primaryContact As String, _
+                            ByVal secondaryContact As String, _
+                            ByVal weeksMissing As String)
+    With iaData
+        ' Update trigger counts
+        If triggerStatus = "Trigger" Then
+            .TriggerCount = .TriggerCount + 1
+            If Len(weeksMissing) > 0 Then
+                .MissingTriggerCount = .MissingTriggerCount + 1
+            End If
+        ElseIf triggerStatus = "Non-Trigger" Then
+            .NonTriggerCount = .NonTriggerCount + 1
+            If Len(weeksMissing) > 0 Then
+                .MissingNonTriggerCount = .MissingNonTriggerCount + 1
+            End If
+        End If
+        
+        ' Update NAV Sources
+        If Len(navSource) > 0 Then
+            If Not CollectionHasValue(.NavSources, navSource) Then
+                .NavSources.Add navSource
+            End If
+        End If
+        
+        ' Update Client Contacts
+        Dim contacts As String
+        contacts = ""
+        If Len(primaryContact) > 0 Then contacts = primaryContact
+        If Len(secondaryContact) > 0 Then
+            If Len(contacts) > 0 Then
+                contacts = contacts & ";" & secondaryContact
+            Else
+                contacts = secondaryContact
+            End If
+        End If
+        If Len(contacts) > 0 Then .ClientContacts = contacts
+    End With
+End Sub
+
+Private Function GetTriggerStatus(triggerCount As Long, nonTriggerCount As Long) As String
+    If triggerCount > 0 And nonTriggerCount > 0 Then
+        GetTriggerStatus = "Both"
+    ElseIf triggerCount > 0 Then
+        GetTriggerStatus = "Trigger"
+    ElseIf nonTriggerCount > 0 Then
+        GetTriggerStatus = "Non-Trigger"
+    Else
+        GetTriggerStatus = ""
+    End If
+End Function
+
+Private Function GetNavSourcesString(navSources As Collection) As String
+    If navSources.Count = 0 Then
+        GetNavSourcesString = "[No NAV Source]"
+        Exit Function
+    End If
+    
+    Dim result As String
+    Dim src As Variant
+    For Each src In navSources
+        If Len(result) > 0 Then result = result & ";"
+        result = result & src
+    Next src
+    
+    GetNavSourcesString = result
 End Function
