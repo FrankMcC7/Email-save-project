@@ -1,59 +1,7 @@
-
-' ModTypes.bas
-Option Explicit
-
-' Public type definition for use across modules
-Public Type IALevelData
-    GCI As String
-    Region As String
-    Manager As String
-    TriggerStatus As String
-    NavSources As Collection
-    ClientContacts As String
-    TriggerCount As Long
-    NonTriggerCount As Long
-    MissingTriggerCount As Long
-    MissingNonTriggerCount As Long
-    ManualData As Variant
-End Type
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ' ModCoffee.bas
 Option Explicit
 
-' Constants for column names to improve maintainability
+' Constants for column names
 Private Const COL_FUND_MANAGER_GCI As String = "Fund Manager GCI"
 Private Const COL_REGION As String = "Region"
 Private Const COL_FUND_MANAGER As String = "Fund Manager"
@@ -90,7 +38,8 @@ Public Sub MacroEpsilon()
     If Not ValidateRequiredColumns(portfolioTable) Then GoTo CleanUp
     
     ' Process manual data import if user wants it
-    Dim manualData As New Collection
+    Dim manualData As Collection
+    Set manualData = New Collection
     Dim wantManualData As Boolean
     wantManualData = GetUserManualDataPreference()
     
@@ -149,19 +98,27 @@ Private Function ProcessPortfolioData(ByVal portfolioTable As ListObject, _
         If Len(gci) > 0 Then
             ' Get or create IALevelData for this GCI
             If Not CollectionHasKey(ProcessPortfolioData, gci) Then
-                InitializeIALevelData iaData, gci, _
-                    data(i, colIndices(COL_REGION)), _
-                    data(i, colIndices(COL_FUND_MANAGER))
-                    
+                Set iaData = New IALevelData
+                
+                ' Initialize data
+                With iaData
+                    .GCI = gci
+                    .Region = data(i, colIndices(COL_REGION))
+                    .Manager = data(i, colIndices(COL_FUND_MANAGER))
+                End With
+                
                 If hasManualData Then
                     iaData.ManualData = GetManualDataFromCollection(manualData, gci)
                 End If
                 
-                ProcessPortfolioData.Add iaData, gci
+                ProcessPortfolioData.Add Item:=iaData, Key:=gci
             End If
             
             ' Update counts and data
-            UpdateIALevelData ProcessPortfolioData.Item(gci), _
+            Dim currentData As IALevelData
+            Set currentData = ProcessPortfolioData.Item(gci)
+            
+            UpdateIALevelData currentData, _
                 data(i, colIndices(COL_TRIGGER_NON_TRIGGER)), _
                 SafeString(data(i, colIndices(COL_NAV_SOURCE))), _
                 SafeString(data(i, colIndices(COL_PRIMARY_CONTACT))), _
@@ -226,7 +183,7 @@ Private Function ImportManualData(ByRef manualData As Collection) As Boolean
                 manualVals(i + 1) = data(r, manualIndices(i))
             Next i
             If Not CollectionHasKey(manualData, gci) Then
-                manualData.Add manualVals, gci
+                manualData.Add Item:=manualVals, Key:=gci
             End If
         End If
     Next r
@@ -236,6 +193,8 @@ Private Function ImportManualData(ByRef manualData As Collection) As Boolean
 End Function
 
 Private Sub WriteIATableData(ByVal iaTable As ListObject, ByVal data As Collection)
+    If data.Count = 0 Then Exit Sub
+    
     ' Prepare array for writing
     Dim result() As Variant
     ReDim result(1 To data.Count, 1 To 20)
@@ -279,7 +238,7 @@ Private Sub WriteIATableData(ByVal iaTable As ListObject, ByVal data As Collecti
 End Sub
 
 '--------------------------------------------------------------------------------
-' Table Management Functions
+' Helper Functions
 '--------------------------------------------------------------------------------
 Private Function GetTableSafely(ws As Worksheet, tableName As String) As ListObject
     On Error Resume Next
@@ -331,9 +290,6 @@ Private Function InitializeIATable(ws As Worksheet) As ListObject
     End If
 End Function
 
-'--------------------------------------------------------------------------------
-' Helper Functions
-'--------------------------------------------------------------------------------
 Private Function ValidateRequiredColumns(tbl As ListObject) As Boolean
     Dim requiredCols As Variant
     requiredCols = Array( _
@@ -412,25 +368,6 @@ Private Function GetManualDataFromCollection(ByVal manualData As Collection, ByV
     GetManualDataFromCollection = manualData.Item(gci)
     On Error GoTo 0
 End Function
-
-Private Sub InitializeIALevelData(ByRef iaData As IALevelData, _
-                                ByVal gci As String, _
-                                ByVal region As String, _
-                                ByVal manager As String)
-    With iaData
-        .GCI = gci
-        .Region = region
-        .Manager = manager
-        .TriggerStatus = ""
-        Set .NavSources = New Collection
-        .ClientContacts = ""
-        .TriggerCount = 0
-        .NonTriggerCount = 0
-        .MissingTriggerCount = 0
-        .MissingNonTriggerCount = 0
-        .ManualData = Empty
-    End With
-End Sub
 
 Private Sub UpdateIALevelData(ByRef iaData As IALevelData, _
                             ByVal triggerStatus As String, _
