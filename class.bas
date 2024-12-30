@@ -1,18 +1,10 @@
-VERSION 1.0 CLASS
-BEGIN
-  MultiUse = -1  'True
-END
-Attribute VB_Name = "IALevelData"
-Attribute VB_GlobalNameSpace = False
-Attribute VB_Creatable = False
-Attribute VB_PredeclaredId = False
-Attribute VB_Exposed = False
 Option Explicit
 
 ' Private member variables
 Private m_GCI As String
 Private m_Region As String
 Private m_Manager As String
+Private m_ECAIndiaAnalyst As String
 Private m_TriggerStatus As String
 Private m_NavSources As Collection
 Private m_ClientContacts As String
@@ -55,6 +47,14 @@ End Property
 
 Public Property Let Manager(value As String)
     m_Manager = value
+End Property
+
+Public Property Get ECAIndiaAnalyst() As String
+    ECAIndiaAnalyst = m_ECAIndiaAnalyst
+End Property
+
+Public Property Let ECAIndiaAnalyst(value As String)
+    m_ECAIndiaAnalyst = value
 End Property
 
 Public Property Get TriggerStatus() As String
