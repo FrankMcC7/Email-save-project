@@ -47,7 +47,6 @@ Sub MacroEpsilon()
     '---------------------------------------------------------------------------------
     Dim msg As String
     
-    Set portfolioTable = Nothing
     On Error Resume Next
     Set portfolioTable = wsPortfolio.ListObjects("PortfolioTable")
     On Error GoTo 0
@@ -73,12 +72,11 @@ Sub MacroEpsilon()
     Call CheckColumnExists(portfolioTable, "Primary Client Contact")
     Call CheckColumnExists(portfolioTable, "Secondary Client Contact")
     Call CheckColumnExists(portfolioTable, "Wks Missing")
-    '----- If the code never stopped, it means all columns exist. -----
+    '----- If the code never stopped, columns exist. -----
     
     '---------------------------------------------------------------------------------
     ' 5. CHECK IF IA_TABLE EXISTS; IF NOT, CREATE IT
     '---------------------------------------------------------------------------------
-    Set iaTable = Nothing
     On Error Resume Next
     Set iaTable = wsIA.ListObjects("IA_Table")
     On Error GoTo 0
@@ -150,8 +148,7 @@ Sub MacroEpsilon()
             ' Open the previous workbook
             Set wbPrevious = Workbooks.Open(CStr(previousFile))
             
-            ' Attempt to set references
-            Set wsIAPrev = Nothing
+            Dim wsIAPrev As Worksheet
             On Error Resume Next
             Set wsIAPrev = wbPrevious.Sheets("IA_Level")
             On Error GoTo 0
@@ -301,6 +298,8 @@ Sub MacroEpsilon()
     ReDim iaData(1 To numUniqueGCI, 1 To 20)
     
     j = 1
+    Dim manualValues As Variant
+    
     For Each gci In uniqueGCI.Keys
         
         ' 1  - Fund Manager GCI
@@ -340,7 +339,6 @@ Sub MacroEpsilon()
         iaData(j, 12) = iaData(j, 10) + iaData(j, 11)' "Total Missing"
         
         If wantManualData And manualColumns.Exists(gci) Then
-            Dim manualValues As Variant
             manualValues = manualColumns(gci)
             
             iaData(j, 13) = manualValues(0)   ' Days to Report
@@ -352,7 +350,7 @@ Sub MacroEpsilon()
             iaData(j, 19) = manualValues(6)   ' Final Status
             iaData(j, 20) = manualValues(7)   ' Comments
         Else
-            ' Leave manual columns blank if we are NOT loading from previous workbook
+            ' Leave manual columns blank if not loading from previous
             iaData(j, 13) = ""
             iaData(j, 14) = ""
             iaData(j, 15) = ""
@@ -367,9 +365,45 @@ Sub MacroEpsilon()
     Next gci
     
     '---------------------------------------------------------------------------------
-    '12. WRITE FINAL ARRAY INTO IA_TABLE
+    '12. WRITE FINAL ARRAY INTO IA_TABLE - AVOID "DATA BODY RANGE" ERRORS
     '---------------------------------------------------------------------------------
-    iaTable.DataBodyRange.Resize(numUniqueGCI, 20).Value = iaData
+    Dim targetRange As Range
+    
+    If iaTable.DataBodyRange Is Nothing Then
+        ' The table has only headers and no data rows:
+        
+        ' Start below the header row
+        Dim startCell As Range
+        Set startCell = iaTable.HeaderRowRange.Offset(1, 0).Cells(1, 1)
+        
+        ' Define the full range for numUniqueGCI rows by 20 columns
+        Set targetRange = startCell.Resize(numUniqueGCI, 20)
+        
+        ' Write the array
+        targetRange.Value = iaData
+        
+        ' Resize the entire table to include the new rows
+        iaTable.Resize iaTable.Range.Resize(numUniqueGCI + 1, 20)
+        
+    Else
+        ' Table already has some rows (or we just cleared them)
+        
+        Dim existingBody As Range
+        Set existingBody = iaTable.DataBodyRange
+        
+        ' The top-left cell of the data body
+        Dim firstDataCell As Range
+        Set firstDataCell = existingBody.Cells(1, 1)
+        
+        ' We'll re-dimension this to exactly numUniqueGCI rows x 20 columns
+        Set targetRange = firstDataCell.Resize(numUniqueGCI, 20)
+        
+        ' Write the array
+        targetRange.Value = iaData
+        
+        ' Now resize the entire table to match
+        iaTable.Resize iaTable.HeaderRowRange.Resize(numUniqueGCI + 1, 20)
+    End If
     
     '---------------------------------------------------------------------------------
     '13. COMPLETION MESSAGE
@@ -393,7 +427,7 @@ End Sub
 
 '---------------------------------------------------------------------------------------------
 ' HELPER PROCEDURE: Checks if a given column name exists in a ListObject (table).
-' If not, displays a message and stops the code so you can see the issue.
+' If not, displays a message and stops the code so you can see the issue in debug.
 '---------------------------------------------------------------------------------------------
 Private Sub CheckColumnExists(ByVal lo As ListObject, ByVal colName As String)
     Dim foundCol As ListColumn
