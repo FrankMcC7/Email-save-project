@@ -1,3 +1,136 @@
+' === IALevelData Class Module (Save as IALevelData.cls) ===
+Option Explicit
+
+' Private member variables
+Private m_GCI As String
+Private m_Region As String
+Private m_Manager As String
+Private m_ECAIndiaAnalyst As String
+Private m_TriggerStatus As String
+Private m_NavSources As Collection
+Private m_ClientContacts As String
+Private m_TriggerCount As Long
+Private m_NonTriggerCount As Long
+Private m_MissingTriggerCount As Long
+Private m_MissingNonTriggerCount As Long
+Private m_ManualData As Variant
+
+' Initialize the class
+Private Sub Class_Initialize()
+    Set m_NavSources = New Collection
+End Sub
+
+' Clean up
+Private Sub Class_Terminate()
+    Set m_NavSources = Nothing
+End Sub
+
+' Property Get/Let methods
+Public Property Get GCI() As String
+    GCI = m_GCI
+End Property
+
+Public Property Let GCI(value As String)
+    m_GCI = value
+End Property
+
+Public Property Get Region() As String
+    Region = m_Region
+End Property
+
+Public Property Let Region(value As String)
+    m_Region = value
+End Property
+
+Public Property Get Manager() As String
+    Manager = m_Manager
+End Property
+
+Public Property Let Manager(value As String)
+    m_Manager = value
+End Property
+
+Public Property Get ECAIndiaAnalyst() As String
+    ECAIndiaAnalyst = m_ECAIndiaAnalyst
+End Property
+
+Public Property Let ECAIndiaAnalyst(value As String)
+    m_ECAIndiaAnalyst = value
+End Property
+
+Public Property Get TriggerStatus() As String
+    TriggerStatus = m_TriggerStatus
+End Property
+
+Public Property Let TriggerStatus(value As String)
+    m_TriggerStatus = value
+End Property
+
+Public Property Get NavSources() As Collection
+    Set NavSources = m_NavSources
+End Property
+
+Public Property Set NavSources(value As Collection)
+    Set m_NavSources = value
+End Property
+
+Public Property Get ClientContacts() As String
+    ClientContacts = m_ClientContacts
+End Property
+
+Public Property Let ClientContacts(value As String)
+    m_ClientContacts = value
+End Property
+
+Public Property Get TriggerCount() As Long
+    TriggerCount = m_TriggerCount
+End Property
+
+Public Property Let TriggerCount(value As Long)
+    m_TriggerCount = value
+End Property
+
+Public Property Get NonTriggerCount() As Long
+    NonTriggerCount = m_NonTriggerCount
+End Property
+
+Public Property Let NonTriggerCount(value As Long)
+    m_NonTriggerCount = value
+End Property
+
+Public Property Get MissingTriggerCount() As Long
+    MissingTriggerCount = m_MissingTriggerCount
+End Property
+
+Public Property Let MissingTriggerCount(value As Long)
+    m_MissingTriggerCount = value
+End Property
+
+Public Property Get MissingNonTriggerCount() As Long
+    MissingNonTriggerCount = m_MissingNonTriggerCount
+End Property
+
+Public Property Let MissingNonTriggerCount(value As Long)
+    m_MissingNonTriggerCount = value
+End Property
+
+Public Property Get ManualData() As Variant
+    If IsObject(m_ManualData) Then
+        Set ManualData = m_ManualData
+    Else
+        ManualData = m_ManualData
+    End If
+End Property
+
+Public Property Let ManualData(value As Variant)
+    m_ManualData = value
+End Property
+
+Public Property Set ManualData(value As Variant)
+    Set m_ManualData = value
+End Property
+
+' === Main Module (Save as EpsilonModule.bas) ===
 Option Explicit
 
 ' Constants for column names
@@ -22,6 +155,7 @@ Public Sub MacroEpsilon()
         .ScreenUpdating = False
         .Calculation = xlCalculationManual
         .EnableEvents = False
+        .DisplayAlerts = False
     End With
     
     ' Initialize core worksheet references
@@ -75,6 +209,7 @@ CleanUp:
         .ScreenUpdating = True
         .Calculation = xlCalculationAutomatic
         .EnableEvents = True
+        .DisplayAlerts = True
     End With
     Exit Sub
 
@@ -154,7 +289,7 @@ Private Function ImportManualData(ByRef manualData As Collection) As Boolean
     End If
     
     Dim wbPrev As Workbook
-    Set wbPrev = Workbooks.Open(previousFile)
+    Set wbPrev = Workbooks.Open(previousFile, ReadOnly:=True)
     
     On Error Resume Next
     Dim wsIAPrev As Worksheet
@@ -170,36 +305,36 @@ Private Function ImportManualData(ByRef manualData As Collection) As Boolean
     Dim iaPrevTable As ListObject
     Set iaPrevTable = wsIAPrev.ListObjects("IA_Table")
     
-    If iaPrevTable Is Nothing Or iaPrevTable.DataBodyRange Is Nothing Then
-        MsgBox "No data found in previous IA_Table.", vbExclamation
+    If iaPrevTable Is Nothing Then
+        MsgBox "IA_Table not found in previous version.", vbCritical
         wbPrev.Close False
         ImportManualData = False
         Exit Function
     End If
     
-    ' Import manual data
+    ' Import data
     Dim data As Variant
     data = iaPrevTable.DataBodyRange.Value
     
-    Dim manualIndices As Variant
-    manualIndices = Array(14, 15, 16, 17, 18, 19, 20, 21) ' Manual column indices
+    Dim manualCols As Variant
+    manualCols = Array(14, 15, 16, 17, 18, 19, 20, 21)  ' Manual column indices
     
-    Dim r As Long
-    For r = 1 To UBound(data, 1)
+    Dim i As Long
+    For i = 1 To UBound(data, 1)
         Dim gci As String
-        gci = data(r, GetColumnIndex(iaPrevTable, COL_FUND_MANAGER_GCI))
+        gci = data(i, GetColumnIndex(iaPrevTable, COL_FUND_MANAGER_GCI))
         
         If Len(gci) > 0 Then
             Dim manualVals(1 To 8) As Variant
-            Dim i As Long
-            For i = LBound(manualIndices) To UBound(manualIndices)
-                manualVals(i + 1) = data(r, manualIndices(i))
-            Next i
+            Dim j As Long
+            For j = LBound(manualCols) To UBound(manualCols)
+                manualVals(j + 1) = data(i, manualCols(j))
+            Next j
             If Not CollectionHasKey(manualData, gci) Then
                 manualData.Add Item:=manualVals, Key:=gci
             End If
         End If
-    Next r
+    Next i
     
     wbPrev.Close False
     ImportManualData = True
@@ -247,10 +382,12 @@ Private Sub WriteIATableData(ByVal iaTable As ListObject, ByVal data As Collecti
         i = i + 1
     Next item
     
+    ' Add required rows
+    If data.Count > 1 Then
+        iaTable.ListRows.Add Amount:=data.Count - 1
+    End If
+    
     ' Write data
-    iaTable.Range.Resize(data.Count + 1).Value = Application.Transpose( _
-        Application.Transpose(iaTable.HeaderRowRange.Value)) ' Copy headers
-    iaTable.ListRows.Add ' Add rows
     iaTable.DataBodyRange.Value = result
 End Sub
 
@@ -278,30 +415,17 @@ Private Function InitializeIATable(ws As Worksheet) As ListObject
     End If
     On Error GoTo 0
     
-    ' Define column headers
+    ' Define headers
     Dim headers As Variant
     headers = Array( _
-        COL_FUND_MANAGER_GCI, _
-        COL_REGION, _
-        COL_FUND_MANAGER, _
-        COL_ECA_INDIA_ANALYST, _
-        COL_TRIGGER_NON_TRIGGER, _
-        COL_NAV_SOURCE, _
-        "Client Contact(s)", _
-        "Trigger", _
-        "Non-Trigger", _
-        "Total Funds", _
-        "Missing Trigger", _
-        "Missing Non-Trigger", _
-        "Total Missing", _
-        "Days to Report", _
-        "1st Client Outreach Date", _
-        "2nd Client Outreach Date", _
-        "OA Escalation Date", _
-        "NOA Escalation Date", _
-        "Escalation Name", _
-        "Final Status", _
-        "Comments")
+        COL_FUND_MANAGER_GCI, COL_REGION, COL_FUND_MANAGER, COL_ECA_INDIA_ANALYST, _
+        COL_TRIGGER_NON_TRIGGER, COL_NAV_SOURCE, "Client Contact(s)", _
+        "Trigger", "Non-Trigger", "Total Funds", _
+        "Missing Trigger", "Missing Non-Trigger", "Total Missing", _
+        "Days to Report", "1st Client Outreach Date", "2nd Client Outreach Date", _
+        "OA Escalation Date", "NOA Escalation Date", "Escalation Name", _
+        "Final Status", "Comments" _
+    )
     
     ' Write headers
     Dim col As Long
@@ -315,10 +439,9 @@ Private Function InitializeIATable(ws As Worksheet) As ListObject
         Source:=ws.Range(ws.Cells(1, 1), ws.Cells(1, UBound(headers) + 1)), _
         XlListObjectHasHeaders:=xlYes)
     
-    ' Set table name
     InitializeIATable.Name = "IA_Table"
     
-    ' Apply basic formatting
+    ' Basic formatting
     With InitializeIATable.HeaderRowRange
         .Font.Bold = True
         .Interior.Color = RGB(217, 225, 242)
@@ -328,8 +451,7 @@ End Function
 Private Function ValidateRequiredColumns(tbl As ListObject) As Boolean
     Dim requiredCols As Variant
     requiredCols = Array( _
-        COL_FUND_MANAGER_GCI, COL_REGION, COL_FUND_MANAGER, _
-        COL_ECA_INDIA_ANALYST, _
+        COL_FUND_MANAGER_GCI, COL_REGION, COL_FUND_MANAGER, COL_ECA_INDIA_ANALYST, _
         COL_TRIGGER_NON_TRIGGER, COL_NAV_SOURCE, COL_PRIMARY_CONTACT, _
         COL_SECONDARY_CONTACT, COL_WKS_MISSING)
     
@@ -347,17 +469,14 @@ End Function
 
 Private Sub FormatIATable(tbl As ListObject)
     With tbl
-        ' Apply table style
         .TableStyle = "TableStyleMedium2"
         
-        ' Format header row
         With .HeaderRowRange
             .Font.Bold = True
             .Interior.Color = RGB(217, 225, 242)
             .HorizontalAlignment = xlCenter
         End With
         
-        ' AutoFit columns
         .Range.Columns.AutoFit
         
         ' Format date columns
@@ -388,6 +507,13 @@ Private Sub FormatIATable(tbl As ListObject)
             .ListColumns(CStr(colName)).DataBodyRange.HorizontalAlignment = xlCenter
             On Error GoTo 0
         Next colName
+        
+        ' Apply borders
+        With .Range.Borders
+            .LineStyle = xlContinuous
+            .Weight = xlThin
+            .ColorIndex = xlAutomatic
+        End With
     End With
 End Sub
 
@@ -396,6 +522,9 @@ Private Function GetUserManualDataPreference() As Boolean
         vbYesNo + vbQuestion, "Manual Data Import") = vbYes)
 End Function
 
+'--------------------------------------------------------------------------------
+' Utility Functions
+'--------------------------------------------------------------------------------
 Private Function GetColumnIndex(tbl As ListObject, colName As String) As Long
     On Error Resume Next
     GetColumnIndex = tbl.ListColumns(colName).Index
@@ -421,7 +550,7 @@ Private Function GetColumnIndices(tbl As ListObject) As Object
 End Function
 
 Private Function SafeString(val As Variant) As String
-    If IsError(val) Then
+    If IsError(val) Or IsEmpty(val) Or IsNull(val) Then
         SafeString = ""
     Else
         SafeString = CStr(val)
@@ -435,30 +564,13 @@ Private Function CollectionHasKey(col As Collection, key As String) As Boolean
     On Error GoTo 0
 End Function
 
-Private Function CollectionHasValue(col As Collection, value As String) As Boolean
-    Dim item As Variant
-    For Each item In col
-        If item = value Then
-            CollectionHasValue = True
-            Exit Function
-        End If
-    Next item
-    CollectionHasValue = False
-End Function
-
-Private Function GetManualDataFromCollection(ByVal manualData As Collection, ByVal gci As String) As Variant
-    On Error Resume Next
-    GetManualDataFromCollection = manualData.Item(gci)
-    On Error GoTo 0
-End Function
-
-Private Sub UpdateIALevelData(ByRef iaData As IALevelData, _
+Private Sub UpdateIALevelData(ByRef data As IALevelData, _
                             ByVal triggerStatus As String, _
                             ByVal navSource As String, _
                             ByVal primaryContact As String, _
                             ByVal secondaryContact As String, _
                             ByVal weeksMissing As String)
-    With iaData
+    With data
         ' Update trigger counts
         If triggerStatus = "Trigger" Then
             .TriggerCount = .TriggerCount + 1
@@ -474,25 +586,52 @@ Private Sub UpdateIALevelData(ByRef iaData As IALevelData, _
         
         ' Update NAV Sources
         If Len(navSource) > 0 Then
-            If Not CollectionHasValue(.NavSources, navSource) Then
+            If Not CollectionContains(.NavSources, navSource) Then
                 .NavSources.Add navSource
             End If
         End If
         
         ' Update Client Contacts
-        Dim contacts As String
-        contacts = ""
-        If Len(primaryContact) > 0 Then contacts = primaryContact
-        If Len(secondaryContact) > 0 Then
-            If Len(contacts) > 0 Then
-                contacts = contacts & ";" & secondaryContact
+        If Len(primaryContact) > 0 Or Len(secondaryContact) > 0 Then
+            Dim contacts As String
+            contacts = ""
+            
+            If Len(primaryContact) > 0 Then contacts = primaryContact
+            If Len(secondaryContact) > 0 Then
+                If Len(contacts) > 0 Then
+                    contacts = contacts & "; " & secondaryContact
+                Else
+                    contacts = secondaryContact
+                End If
+            End If
+            
+            If Len(.ClientContacts) > 0 Then
+                If InStr(1, .ClientContacts, contacts, vbTextCompare) = 0 Then
+                    .ClientContacts = .ClientContacts & "; " & contacts
+                End If
             Else
-                contacts = secondaryContact
+                .ClientContacts = contacts
             End If
         End If
-        If Len(contacts) > 0 Then .ClientContacts = contacts
     End With
 End Sub
+
+Private Function CollectionContains(col As Collection, item As String) As Boolean
+    Dim var As Variant
+    For Each var In col
+        If var = item Then
+            CollectionContains = True
+            Exit Function
+        End If
+    Next var
+    CollectionContains = False
+End Function
+
+Private Function GetManualDataFromCollection(ByVal manualData As Collection, ByVal gci As String) As Variant
+    On Error Resume Next
+    GetManualDataFromCollection = manualData.Item(gci)
+    On Error GoTo 0
+End Function
 
 Private Function GetTriggerStatus(triggerCount As Long, nonTriggerCount As Long) As String
     If triggerCount > 0 And nonTriggerCount > 0 Then
@@ -515,8 +654,10 @@ Private Function GetNavSourcesString(navSources As Collection) As String
     Dim result As String
     Dim src As Variant
     For Each src In navSources
-        If Len(result) > 0 Then result = result & ";"
-        result = result & src
+        If Len(result) > 0 Then
+            result = result & "; "
+        End If
+        result = result & CStr(src)
     Next src
     
     GetNavSourcesString = result
