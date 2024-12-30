@@ -22,7 +22,7 @@ Sub MacroEpsilon()
     Dim userChoice As VbMsgBoxResult
     Dim wantManualData As Boolean
     
-    Dim previousFile As Variant  ' using Variant because GetOpenFilename can return False
+    Dim previousFile As Variant  ' for GetOpenFilename (can return False)
     Dim numRowsPortfolio As Long, numRowsIAPrev As Long
     Dim numUniqueGCI As Long
     
@@ -45,6 +45,8 @@ Sub MacroEpsilon()
     '---------------------------------------------------------------------------------
     ' 4. GET PORTFOLIOTABLE & DO GUARD CHECKS
     '---------------------------------------------------------------------------------
+    Dim msg As String
+    
     Set portfolioTable = Nothing
     On Error Resume Next
     Set portfolioTable = wsPortfolio.ListObjects("PortfolioTable")
@@ -170,7 +172,6 @@ Sub MacroEpsilon()
                     wbPrevious.Close SaveChanges:=False
                     wantManualData = False
                 Else
-                    ' If IA_Table has data, read it
                     If Not iaTablePrev.DataBodyRange Is Nothing Then
                         numRowsIAPrev = iaTablePrev.DataBodyRange.Rows.Count
                         If numRowsIAPrev > 0 Then
@@ -237,7 +238,7 @@ Sub MacroEpsilon()
     '---------------------------------------------------------------------------------
     For i = 1 To numRowsPortfolio
         
-        gci = portfolioData(i, colGCI)
+        gci = SafeStringValue(portfolioData(i, colGCI))
         
         Dim region As String
         Dim manager As String
@@ -247,16 +248,16 @@ Sub MacroEpsilon()
         Dim secondaryContact As String
         Dim wksMissing As String
         
-        region = portfolioData(i, colRegion)
-        manager = portfolioData(i, colManager)
-        triggerStatus = portfolioData(i, colTriggerNonTrigger)
-        navSource = portfolioData(i, colNavSource)
-        primaryContact = portfolioData(i, colPriContact)
-        secondaryContact = portfolioData(i, colSecContact)
-        wksMissing = portfolioData(i, colWksMissing)
+        region = SafeStringValue(portfolioData(i, colRegion))
+        manager = SafeStringValue(portfolioData(i, colManager))
+        triggerStatus = SafeStringValue(portfolioData(i, colTriggerNonTrigger))
+        navSource = SafeStringValue(portfolioData(i, colNavSource))
+        primaryContact = SafeStringValue(portfolioData(i, colPriContact))
+        secondaryContact = SafeStringValue(portfolioData(i, colSecContact))
+        wksMissing = SafeStringValue(portfolioData(i, colWksMissing))
         
         ' Add to dictionary if not already present
-        If Not uniqueGCI.Exists(gci) Then
+        If Not uniqueGCI.Exists(gci) And gci <> "" Then
             uniqueGCI.Add gci, True
             
             regionData.Add gci, region
@@ -272,16 +273,18 @@ Sub MacroEpsilon()
             missingNonTriggerData.Add gci, 0
         End If
         
-        ' Tally counts
-        If triggerStatus = "Trigger" Then
-            triggerCountData(gci) = triggerCountData(gci) + 1
-            If wksMissing <> "" Then
-                missingTriggerData(gci) = missingTriggerData(gci) + 1
-            End If
-        ElseIf triggerStatus = "Non-Trigger" Then
-            nonTriggerCountData(gci) = nonTriggerCountData(gci) + 1
-            If wksMissing <> "" Then
-                missingNonTriggerData(gci) = missingNonTriggerData(gci) + 1
+        ' Tally counts only if gci is not blank
+        If gci <> "" Then
+            If triggerStatus = "Trigger" Then
+                triggerCountData(gci) = triggerCountData(gci) + 1
+                If wksMissing <> "" Then
+                    missingTriggerData(gci) = missingTriggerData(gci) + 1
+                End If
+            ElseIf triggerStatus = "Non-Trigger" Then
+                nonTriggerCountData(gci) = nonTriggerCountData(gci) + 1
+                If wksMissing <> "" Then
+                    missingNonTriggerData(gci) = missingNonTriggerData(gci) + 1
+                End If
             End If
         End If
     Next i
@@ -389,13 +392,11 @@ CleanUp:
 End Sub
 
 '---------------------------------------------------------------------------------------------
-' HELPER PROCEDURE: Checks if a given column name exists in a ListObject.
-' If not, displays a message and stops the code (forces debug).
+' HELPER PROCEDURE: Checks if a given column name exists in a ListObject (table).
+' If not, displays a message and stops the code so you can see the issue.
 '---------------------------------------------------------------------------------------------
 Private Sub CheckColumnExists(ByVal lo As ListObject, ByVal colName As String)
     Dim foundCol As ListColumn
-    
-    ' Attempt to get the ListColumn
     On Error Resume Next
     Set foundCol = lo.ListColumns(colName)
     On Error GoTo 0
@@ -406,3 +407,14 @@ Private Sub CheckColumnExists(ByVal lo As ListObject, ByVal colName As String)
         Stop    ' Forces code to halt here in debug mode
     End If
 End Sub
+
+'---------------------------------------------------------------------------------------------
+' HELPER FUNCTION: Safely converts a cell value to string, replacing #N/A (or any error) with ""
+'---------------------------------------------------------------------------------------------
+Private Function SafeStringValue(cellValue As Variant) As String
+    If IsError(cellValue) Then
+        SafeStringValue = ""  ' Replace any Excel error (#N/A, #VALUE!, etc.) with blank
+    Else
+        SafeStringValue = CStr(cellValue)
+    End If
+End Function
