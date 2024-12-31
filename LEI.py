@@ -5,10 +5,7 @@ import os
 
 def search_lei(fund_name):
     base_url = "https://api.gleif.org/api/v1/fuzzycompletions"
-    params = {
-        "field": "entity.legalName",
-        "q": fund_name
-    }
+    params = {"field": "entity.legalName", "q": fund_name}
     
     try:
         time.sleep(1)
@@ -18,43 +15,33 @@ def search_lei(fund_name):
             if data and 'data' in data and len(data['data']) > 0:
                 return data['data'][0]['lei']
             return "No LEI found"
-    except Exception as e:
+    except:
         return "Error: API request failed"
 
-def process_excel_file(input_file):
+def process_excel_file(filename):
     try:
-        print("Reading file...")
-        df = pd.read_excel(input_file)
+        df = pd.read_excel(filename)
+        fund_name_column = 'Fund Name'
         
-        fund_name_column = 'Fund Name'  # Change this to match your column name
-        
-        if fund_name_column not in df.columns:
-            print("Column not found:", fund_name_column)
-            return
-            
         if 'LEI' not in df.columns:
             df['LEI'] = ''
         
-        total = len(df)
-        for i, row in df.iterrows():
-            print("Processing {} of {}".format(i+1, total))
+        for i in range(len(df)):
+            fund_name = df.iloc[i][fund_name_column]
+            print("Processing %d of %d" % (i+1, len(df)))
+            lei = search_lei(fund_name)
+            df.iloc[i]['LEI'] = lei
             
-            if pd.isna(df.loc[i, 'LEI']) or df.loc[i, 'LEI'] == '':
-                lei = search_lei(row[fund_name_column])
-                df.loc[i, 'LEI'] = lei
-                
-                if (i + 1) % 50 == 0:
-                    df.to_excel("updated_" + input_file, index=False)
-                    print("Progress saved")
+            if (i + 1) % 50 == 0:
+                df.to_excel("updated_LEI.xlsx", index=False)
+                print("Saved progress")
         
-        df.to_excel("updated_" + input_file, index=False)
-        print("Complete - saved to: updated_" + input_file)
+        df.to_excel("updated_LEI.xlsx", index=False)
+        print("Complete")
         
     except Exception as e:
-        print("Error:", str(e))
+        print("Error: %s" % str(e))
 
 if __name__ == "__main__":
-    input_file = "LEI.xlsx"
-    print("Starting process")
-    print("Working directory:", os.getcwd())
-    process_excel_file(input_file)
+    print("Starting")
+    process_excel_file("LEI.xlsx")
