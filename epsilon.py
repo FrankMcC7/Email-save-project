@@ -382,10 +382,14 @@ Private Sub WriteIATableData(ByVal iaTable As ListObject, ByVal data As Collecti
         i = i + 1
     Next item
     
-    ' Add required rows
-    If data.Count > 1 Then
-        iaTable.ListRows.Add Amount:=data.Count - 1
-    End If
+    ' Add required rows one at a time
+    Dim rowsNeeded As Long
+    rowsNeeded = data.Count - 1  ' Subtract 1 because table starts with one row
+    
+    Dim k As Long
+    For k = 1 To rowsNeeded
+        iaTable.ListRows.Add
+    Next k
     
     ' Write data
     iaTable.DataBodyRange.Value = result
@@ -443,6 +447,8 @@ Private Function InitializeIATable(ws As Worksheet) As ListObject
     
     ' Basic formatting
     With InitializeIATable.HeaderRowRange
+        .Font.Name = "Calibri"
+        .Font.Size = 11
         .Font.Bold = True
         .Interior.Color = RGB(217, 225, 242)
     End With
@@ -469,15 +475,47 @@ End Function
 
 Private Sub FormatIATable(tbl As ListObject)
     With tbl
+        ' Reset table style first
         .TableStyle = "TableStyleMedium2"
         
-        With .HeaderRowRange
-            .Font.Bold = True
-            .Interior.Color = RGB(217, 225, 242)
-            .HorizontalAlignment = xlCenter
+        ' Format entire table font
+        With .Range
+            .Font.Name = "Calibri"
+            .Font.Size = 11
+            .Font.Bold = False
         End With
         
+        ' Format header row
+        With .HeaderRowRange
+            .Font.Bold = True
+            .Font.Size = 11
+            .Interior.Color = RGB(217, 225, 242)  ' Light blue background
+            .HorizontalAlignment = xlCenter
+            ' Ensure text wrapping for headers
+            .WrapText = True
+            ' Set row height for better readability
+            .RowHeight = 30
+        End With
+        
+        ' Format data body
+        If Not .DataBodyRange Is Nothing Then
+            With .DataBodyRange
+                .Font.Bold = False
+                .Interior.ColorIndex = xlNone
+                .VerticalAlignment = xlCenter
+            End With
+        End If
+        
+        ' AutoFit columns with a max width
         .Range.Columns.AutoFit
+        Dim col As ListColumn
+        For Each col In .ListColumns
+            If col.Range.ColumnWidth > 30 Then
+                col.Range.ColumnWidth = 30
+            ElseIf col.Range.ColumnWidth < 8 Then
+                col.Range.ColumnWidth = 8
+            End If
+        Next col
         
         ' Format date columns
         Dim dateColumns As Variant
@@ -487,7 +525,10 @@ Private Sub FormatIATable(tbl As ListObject)
         Dim colName As Variant
         For Each colName In dateColumns
             On Error Resume Next
-            .ListColumns(CStr(colName)).DataBodyRange.NumberFormat = "dd-mmm-yyyy"
+            With .ListColumns(CStr(colName)).DataBodyRange
+                .NumberFormat = "dd-mmm-yyyy"
+                .HorizontalAlignment = xlCenter
+            End With
             On Error GoTo 0
         Next colName
         
@@ -512,8 +553,18 @@ Private Sub FormatIATable(tbl As ListObject)
         With .Range.Borders
             .LineStyle = xlContinuous
             .Weight = xlThin
-            .ColorIndex = xlAutomatic
+            .Color = RGB(180, 180, 180)  ' Light gray borders
         End With
+        
+        ' Set alternating row colors
+        .ShowTableStyleRowStripes = True
+        .ShowTableStyleColumnStripes = False
+        
+        ' Ensure frozen panes
+        .Range.Worksheet.Activate
+        ActiveWindow.FreezePanes = False
+        .HeaderRowRange.Rows(1).Select
+        ActiveWindow.FreezePanes = True
     End With
 End Sub
 
@@ -592,27 +643,7 @@ Private Sub UpdateIALevelData(ByRef data As IALevelData, _
         End If
         
         ' Update Client Contacts
-        If Len(primaryContact) > 0 Or Len(secondaryContact) > 0 Then
-            Dim contacts As String
-            contacts = ""
-            
-            If Len(primaryContact) > 0 Then contacts = primaryContact
-            If Len(secondaryContact) > 0 Then
-                If Len(contacts) > 0 Then
-                    contacts = contacts & "; " & secondaryContact
-                Else
-                    contacts = secondaryContact
-                End If
-            End If
-            
-            If Len(.ClientContacts) > 0 Then
-                If InStr(1, .ClientContacts, contacts, vbTextCompare) = 0 Then
-                    .ClientContacts = .ClientContacts & "; " & contacts
-                End If
-            Else
-                .ClientContacts = contacts
-            End If
-        End If
+        UpdateClientContacts data, primaryContact, secondaryContact
     End With
 End Sub
 
@@ -627,11 +658,38 @@ Private Function CollectionContains(col As Collection, item As String) As Boolea
     CollectionContains = False
 End Function
 
-Private Function GetManualDataFromCollection(ByVal manualData As Collection, ByVal gci As String) As Variant
-    On Error Resume Next
-    GetManualDataFromCollection = manualData.Item(gci)
-    On Error GoTo 0
-End Function
+Private Sub UpdateClientContacts(ByRef data As IALevelData, _
+                               ByVal primary As String, _
+                               ByVal secondary As String)
+    Dim contacts As String
+    contacts = ""
+    
+    ' Add primary contact if present
+    If Len(primary) > 0 Then
+        contacts = primary
+    End If
+    
+    ' Add secondary contact if present
+    If Len(secondary) > 0 Then
+        If Len(contacts) > 0 Then
+            contacts = contacts & "; " & secondary
+        Else
+            contacts = secondary
+        End If
+    End If
+    
+    ' Update if we have contacts
+    If Len(contacts) > 0 Then
+        If Len(data.ClientContacts) > 0 Then
+            ' Check if contacts are already present
+            If InStr(1, data.ClientContacts, contacts, vbTextCompare) = 0 Then
+                data.ClientContacts = data.ClientContacts & "; " & contacts
+            End If
+        Else
+            data.ClientContacts = contacts
+        End If
+    End If
+End Sub
 
 Private Function GetTriggerStatus(triggerCount As Long, nonTriggerCount As Long) As String
     If triggerCount > 0 And nonTriggerCount > 0 Then
