@@ -1,108 +1,159 @@
-#!/usr/bin/env python3
-import xml.etree.ElementTree as ET
 import pandas as pd
+import requests
+import time
+from datetime import datetime
+import logging
 import os
 
-# Adjust this to your GLEIF XML file
-XML_FILE = "GLEIF_LEI_RECORDS.xml"
-# Adjust this to your Excel file
-EXCEL_FILE = "LEI.xlsx"
-# Output file
-OUTPUT_EXCEL = "updated_LEI.xlsx"
+# Set up logging with more detailed format
+logging.basicConfig(
+    filename=f'lei_lookup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
-# Namespace in GLEIF XML (verify by inspecting the root element or your file's schema)
-NS = {"lei": "http://www.gleif.org/data/schema/leidata/2016"}
+def validate_file_exists(filename):
+    """Check if the Excel file exists"""
+    if not os.path.exists(filename):
+        raise FileNotFoundError(f"Excel file '{filename}' not found in current directory")
 
-def parse_gleif_xml_to_dict(xml_file):
-    """
-    Parse the entire GLEIF XML file in memory, returning a dictionary:
-      { legalName.lower(): LEI }
-    for exact matching of names.
-    """
-    print(f"Parsing XML file: {xml_file} (this could take a few minutes)...")
+def validate_excel_structure(df, fund_name_column):
+    """Validate Excel file structure"""
+    if fund_name_column not in df.columns:
+        raise ValueError(f"Column '{fund_name_column}' not found in Excel file. Available columns are: {', '.join(df.columns)}")
     
-    # We can either do a one-shot parse with ET.parse() or iterparse().
-    # ET.parse() loads the entire tree at once, which might be memory-intensive but simpler to write.
-    # If the file is truly huge, iterparse() is sometimes better. 
-    # However, since we're storing everything in memory eventually, 
-    # parse() won't be much different in total memory usage.
+    # Check for empty dataframe
+    if df.empty:
+        raise ValueError("Excel file is empty")
 
-    tree = ET.parse(xml_file)
-    root = tree.getroot()
-    
-    # We'll store legalName -> LEI in a dictionary
-    lei_dict = {}
-
-    # Find all <LEIRecord> elements. 
-    # The GLEIF XML typically has many such elements under the root.
-    # Check the correct tag name in your file's structure.
-    for record_elem in root.findall(".//lei:LEIRecord", NS):
-        lei_elem = record_elem.find(".//lei:LEI", NS)
-        name_elem = record_elem.find(".//lei:Entity/lei:LegalName", NS)
+def search_lei(fund_name):
+    """Search for LEI using GLEIF API with improved error handling"""
+    if not isinstance(fund_name, str):
+        return "Invalid fund name format"
+    if pd.isna(fund_name) or fund_name.strip() == "":
+        return "Empty fund name"
         
-        if lei_elem is not None and name_elem is not None:
-            lei_code = lei_elem.text.strip()
-            legal_name = name_elem.text.strip()
-            lei_dict[legal_name.lower()] = lei_code
+    base_url = "https://api.gleif.org/api/v1/fuzzycompletions"
+    params = {
+        "field": "entity.legalName",
+        "q": fund_name.strip()
+    }
+    
+    try:
+        # Rate limiting
+        time.sleep(1)
+        
+        response = requests.get(base_url, params=params, timeout=10)  # Added timeout
+        response.raise_for_status()  # Will raise an exception for 4XX/5XX status codes
+        
+        data = response.json()
+        if data and 'data' in data and len(data['data']) > 0:
+            return data['data'][0]['lei']
+        return "No LEI found"
+        
+    except requests.exceptions.Timeout:
+        error_msg = f"Timeout while searching for {fund_name}"
+        logging.error(error_msg)
+        return "Error: API timeout"
+    except requests.exceptions.RequestException as e:
+        error_msg = f"API error while searching for {fund_name}: {str(e)}"
+        logging.error(error_msg)
+        return "Error: API request failed"
+    except Exception as e:
+        error_msg = f"Unexpected error while searching for {fund_name}: {str(e)}"
+        logging.error(error_msg)
+        return f"Error: {str(e)}"
 
-    print(f"Parsed {len(lei_dict)} LEI records into dictionary.")
-    return lei_dict
-
+def process_excel_file(input_file, sheet_name=0):
+    """Process Excel file and add LEIs with improved error handling"""
+    try:
+        # Validate file exists
+        validate_file_exists(input_file)
+        
+        # Read the Excel file
+        print("Reading file:", input_file)
+        df = pd.read_excel(input_file, sheet_name=sheet_name)
+        
+        # Update this to match your column name
+        fund_name_column = 'Fund Name'  
+        
+        # Validate Excel structure
+        validate_excel_structure(df, fund_name_column)
+        
+        # Create new column for LEIs if it doesn't exist
+        if 'LEI' not in df.columns:
+            df['LEI'] = ''
+        
+        total_funds = len(df)
+        print(f"Processing {total_funds} funds...")
+        logging.info(f"Starting processing of {total_funds} funds")
+        
+        successful_lookups = 0
+        failed_lookups = 0
+        
+        # Process each fund
+        for idx, row in df.iterrows():
+            try:
+                fund_name = row[fund_name_column]
+                if pd.isna(df.loc[idx, 'LEI']) or df.loc[idx, 'LEI'] == '':
+                    print(f"Processing {idx + 1}/{total_funds}: {fund_name}")
+                    lei = search_lei(fund_name)
+                    df.loc[idx, 'LEI'] = lei
+                    
+                    if "Error" in lei or lei == "No LEI found":
+                        failed_lookups += 1
+                    else:
+                        successful_lookups += 1
+                    
+                    # Save progress every 50 records
+                    if (idx + 1) % 50 == 0:
+                        output_file = "updated_" + input_file
+                        df.to_excel(output_file, index=False)
+                        print(f"Progress saved at record {idx + 1}")
+                        logging.info(f"Progress saved at record {idx + 1}")
+            
+            except Exception as e:
+                error_msg = f"Error processing row {idx + 1} ({fund_name}): {str(e)}"
+                logging.error(error_msg)
+                print(error_msg)
+                failed_lookups += 1
+                continue
+        
+        # Save final results
+        output_file = "updated_" + input_file
+        df.to_excel(output_file, index=False)
+        
+        # Log summary
+        summary = f"""
+        Processing complete:
+        - Total funds processed: {total_funds}
+        - Successful lookups: {successful_lookups}
+        - Failed lookups: {failed_lookups}
+        - Results saved to: {output_file}
+        """
+        print(summary)
+        logging.info(summary)
+        
+    except Exception as e:
+        error_msg = f"Error processing file: {str(e)}"
+        logging.error(error_msg)
+        print(error_msg)
+        raise
 
 def main():
-    # 1. Parse the GLEIF XML into a dictionary in memory
-    if not os.path.exists(XML_FILE):
-        print(f"XML file '{XML_FILE}' not found.")
-        return
-    lei_dict = parse_gleif_xml_to_dict(XML_FILE)
-    
-    # 2. Read your Excel file with fund names
-    if not os.path.exists(EXCEL_FILE):
-        print(f"Excel file '{EXCEL_FILE}' not found.")
-        return
-    
-    print(f"Reading Excel file: {EXCEL_FILE}")
-    df = pd.read_excel(EXCEL_FILE)
-
-    # 3. Check if a "Fund Name" column exists
-    fund_name_column = "Fund Name"
-    if fund_name_column not in df.columns:
-        print(f"Error: Column '{fund_name_column}' not found in Excel.")
-        return
-
-    # 4. Create or ensure 'LEI' column is present
-    if "LEI" not in df.columns:
-        df["LEI"] = ""
-    
-    # 5. For each row, do an exact dictionary lookup
-    total_rows = len(df)
-    print(f"Processing {total_rows} rows...")
-    
-    matched_count = 0
-    missing_count = 0
-    
-    for idx, row in df.iterrows():
-        fund_name = row[fund_name_column]
-        # Basic check if fund_name is valid
-        if pd.isna(fund_name) or not isinstance(fund_name, str) or fund_name.strip() == "":
-            df.at[idx, "LEI"] = "Empty fund name"
-            missing_count += 1
-            continue
+    try:
+        # Replace with your Excel file name
+        input_file = "LEI.xlsx"
         
-        # Exact match in dictionary
-        lei_result = lei_dict.get(fund_name.lower(), "No LEI found")
-        df.at[idx, "LEI"] = lei_result
-        if lei_result == "No LEI found":
-            missing_count += 1
-        else:
-            matched_count += 1
-    
-    # 6. Save the updated Excel
-    df.to_excel(OUTPUT_EXCEL, index=False)
-    print(f"\nLookups complete!")
-    print(f"Matched: {matched_count}, Not found: {missing_count}")
-    print(f"Results saved to '{OUTPUT_EXCEL}'")
-
+        print("Starting LEI lookup process...")
+        print("Current working directory:", os.getcwd())
+        
+        process_excel_file(input_file)
+        
+    except Exception as e:
+        error_msg = f"Program failed: {str(e)}"
+        print(error_msg)
+        logging.error(error_msg)
 
 if __name__ == "__main__":
     main()
