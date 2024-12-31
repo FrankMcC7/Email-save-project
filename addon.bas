@@ -1,7 +1,5 @@
-Dim rowsNeeded As Long
-    rowsNeeded = data.Count - 1  ' Subtract 1 because table starts with one row
-    
-    Dim k As Long
-    For k = 1 To rowsNeeded
-        iaTable.ListRows.Add
-    Next k
+Private Function GetManualDataFromCollection(ByVal manualData As Collection, ByVal gci As String) As Variant
+    On Error Resume Next
+    GetManualDataFromCollection = manualData.Item(gci)
+    On Error GoTo 0
+End Function
