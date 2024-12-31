@@ -1,203 +1,108 @@
 #!/usr/bin/env python3
+import xml.etree.ElementTree as ET
 import pandas as pd
-import requests
-import time
-from datetime import datetime
-import logging
 import os
 
-# Set up logging
-logging.basicConfig(
-    filename=f'lei_lookup_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+# Adjust this to your GLEIF XML file
+XML_FILE = "GLEIF_LEI_RECORDS.xml"
+# Adjust this to your Excel file
+EXCEL_FILE = "LEI.xlsx"
+# Output file
+OUTPUT_EXCEL = "updated_LEI.xlsx"
 
-# GraphQL query with minimal filtering: 
-# - We remove "entityStatus_in: [ACTIVE]" 
-# - We keep "includes: { legalName: $searchString }" to find matches by legal name.
-GLEIF_GRAPHQL_QUERY = """
-query ($searchString: String!) {
-  leiRecords(
-    filter: {
-      includes: {
-        entity: {
-          legalName: $searchString
-        }
-      }
-    }
-    first: 5
-  ) {
-    totalCount
-    records {
-      lei
-      entity {
-        legalName
-      }
-    }
-  }
-}
-"""
+# Namespace in GLEIF XML (verify by inspecting the root element or your file's schema)
+NS = {"lei": "http://www.gleif.org/data/schema/leidata/2016"}
 
-def validate_file_exists(filename):
-    """Check if the Excel file exists."""
-    if not os.path.exists(filename):
-        raise FileNotFoundError(f"Excel file '{filename}' not found in current directory")
-
-def validate_excel_structure(df, fund_name_column):
-    """Validate that the required column exists and the DataFrame isn't empty."""
-    if fund_name_column not in df.columns:
-        raise ValueError(
-            f"Column '{fund_name_column}' not found in Excel file. "
-            f"Available columns are: {', '.join(df.columns)}"
-        )
-    if df.empty:
-        raise ValueError("Excel file is empty")
-
-def search_lei_graphql(fund_name, max_retries=3):
+def parse_gleif_xml_to_dict(xml_file):
     """
-    Search for LEI using GLEIF's GraphQL endpoint (minimal filtering).
+    Parse the entire GLEIF XML file in memory, returning a dictionary:
+      { legalName.lower(): LEI }
+    for exact matching of names.
+    """
+    print(f"Parsing XML file: {xml_file} (this could take a few minutes)...")
     
-    Args:
-        fund_name (str): The fund name to search.
-        max_retries (int): Number of retries on transient errors.
+    # We can either do a one-shot parse with ET.parse() or iterparse().
+    # ET.parse() loads the entire tree at once, which might be memory-intensive but simpler to write.
+    # If the file is truly huge, iterparse() is sometimes better. 
+    # However, since we're storing everything in memory eventually, 
+    # parse() won't be much different in total memory usage.
+
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
     
-    Returns:
-        str: The LEI if found, or a descriptive error/no result message.
-    """
-    if not isinstance(fund_name, str):
-        return "Invalid fund name format"
-    if pd.isna(fund_name) or fund_name.strip() == "":
-        return "Empty fund name"
-    
-    url = "https://api.gleif.org/api/graphql"
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "query": GLEIF_GRAPHQL_QUERY,
-        "variables": {
-            "searchString": fund_name.strip()
-        }
-    }
+    # We'll store legalName -> LEI in a dictionary
+    lei_dict = {}
 
-    for attempt in range(1, max_retries + 1):
-        try:
-            # Small delay to reduce the chance of rate-limit issues
-            time.sleep(0.5)
-            
-            response = requests.post(url, json=payload, headers=headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Check for GraphQL-level errors
-            if "errors" in data:
-                logging.error(f"GLEIF GraphQL responded with errors for '{fund_name}': {data['errors']}")
-                return "Error: GraphQL error"
+    # Find all <LEIRecord> elements. 
+    # The GLEIF XML typically has many such elements under the root.
+    # Check the correct tag name in your file's structure.
+    for record_elem in root.findall(".//lei:LEIRecord", NS):
+        lei_elem = record_elem.find(".//lei:LEI", NS)
+        name_elem = record_elem.find(".//lei:Entity/lei:LegalName", NS)
+        
+        if lei_elem is not None and name_elem is not None:
+            lei_code = lei_elem.text.strip()
+            legal_name = name_elem.text.strip()
+            lei_dict[legal_name.lower()] = lei_code
 
-            # Extract matching records
-            records = data["data"]["leiRecords"]["records"]
-            if len(records) > 0:
-                # Return the first matched LEI
-                return records[0]["lei"]
-            else:
-                return "No LEI found"
+    print(f"Parsed {len(lei_dict)} LEI records into dictionary.")
+    return lei_dict
 
-        except requests.exceptions.RequestException as e:
-            # Catch timeouts, connection errors, etc.
-            logging.warning(f"Request exception on attempt {attempt} for '{fund_name}': {e}")
-            if attempt == max_retries:
-                return "Error: API request failed"
-            # else, retry
-        except Exception as e:
-            logging.error(f"Unexpected error for '{fund_name}': {e}")
-            return f"Error: {str(e)}"
-
-def process_excel_file(input_file, fund_name_column='Fund Name'):
-    """
-    Read an Excel file, validate structure, look up LEIs (minimal GraphQL filter),
-    and save to updated file with a new 'LEI' column.
-    """
-    try:
-        # 1. Check file existence
-        validate_file_exists(input_file)
-        
-        # 2. Read Excel
-        print(f"Reading file: {input_file}")
-        df = pd.read_excel(input_file)
-        
-        # 3. Validate structure
-        validate_excel_structure(df, fund_name_column)
-        
-        # 4. Create/ensure LEI column
-        if 'LEI' not in df.columns:
-            df['LEI'] = ''
-        
-        total_funds = len(df)
-        print(f"Processing {total_funds} funds...")
-        logging.info(f"Starting processing of {total_funds} funds (minimal GraphQL filter)")
-        
-        successful_lookups = 0
-        failed_lookups = 0
-        
-        # 5. Iterate through each fund
-        for idx, row in df.iterrows():
-            fund_name = row[fund_name_column]
-            current_lei = row['LEI']
-            
-            # Only look up if LEI isn't already set or indicates an error
-            if pd.isna(current_lei) or current_lei == '' or "Error" in current_lei:
-                print(f"Processing {idx + 1}/{total_funds}: {fund_name}")
-                lei_result = search_lei_graphql(fund_name)
-                df.at[idx, 'LEI'] = lei_result
-                
-                if ("Error" in lei_result) or (lei_result == "No LEI found"):
-                    failed_lookups += 1
-                else:
-                    successful_lookups += 1
-                
-                # Optionally save progress every 50 records
-                if (idx + 1) % 50 == 0:
-                    output_file = f"updated_{input_file}"
-                    df.to_excel(output_file, index=False)
-                    print(f"Progress saved at record {idx + 1}")
-                    logging.info(f"Progress saved at record {idx + 1}")
-
-        # 6. Final save
-        output_file = f"updated_{input_file}"
-        df.to_excel(output_file, index=False)
-        
-        # 7. Summary
-        summary = (
-            f"\nProcessing complete (minimal GraphQL filter):\n"
-            f"- Total funds processed: {total_funds}\n"
-            f"- Successful lookups: {successful_lookups}\n"
-            f"- Failed lookups: {failed_lookups}\n"
-            f"- Results saved to: {output_file}\n"
-        )
-        print(summary)
-        logging.info(summary)
-        
-    except Exception as e:
-        error_msg = f"Error processing file: {str(e)}"
-        logging.error(error_msg)
-        print(error_msg)
-        raise
 
 def main():
-    """
-    Main entry point. 
-    Update 'input_file' for your Excel file name if needed.
-    """
-    try:
-        input_file = "LEI.xlsx"  # Change to match your Excel filename
-        print("Starting LEI lookup process (minimal GraphQL filter)...")
-        print("Current working directory:", os.getcwd())
+    # 1. Parse the GLEIF XML into a dictionary in memory
+    if not os.path.exists(XML_FILE):
+        print(f"XML file '{XML_FILE}' not found.")
+        return
+    lei_dict = parse_gleif_xml_to_dict(XML_FILE)
+    
+    # 2. Read your Excel file with fund names
+    if not os.path.exists(EXCEL_FILE):
+        print(f"Excel file '{EXCEL_FILE}' not found.")
+        return
+    
+    print(f"Reading Excel file: {EXCEL_FILE}")
+    df = pd.read_excel(EXCEL_FILE)
+
+    # 3. Check if a "Fund Name" column exists
+    fund_name_column = "Fund Name"
+    if fund_name_column not in df.columns:
+        print(f"Error: Column '{fund_name_column}' not found in Excel.")
+        return
+
+    # 4. Create or ensure 'LEI' column is present
+    if "LEI" not in df.columns:
+        df["LEI"] = ""
+    
+    # 5. For each row, do an exact dictionary lookup
+    total_rows = len(df)
+    print(f"Processing {total_rows} rows...")
+    
+    matched_count = 0
+    missing_count = 0
+    
+    for idx, row in df.iterrows():
+        fund_name = row[fund_name_column]
+        # Basic check if fund_name is valid
+        if pd.isna(fund_name) or not isinstance(fund_name, str) or fund_name.strip() == "":
+            df.at[idx, "LEI"] = "Empty fund name"
+            missing_count += 1
+            continue
         
-        process_excel_file(input_file)
-        
-    except Exception as e:
-        error_msg = f"Program failed: {str(e)}"
-        print(error_msg)
-        logging.error(error_msg)
+        # Exact match in dictionary
+        lei_result = lei_dict.get(fund_name.lower(), "No LEI found")
+        df.at[idx, "LEI"] = lei_result
+        if lei_result == "No LEI found":
+            missing_count += 1
+        else:
+            matched_count += 1
+    
+    # 6. Save the updated Excel
+    df.to_excel(OUTPUT_EXCEL, index=False)
+    print(f"\nLookups complete!")
+    print(f"Matched: {matched_count}, Not found: {missing_count}")
+    print(f"Results saved to '{OUTPUT_EXCEL}'")
+
 
 if __name__ == "__main__":
     main()
