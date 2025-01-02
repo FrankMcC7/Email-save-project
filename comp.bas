@@ -22,6 +22,7 @@ Private Enum ProcessingError
     ERR_NO_APPROVED_DATA = vbObjectError + 3
     ERR_INVALID_HEADERS = vbObjectError + 4
     ERR_FILE_ACCESS = vbObjectError + 5
+    ERR_NO_FUND_GCI = vbObjectError + 6
 End Enum
 
 ' Type definition for processing statistics
@@ -36,17 +37,8 @@ End Type
 Sub AutomatedDataProcessing()
     Dim stats As ProcessingStats
     Dim rawFilePath As String
-    Dim wbRaw As Workbook
     Dim wsRaw As Worksheet
     Dim wsApproved As Worksheet
-    Dim headerRange As Range
-    Dim reviewStatusCol As Long
-    Dim lastRow As Long, lastCol As Long
-    Dim rng As Range
-    Dim i As Long, j As Long
-    Dim sampleSheets As Collection
-    Dim sampleSheet As Worksheet
-    Dim approvedDataRows As Long
     Dim isRunning As Boolean
     
     ' Initialize statistics
@@ -84,8 +76,8 @@ Sub AutomatedDataProcessing()
         ' Update status
         Call UpdateStatus("Processing complete. Samples created: " & stats.SamplesCreated)
         
-        ' Pause between iterations
-        Call ProcessingDelay()
+        ' Random delay between iterations
+        Call ProcessingDelay
     Loop
     
     MsgBox "Processing completed successfully." & vbNewLine & _
@@ -103,6 +95,8 @@ ErrorHandler:
             MsgBox "No file was selected. Operation cancelled.", vbExclamation
         Case ProcessingError.ERR_NO_REVIEW_STATUS
             MsgBox "Review Status column not found in the data.", vbCritical
+        Case ProcessingError.ERR_NO_FUND_GCI
+            MsgBox "Fund GCI column not found in the data.", vbCritical
         Case ProcessingError.ERR_NO_APPROVED_DATA
             MsgBox "No approved data found for processing.", vbExclamation
         Case ProcessingError.ERR_INVALID_HEADERS
@@ -213,23 +207,22 @@ Private Sub CleanupRawData(ByRef ws As Worksheet)
 End Sub
 
 Private Function ProcessRawData(ByRef wsRaw As Worksheet, ByRef stats As ProcessingStats) As Worksheet
-    Dim fundGciCol As Long
-    
-    ' Find Fund GCI column first
-    fundGciCol = Application.Match("Fund GCI", wsRaw.Rows(1), 0)
-    If IsError(fundGciCol) Then
-        Err.Raise ProcessingError.ERR_NO_REVIEW_STATUS, "ProcessRawData", "Fund GCI column not found"
-    End
     Dim wsApproved As Worksheet
     Dim lastRow As Long
     Dim lastCol As Long
     Dim reviewStatusCol As Long
+    Dim fundGciCol As Long
     Dim rng As Range
+    
+    ' Find Fund GCI column first
+    fundGciCol = Application.Match("Fund GCI", wsRaw.Rows(1), 0)
+    If IsError(fundGciCol) Then
+        Err.Raise ProcessingError.ERR_NO_FUND_GCI, "ProcessRawData", "Fund GCI column not found"
+    End If
     
     ' Find Review Status column
     lastCol = wsRaw.Cells(1, wsRaw.Columns.Count).End(xlToLeft).Column
     reviewStatusCol = Application.Match("Review Status", wsRaw.Rows(1), 0)
-    
     If IsError(reviewStatusCol) Then
         Err.Raise ProcessingError.ERR_NO_REVIEW_STATUS
     End If
@@ -285,7 +278,6 @@ Private Sub CreateSamples(ByRef wsSource As Worksheet, ByRef stats As Processing
     Dim headerRange As Range
     Dim lastHeaderCol As Long
     Dim dataArray() As Variant
-    Dim i As Long, j As Long
     
     ' Prepare sample sheets
     Set sampleSheets = PrepareSampleSheets
@@ -301,7 +293,7 @@ Private Sub CreateSamples(ByRef wsSource As Worksheet, ByRef stats As Processing
         ' Copy headers
         headerRange.Copy Destination:=sampleSheet.Range("A1")
         
-        ' Generate random sample
+        ' Generate random sample based on Fund GCI
         Call GenerateRandomSample(wsSource, dataArray)
         
         ' Write sample to sheet
@@ -315,22 +307,22 @@ Private Function PrepareSampleSheets() As Collection
     Dim sampleSheets As Collection
     Dim sampleSheet As Worksheet
     Dim i As Long
+    Dim numSheets As Long
     
     Set sampleSheets = New Collection
     
+    ' Randomly determine number of sample sheets
+    Randomize
+    numSheets = Int((MAX_SAMPLE_SHEETS - MIN_SAMPLE_SHEETS + 1) * Rnd + MIN_SAMPLE_SHEETS)
+    
     ' Delete existing sample sheets
     Application.DisplayAlerts = False
-    For i = 1 To SAMPLE_SHEETS
+    For i = 1 To MAX_SAMPLE_SHEETS
         On Error Resume Next
         ThisWorkbook.Worksheets("Sample" & i).Delete
         On Error GoTo 0
     Next i
     Application.DisplayAlerts = True
-    
-    ' Randomly determine number of sample sheets
-    Randomize
-    Dim numSheets As Long
-    numSheets = Int((MAX_SAMPLE_SHEETS - MIN_SAMPLE_SHEETS + 1) * Rnd + MIN_SAMPLE_SHEETS)
     
     ' Create new sample sheets
     For i = 1 To numSheets
@@ -355,7 +347,7 @@ Private Sub GenerateRandomSample(ByRef wsSource As Worksheet, ByRef dataArray() 
     ' Find Fund GCI column
     fundGciCol = Application.Match("Fund GCI", wsSource.Rows(1), 0)
     If IsError(fundGciCol) Then
-        Err.Raise ProcessingError.ERR_NO_REVIEW_STATUS, "GenerateRandomSample", "Fund GCI column not found"
+        Err.Raise ProcessingError.ERR_NO_FUND_GCI, "GenerateRandomSample", "Fund GCI column not found"
     End If
     
     ' Get source data
@@ -404,26 +396,6 @@ Private Sub GenerateRandomSample(ByRef wsSource As Worksheet, ByRef dataArray() 
     ' Fill sample array with randomly ordered top Fund GCI rows
     For i = 1 To sampleSize
         Call CopyArrayRow(sourceData, dataArray, sortedIndices(i), i)
-    Next i
-End Sub
-
-Private Sub GenerateRandomIndices(ByRef indices() As Long, ByVal maxValue As Long)
-    Dim i As Long
-    Dim temp As Long
-    Dim j As Long
-    
-    ' Initialize array with sequential numbers
-    For i = 1 To UBound(indices)
-        indices(i) = i
-    Next i
-    
-    ' Shuffle using Fisher-Yates algorithm
-    Randomize
-    For i = UBound(indices) To 2 Step -1
-        j = Int((i * Rnd) + 1)
-        temp = indices(i)
-        indices(i) = indices(j)
-        indices(j) = temp
     Next i
 End Sub
 
@@ -498,19 +470,19 @@ Private Sub CleanupApplication()
     
     ' Clean up any leftover sample sheets
     Dim ws As Worksheet
+    Application.DisplayAlerts = False
     For Each ws In ThisWorkbook.Worksheets
         If Left(ws.Name, 6) = "Sample" Then
             ws.Delete
         End If
     Next ws
+    Application.DisplayAlerts = True
 End Sub
 
-' Helper function to format numbers with commas
 Private Function FormatNumber(ByVal number As Long) As String
     FormatNumber = Format(number, "#,##0")
 End Function
 
-' Helper function to validate headers
 Private Function ValidateHeaders(ByRef ws As Worksheet) As Boolean
     Dim lastCol As Long
     Dim cell As Range
@@ -528,7 +500,6 @@ Private Function ValidateHeaders(ByRef ws As Worksheet) As Boolean
     ValidateHeaders = True
 End Function
 
-' Helper function to check if a worksheet exists
 Private Function WorksheetExists(ByVal wsName As String) As Boolean
     Dim ws As Worksheet
     
@@ -539,7 +510,6 @@ Private Function WorksheetExists(ByVal wsName As String) As Boolean
     WorksheetExists = Not ws Is Nothing
 End Function
 
-' Helper function to get a unique sheet name
 Private Function GetUniqueSheetName(ByVal baseName As String) As String
     Dim counter As Long
     Dim proposedName As String
