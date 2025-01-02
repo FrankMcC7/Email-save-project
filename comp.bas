@@ -213,6 +213,13 @@ Private Sub CleanupRawData(ByRef ws As Worksheet)
 End Sub
 
 Private Function ProcessRawData(ByRef wsRaw As Worksheet, ByRef stats As ProcessingStats) As Worksheet
+    Dim fundGciCol As Long
+    
+    ' Find Fund GCI column first
+    fundGciCol = Application.Match("Fund GCI", wsRaw.Rows(1), 0)
+    If IsError(fundGciCol) Then
+        Err.Raise ProcessingError.ERR_NO_REVIEW_STATUS, "ProcessRawData", "Fund GCI column not found"
+    End
     Dim wsApproved As Worksheet
     Dim lastRow As Long
     Dim lastCol As Long
@@ -338,20 +345,65 @@ End Function
 Private Sub GenerateRandomSample(ByRef wsSource As Worksheet, ByRef dataArray() As Variant)
     Dim sourceData As Variant
     Dim totalRows As Long
-    Dim randomIndices() As Long
-    Dim i As Long
+    Dim fundGciCol As Long
+    Dim fundGciValues() As Double
+    Dim sortedIndices() As Long
+    Dim i As Long, j As Long
+    Dim temp As Double
+    Dim tempIndex As Long
+    
+    ' Find Fund GCI column
+    fundGciCol = Application.Match("Fund GCI", wsSource.Rows(1), 0)
+    If IsError(fundGciCol) Then
+        Err.Raise ProcessingError.ERR_NO_REVIEW_STATUS, "GenerateRandomSample", "Fund GCI column not found"
+    End If
     
     ' Get source data
     totalRows = wsSource.Cells(wsSource.Rows.Count, 1).End(xlUp).Row - 1
     sourceData = wsSource.Range("A2").Resize(totalRows, UBound(dataArray, 2)).Value
     
-    ' Generate random indices
-    ReDim randomIndices(1 To Application.WorksheetFunction.Min(SAMPLE_SIZE, totalRows))
-    Call GenerateRandomIndices(randomIndices, totalRows)
+    ' Create array of Fund GCI values with their indices
+    ReDim fundGciValues(1 To totalRows)
+    ReDim sortedIndices(1 To totalRows)
     
-    ' Fill sample array
-    For i = 1 To UBound(randomIndices)
-        Call CopyArrayRow(sourceData, dataArray, randomIndices(i), i)
+    ' Fill arrays with values and indices
+    For i = 1 To totalRows
+        fundGciValues(i) = CDbl(sourceData(i, fundGciCol))
+        sortedIndices(i) = i
+    Next i
+    
+    ' Sort arrays by Fund GCI value (bubble sort)
+    For i = 1 To totalRows - 1
+        For j = 1 To totalRows - i
+            If fundGciValues(j) < fundGciValues(j + 1) Then
+                ' Swap values
+                temp = fundGciValues(j)
+                fundGciValues(j) = fundGciValues(j + 1)
+                fundGciValues(j + 1) = temp
+                
+                ' Swap indices
+                tempIndex = sortedIndices(j)
+                sortedIndices(j) = sortedIndices(j + 1)
+                sortedIndices(j + 1) = tempIndex
+            End If
+        Next j
+    Next i
+    
+    ' Take top 100 (or less if not enough rows) and randomize their order
+    Dim sampleSize As Long
+    sampleSize = Application.WorksheetFunction.Min(SAMPLE_SIZE, totalRows)
+    
+    ' Shuffle the top entries
+    For i = 1 To sampleSize
+        j = Int((sampleSize - i + 1) * Rnd + i)
+        tempIndex = sortedIndices(i)
+        sortedIndices(i) = sortedIndices(j)
+        sortedIndices(j) = tempIndex
+    Next i
+    
+    ' Fill sample array with randomly ordered top Fund GCI rows
+    For i = 1 To sampleSize
+        Call CopyArrayRow(sourceData, dataArray, sortedIndices(i), i)
     Next i
 End Sub
 
