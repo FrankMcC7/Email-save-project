@@ -33,19 +33,21 @@ Sub ProcessCSVData()
             
             'Get 100 random rows
             With Sheets("ApprovedData")
-                Set rng = .Range("A2:A" & lastRow)
                 .Range("A1").EntireRow.Copy Sheets("Sample" & i).Range("A1")
                 
-                'Sample 100 random rows using array
-                Dim arr() As Long
-                ReDim arr(1 To 100)
+                'Sample 100 random rows
+                Dim usedRows As Collection
+                Set usedRows = New Collection
                 Dim j As Long, k As Long
                 
                 For j = 1 To 100
                     Do
                         k = Int((lastRow - 1) * Rnd + 2)
-                    Loop Until WorksheetFunction.CountIf(arr, k) = 0
-                    arr(j) = k
+                        On Error Resume Next
+                        usedRows.Add k, CStr(k)
+                        If Err.Number = 0 Then Exit Do
+                        Err.Clear
+                    Loop
                     .Rows(k).Copy Sheets("Sample" & i).Rows(j + 1)
                 Next j
             End With
