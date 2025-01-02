@@ -1,5 +1,11 @@
 Option Explicit
 
+' Required References:
+' - Microsoft Excel Object Library
+' - Microsoft Office Object Library
+' - Microsoft Scripting Runtime
+' - Microsoft Visual Basic For Applications Extensibility
+
 ' Configuration Constants
 Private Const SAMPLE_SIZE As Long = 100
 Private Const MIN_SAMPLE_SHEETS As Long = 5
@@ -7,6 +13,8 @@ Private Const MAX_SAMPLE_SHEETS As Long = 15
 Private Const MIN_REFRESH_INTERVAL As Long = 5  ' seconds
 Private Const MAX_REFRESH_INTERVAL As Long = 30 ' seconds
 Private Const LOG_FILE_PATH As String = "DataProcessing_Log.txt"
+Private Const MAX_RETRIES As Integer = 3
+Private Const CHUNK_SIZE As Long = 10000 ' For large dataset processing
 
 ' API Declarations
 #If VBA7 Then
@@ -17,108 +25,83 @@ Private Const LOG_FILE_PATH As String = "DataProcessing_Log.txt"
 
 ' Custom Error Handling
 Private Enum ProcessingError
-    ERR_NO_FILE_SELECTED = vbObjectError + 1
-    ERR_NO_REVIEW_STATUS = vbObjectError + 2
-    ERR_NO_APPROVED_DATA = vbObjectError + 3
-    ERR_INVALID_HEADERS = vbObjectError + 4
-    ERR_FILE_ACCESS = vbObjectError + 5
+    ERR_BASE = vbObjectError + 513  ' Explicit base for custom errors
+    ERR_NO_FILE_SELECTED = ERR_BASE + 1
+    ERR_NO_REVIEW_STATUS = ERR_BASE + 2
+    ERR_NO_APPROVED_DATA = ERR_BASE + 3
+    ERR_INVALID_HEADERS = ERR_BASE + 4
+    ERR_FILE_ACCESS = ERR_BASE + 5
+    ERR_MEMORY_EXCEEDED = ERR_BASE + 6
+    ERR_INVALID_DATA = ERR_BASE + 7
 End Enum
 
 ' Type definition for processing statistics
 Private Type ProcessingStats
     StartTime As Double
+    EndTime As Double
     TotalRecords As Long
     ApprovedRecords As Long
     SamplesCreated As Long
     ErrorCount As Long
+    ProcessingTime As Double
 End Type
 
-Sub AutomatedDataProcessing()
-    Dim stats As ProcessingStats
+' Global Variables
+Private gStats As ProcessingStats
+Private gIsProcessing As Boolean
+
+Public Sub AutomatedDataProcessing()
     Dim rawFilePath As String
-    Dim wbRaw As Workbook
     Dim wsRaw As Worksheet
     Dim wsApproved As Worksheet
-    Dim headerRange As Range
-    Dim reviewStatusCol As Long
-    Dim lastRow As Long, lastCol As Long
-    Dim rng As Range
-    Dim i As Long, j As Long
-    Dim sampleSheets As Collection
-    Dim sampleSheet As Worksheet
-    Dim approvedDataRows As Long
-    Dim isRunning As Boolean
     
-    ' Initialize statistics
-    stats.StartTime = Timer
-    
-    ' Initialize application settings
-    Call InitializeApplication
+    ' Initialize statistics and application
+    Call InitializeEnvironment
     
     On Error GoTo ErrorHandler
     
-    ' File selection and import
-    rawFilePath = SelectInputFile
+    ' File selection and validation
+    rawFilePath = SelectAndValidateInputFile
     If rawFilePath = "" Then
-        Err.Raise ProcessingError.ERR_NO_FILE_SELECTED, "AutomatedDataProcessing", "No file selected"
+        Err.Raise ProcessingError.ERR_NO_FILE_SELECTED, "AutomatedDataProcessing", _
+                  "No file was selected or file is invalid"
     End If
     
-    ' Import data based on file type
+    ' Import and process data
     Set wsRaw = ImportData(rawFilePath)
+    If Not ValidateDataStructure(wsRaw) Then
+        Err.Raise ProcessingError.ERR_INVALID_DATA, "AutomatedDataProcessing", _
+                  "Data structure validation failed"
+    End If
     
-    ' Initial data cleanup
-    Call CleanupRawData(wsRaw)
+    ' Process raw data in chunks
+    Set wsApproved = ProcessRawDataInChunks(wsRaw)
     
-    ' Process and filter data
-    Set wsApproved = ProcessRawData(wsRaw, stats)
-    
-    ' Begin sampling loop
-    isRunning = True
-    Do While isRunning
-        ' Create and process samples
-        Call CreateSamples(wsApproved, stats)
-        
-        ' Check for exit condition
-        isRunning = CheckContinueProcessing
-        
-        ' Update status
-        Call UpdateStatus("Processing complete. Samples created: " & stats.SamplesCreated)
-        
-        ' Pause between iterations
-        Call ProcessingDelay()
+    ' Begin sampling process
+    gIsProcessing = True
+    Do While gIsProcessing
+        If Not ProcessSampleBatch(wsApproved) Then Exit Do
+        If Not HandleUserInteraction Then Exit Do
+        Call ProcessingDelay
     Loop
     
-    MsgBox "Processing completed successfully." & vbNewLine & _
-           "Total records processed: " & stats.TotalRecords & vbNewLine & _
-           "Approved records: " & stats.ApprovedRecords & vbNewLine & _
-           "Samples created: " & stats.SamplesCreated, vbInformation
+    ' Display results
+    DisplayProcessingResults
     
 Cleanup:
-    Call CleanupApplication
+    Call CleanupEnvironment
     Exit Sub
 
 ErrorHandler:
-    Select Case Err.Number
-        Case ProcessingError.ERR_NO_FILE_SELECTED
-            MsgBox "No file was selected. Operation cancelled.", vbExclamation
-        Case ProcessingError.ERR_NO_REVIEW_STATUS
-            MsgBox "Review Status column not found in the data.", vbCritical
-        Case ProcessingError.ERR_NO_APPROVED_DATA
-            MsgBox "No approved data found for processing.", vbExclamation
-        Case ProcessingError.ERR_INVALID_HEADERS
-            MsgBox "Invalid or missing headers in the data.", vbCritical
-        Case ProcessingError.ERR_FILE_ACCESS
-            MsgBox "Error accessing the file: " & Err.Description, vbCritical
-        Case Else
-            MsgBox "An unexpected error occurred: " & Err.Description, vbCritical
-    End Select
-    
-    Call LogError(Err.Number, Err.Description)
+    Dim errMsg As String
+    errMsg = HandleError(Err.Number, Err.Description, Err.Source)
+    MsgBox errMsg, vbCritical, "Processing Error"
     Resume Cleanup
 End Sub
 
-Private Function SelectInputFile() As String
+Private Function SelectAndValidateInputFile() As String
     Dim fDialog As FileDialog
+    Dim selectedFile As String
     
     Set fDialog = Application.FileDialog(msoFileDialogFilePicker)
     With fDialog
@@ -129,354 +112,541 @@ Private Function SelectInputFile() As String
         .AllowMultiSelect = False
         
         If .Show Then
-            SelectInputFile = .SelectedItems(1)
+            selectedFile = .SelectedItems(1)
+            If ValidateFileAccess(selectedFile) Then
+                SelectAndValidateInputFile = selectedFile
+            End If
         End If
     End With
+End Function
+
+Private Function ValidateFileAccess(ByVal filePath As String) As Boolean
+    On Error Resume Next
+    Dim fileNum As Integer
+    fileNum = FreeFile
+    
+    Open filePath For Input Access Read As #fileNum
+    If Err.Number = 0 Then
+        Close #fileNum
+        ValidateFileAccess = True
+    Else
+        ValidateFileAccess = False
+    End If
+    On Error GoTo 0
 End Function
 
 Private Function ImportData(ByVal filePath As String) As Worksheet
     Dim fileExt As String
-    Dim ws As Worksheet
+    Dim wsImport As Worksheet
+    Dim retryCount As Integer
     
-    fileExt = LCase(Mid(filePath, InStrRev(filePath, ".") + 1))
+    fileExt = LCase(Right(filePath, 4))
+    retryCount = 0
     
-    If fileExt = "csv" Then
-        Set ImportData = ImportCSV(filePath)
-    Else
-        Set ImportData = ImportExcel(filePath)
-    End If
+    Do While retryCount < MAX_RETRIES
+        On Error Resume Next
+        Select Case fileExt
+            Case ".csv"
+                Set wsImport = ImportCSVWithProgress(filePath)
+            Case Else
+                Set wsImport = ImportExcelWithProgress(filePath)
+        End Select
+        
+        If Err.Number = 0 Then
+            Exit Do
+        Else
+            retryCount = retryCount + 1
+            If retryCount = MAX_RETRIES Then
+                Err.Raise ProcessingError.ERR_FILE_ACCESS, "ImportData", _
+                        "Failed to import file after " & MAX_RETRIES & " attempts"
+            End If
+            Application.Wait Now + TimeSerial(0, 0, 2)  ' Wait 2 seconds before retry
+        End If
+        On Error GoTo 0
+    Loop
+    
+    Set ImportData = wsImport
 End Function
 
-Private Function ImportCSV(ByVal filePath As String) As Worksheet
+Private Function ImportCSVWithProgress(ByVal filePath As String) As Worksheet
     Dim ws As Worksheet
+    Dim qt As QueryTable
     
-    On Error GoTo ErrorHandler
+    ' Create new worksheet
+    Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+    ws.Name = GetUniqueSheetName("RawData")
     
-    Set ws = Worksheets.Add(After:=Worksheets(Worksheets.Count))
-    ws.Name = "RawData"
+    ' Import CSV with progress
+    UpdateStatus "Importing CSV file..."
+    Set qt = ws.QueryTables.Add(Connection:="TEXT;" & filePath, Destination:=ws.Range("A1"))
     
-    With ws.QueryTables.Add(Connection:="TEXT;" & filePath, Destination:=ws.Range("A1"))
+    With qt
         .TextFileParseType = xlDelimited
         .TextFileCommaDelimiter = True
-        .TextFileColumnDataTypes = Array(1)
+        .TextFileColumnDataTypes = Array(2)  ' xlTextFormat
+        .RefreshStyle = xlOverwriteCells
+        .AdjustColumnWidth = True
+        .RefreshPeriod = 0
+        .PreserveFormatting = True
         .Refresh BackgroundQuery:=False
-        .Delete
     End With
     
-    Set ImportCSV = ws
-    Exit Function
-    
-ErrorHandler:
-    Err.Raise ProcessingError.ERR_FILE_ACCESS, "ImportCSV", _
-            "Error importing CSV file: " & Err.Description
+    Set ImportCSVWithProgress = ws
 End Function
 
-Private Function ImportExcel(ByVal filePath As String) As Worksheet
+Private Function ImportExcelWithProgress(ByVal filePath As String) As Worksheet
     Dim wbSource As Workbook
     Dim wsTarget As Worksheet
+    Dim lastRow As Long, lastCol As Long
     
-    On Error GoTo ErrorHandler
+    UpdateStatus "Opening Excel file..."
+    Set wbSource = Workbooks.Open(Filename:=filePath, ReadOnly:=True, UpdateLinks:=False)
     
-    Set wbSource = Workbooks.Open(Filename:=filePath, ReadOnly:=True)
-    Set wsTarget = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
-    wsTarget.Name = "RawData"
+    ' Create new worksheet
+    Set wsTarget = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+    wsTarget.Name = GetUniqueSheetName("RawData")
     
-    wbSource.Sheets(1).UsedRange.Copy Destination:=wsTarget.Range("A1")
+    ' Copy data in chunks
+    With wbSource.Sheets(1)
+        lastRow = .Cells(.Rows.Count, 1).End(xlUp).Row
+        lastCol = .Cells(1, .Columns.Count).End(xlToLeft).Column
+        
+        Dim startRow As Long, endRow As Long
+        startRow = 1
+        
+        Do While startRow <= lastRow
+            UpdateStatus "Copying rows " & startRow & " to " & Application.Min(startRow + CHUNK_SIZE - 1, lastRow)
+            endRow = Application.Min(startRow + CHUNK_SIZE - 1, lastRow)
+            
+            .Range(.Cells(startRow, 1), .Cells(endRow, lastCol)).Copy _
+                Destination:=wsTarget.Cells(startRow, 1)
+            
+            startRow = endRow + 1
+            DoEvents
+        Loop
+    End With
+    
     wbSource.Close SaveChanges:=False
-    
-    Set ImportExcel = wsTarget
-    Exit Function
-    
-ErrorHandler:
-    Err.Raise ProcessingError.ERR_FILE_ACCESS, "ImportExcel", _
-            "Error importing Excel file: " & Err.Description
+    Set ImportExcelWithProgress = wsTarget
 End Function
 
-Private Sub CleanupRawData(ByRef ws As Worksheet)
-    Dim lastRow As Long
-    Dim lastCol As Long
-    Dim i As Long
-    
-    ' Remove header row
-    ws.Rows(1).Delete
-    
-    ' Get data range
-    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
-    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
-    
-    ' Remove blank rows
-    For i = lastRow To 1 Step -1
-        If Application.WorksheetFunction.CountA(ws.Rows(i)) = 0 Then
-            ws.Rows(i).Delete
-        End If
-    Next i
-End Sub
-
-Private Function ProcessRawData(ByRef wsRaw As Worksheet, ByRef stats As ProcessingStats) As Worksheet
+Private Function ProcessRawDataInChunks(ByRef wsRaw As Worksheet) As Worksheet
     Dim wsApproved As Worksheet
-    Dim lastRow As Long
-    Dim lastCol As Long
+    Dim lastRow As Long, lastCol As Long
+    Dim chunkStart As Long, chunkEnd As Long
     Dim reviewStatusCol As Long
-    Dim rng As Range
     
     ' Find Review Status column
     lastCol = wsRaw.Cells(1, wsRaw.Columns.Count).End(xlToLeft).Column
-    reviewStatusCol = Application.Match("Review Status", wsRaw.Rows(1), 0)
+    reviewStatusCol = GetColumnByHeaderName(wsRaw, "Review Status")
     
-    If IsError(reviewStatusCol) Then
-        Err.Raise ProcessingError.ERR_NO_REVIEW_STATUS
+    If reviewStatusCol = 0 Then
+        Err.Raise ProcessingError.ERR_NO_REVIEW_STATUS, "ProcessRawDataInChunks", _
+                  "Review Status column not found"
     End If
     
-    ' Filter for approved records
+    ' Create approved data worksheet
+    Set wsApproved = CreateApprovedSheet
+    
+    ' Process data in chunks
     lastRow = wsRaw.Cells(wsRaw.Rows.Count, 1).End(xlUp).Row
-    stats.TotalRecords = lastRow - 1 ' Subtract header row
+    chunkStart = 2  ' Start after header row
     
-    With wsRaw
-        .Range(.Cells(1, 1), .Cells(lastRow, lastCol)).AutoFilter _
-            Field:=reviewStatusCol, Criteria1:="Approved"
-    End With
-    
-    ' Create approved data sheet
-    Set wsApproved = CreateApprovedSheet(wsRaw, stats)
-    
-    ' Cleanup
-    wsRaw.AutoFilterMode = False
-    Application.DisplayAlerts = False
-    wsRaw.Delete
-    Application.DisplayAlerts = True
-    
-    Set ProcessRawData = wsApproved
-End Function
-
-Private Function CreateApprovedSheet(ByRef wsSource As Worksheet, ByRef stats As ProcessingStats) As Worksheet
-    Dim wsApproved As Worksheet
-    Dim rng As Range
-    
-    ' Create new sheet
-    On Error Resume Next
-    Application.DisplayAlerts = False
-    ThisWorkbook.Worksheets("ApprovedData").Delete
-    Application.DisplayAlerts = True
-    On Error GoTo 0
-    
-    Set wsApproved = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
-    wsApproved.Name = "ApprovedData"
-    
-    ' Copy filtered data
-    Set rng = wsSource.AutoFilter.Range.SpecialCells(xlCellTypeVisible)
-    rng.Copy Destination:=wsApproved.Range("A1")
-    
-    ' Update statistics
-    stats.ApprovedRecords = wsApproved.Cells(wsApproved.Rows.Count, 1).End(xlUp).Row - 1
-    
-    Set CreateApprovedSheet = wsApproved
-End Function
-
-Private Sub CreateSamples(ByRef wsSource As Worksheet, ByRef stats As ProcessingStats)
-    Dim sampleSheets As Collection
-    Dim sampleSheet As Worksheet
-    Dim headerRange As Range
-    Dim lastHeaderCol As Long
-    Dim dataArray() As Variant
-    Dim i As Long, j As Long
-    
-    ' Prepare sample sheets
-    Set sampleSheets = PrepareSampleSheets
-    
-    ' Get header range
-    lastHeaderCol = wsSource.Cells(1, wsSource.Columns.Count).End(xlToLeft).Column
-    Set headerRange = wsSource.Range(wsSource.Cells(1, 1), wsSource.Cells(1, lastHeaderCol))
-    
-    ' Create samples using arrays for better performance
-    ReDim dataArray(1 To SAMPLE_SIZE, 1 To lastHeaderCol)
-    
-    For Each sampleSheet In sampleSheets
-        ' Copy headers
-        headerRange.Copy Destination:=sampleSheet.Range("A1")
+    Do While chunkStart <= lastRow
+        chunkEnd = Application.Min(chunkStart + CHUNK_SIZE - 1, lastRow)
         
-        ' Generate random sample
-        Call GenerateRandomSample(wsSource, dataArray)
+        UpdateStatus "Processing rows " & chunkStart & " to " & chunkEnd
         
-        ' Write sample to sheet
-        sampleSheet.Range("A2").Resize(SAMPLE_SIZE, lastHeaderCol) = dataArray
+        ' Process chunk
+        ProcessDataChunk wsRaw, wsApproved, chunkStart, chunkEnd, reviewStatusCol
         
-        stats.SamplesCreated = stats.SamplesCreated + 1
-    Next sampleSheet
-End Sub
-
-Private Function PrepareSampleSheets() As Collection
-    Dim sampleSheets As Collection
-    Dim sampleSheet As Worksheet
-    Dim i As Long
-    
-    Set sampleSheets = New Collection
-    
-    ' Delete existing sample sheets
-    Application.DisplayAlerts = False
-    For i = 1 To SAMPLE_SHEETS
-        On Error Resume Next
-        ThisWorkbook.Worksheets("Sample" & i).Delete
-        On Error GoTo 0
-    Next i
-    Application.DisplayAlerts = True
-    
-    ' Randomly determine number of sample sheets
-    Randomize
-    Dim numSheets As Long
-    numSheets = Int((MAX_SAMPLE_SHEETS - MIN_SAMPLE_SHEETS + 1) * Rnd + MIN_SAMPLE_SHEETS)
-    
-    ' Create new sample sheets
-    For i = 1 To numSheets
-        Set sampleSheet = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
-        sampleSheet.Name = "Sample" & i
-        sampleSheets.Add sampleSheet
-    Next i
-    
-    Set PrepareSampleSheets = sampleSheets
-End Function
-
-Private Sub GenerateRandomSample(ByRef wsSource As Worksheet, ByRef dataArray() As Variant)
-    Dim sourceData As Variant
-    Dim totalRows As Long
-    Dim randomIndices() As Long
-    Dim i As Long
-    
-    ' Get source data
-    totalRows = wsSource.Cells(wsSource.Rows.Count, 1).End(xlUp).Row - 1
-    sourceData = wsSource.Range("A2").Resize(totalRows, UBound(dataArray, 2)).Value
-    
-    ' Generate random indices
-    ReDim randomIndices(1 To Application.WorksheetFunction.Min(SAMPLE_SIZE, totalRows))
-    Call GenerateRandomIndices(randomIndices, totalRows)
-    
-    ' Fill sample array
-    For i = 1 To UBound(randomIndices)
-        Call CopyArrayRow(sourceData, dataArray, randomIndices(i), i)
-    Next i
-End Sub
-
-Private Sub GenerateRandomIndices(ByRef indices() As Long, ByVal maxValue As Long)
-    Dim i As Long
-    Dim temp As Long
-    Dim j As Long
-    
-    ' Initialize array with sequential numbers
-    For i = 1 To UBound(indices)
-        indices(i) = i
-    Next i
-    
-    ' Shuffle using Fisher-Yates algorithm
-    Randomize
-    For i = UBound(indices) To 2 Step -1
-        j = Int((i * Rnd) + 1)
-        temp = indices(i)
-        indices(i) = indices(j)
-        indices(j) = temp
-    Next i
-End Sub
-
-Private Sub CopyArrayRow(ByRef source As Variant, ByRef target() As Variant, _
-                        ByVal sourceRow As Long, ByVal targetRow As Long)
-    Dim col As Long
-    
-    For col = 1 To UBound(target, 2)
-        target(targetRow, col) = source(sourceRow, col)
-    Next col
-End Sub
-
-Private Function CheckContinueProcessing() As Boolean
-    CheckContinueProcessing = (GetAsyncKeyState(vbKeyEscape) = 0)
-End Function
-
-Private Sub ProcessingDelay()
-    Dim startTime As Double
-    Dim delaySeconds As Long
-    
-    ' Generate random delay between MIN_REFRESH_INTERVAL and MAX_REFRESH_INTERVAL
-    Randomize
-    delaySeconds = Int((MAX_REFRESH_INTERVAL - MIN_REFRESH_INTERVAL + 1) * Rnd + MIN_REFRESH_INTERVAL)
-    
-    ' Update status to show wait time
-    UpdateStatus "Waiting for " & delaySeconds & " seconds before next iteration..."
-    
-    startTime = Timer
-    Do While Timer < startTime + delaySeconds
+        chunkStart = chunkEnd + 1
         DoEvents
-        If Not CheckContinueProcessing Then Exit Sub
+        
+        If Not gIsProcessing Then Exit Do
     Loop
-End Sub
+    
+    Set ProcessRawDataInChunks = wsApproved
+End Function
 
-Private Sub UpdateStatus(ByVal statusText As String)
-    Application.StatusBar = statusText
-End Sub
+Private Sub ProcessDataChunk(ByRef wsSource As Worksheet, ByRef wsTarget As Worksheet, _
+                           ByVal startRow As Long, ByVal endRow As Long, _
+                           ByVal statusCol As Long)
+    Dim dataRange As Range
+    Dim approvedRange As Range
+    Dim cell As Range
+    
+    ' Get chunk range
+    Set dataRange = wsSource.Range(wsSource.Cells(startRow, 1), _
+                                 wsSource.Cells(endRow, wsSource.Cells(1, wsSource.Columns.Count).End(xlToLeft).Column))
+    
+    ' Filter for approved records
+    For Each cell In dataRange.Columns(statusCol).Cells
+        If UCase(Trim(cell.Value)) = "APPROVED" Then
+            If approvedRange Is Nothing Then
+                Set approvedRange = wsSource.Rows(cell.Row)
+            Else
+                Set approvedRange = Union(approvedRange, wsSource.Rows(cell.Row))
+            End If
+        End If
+    Next cell
+    
+    ' Copy approved records if any found
+    If Not approvedRange Is Nothing Then
+        approvedRange.Copy Destination:=wsTarget.Cells(wsTarget.Cells(wsTarget.Rows.Count, 1).End(xlUp).Row + 1, 1)
+        gStats.ApprovedRecords = gStats.ApprovedRecords + approvedRange.Rows.Count
+    End If
+    
+    gStats.TotalRecords = gStats.TotalRecords + (endRow - startRow + 1)
+End Function
+
+Private Function ProcessSampleBatch(ByRef wsSource As Worksheet) As Boolean
+    On Error GoTo ErrorHandler
+    
+    Dim sampleSheets As Collection
+    Set sampleSheets = CreateSampleSheets
+    
+    If sampleSheets.Count > 0 Then
+        CreateSamples wsSource, sampleSheets
+        ProcessSampleBatch = True
+    Else
+        ProcessSampleBatch = False
+    End If
+    
+    Exit Function
+    
+ErrorHandler:
+    LogError Err.Number, "ProcessSampleBatch: " & Err.Description
+    ProcessSampleBatch = False
+End Function
+
+' ... [Additional supporting functions would go here] ...
+
+' Helper Functions for Error Handling and Logging
+Private Function HandleError(ByVal errNumber As Long, ByVal errDescription As String, _
+                           Optional ByVal errSource As String = "") As String
+    Dim errorMsg As String
+    
+    Select Case errNumber
+        Case ProcessingError.ERR_NO_FILE_SELECTED
+            errorMsg = "No file was selected or the file is invalid."
+        Case ProcessingError.ERR_NO_REVIEW_STATUS
+            errorMsg = "Review Status column not found in the data."
+        Case ProcessingError.ERR_NO_APPROVED_DATA
+            errorMsg = "No approved data found for processing."
+        Case ProcessingError.ERR_INVALID_HEADERS
+            errorMsg = "Invalid or missing headers in the data."
+        Case ProcessingError.ERR_FILE_ACCESS
+            errorMsg = "Error accessing the file: " & errDescription
+        Case ProcessingError.ERR_MEMORY_EXCEEDED
+            errorMsg = "Memory limit exceeded. Try processing a smaller dataset."
+        Case ProcessingError.ERR_INVALID_DATA
+            errorMsg = "Invalid data structure: " & errDescription
+        Case Else
+            errorMsg = "An unexpected error occurred: " & errDescription
+    End Select
+    
+    ' Log error
+    LogError errNumber, errorMsg & IIf(errSource <> "", " (Source: " & errSource & ")", "")
+    
+    HandleError = errorMsg
+End Function
 
 Private Sub LogError(ByVal errorNumber As Long, ByVal errorDescription As String)
+    On Error Resume Next
     Dim fileNum As Integer
     Dim logMessage As String
     
-    ' Create log message
     logMessage = Format(Now, "yyyy-mm-dd hh:mm:ss") & _
                  " - Error " & errorNumber & ": " & errorDescription
     
-    ' Write to log file
     fileNum = FreeFile
     Open LOG_FILE_PATH For Append As #fileNum
-    Print #fileNum, logMessage
-    Close #fileNum
+    If Err.Number = 0 Then
+        Print #fileNum, logMessage
+        Close #fileNum
+    End If
+    
+    Debug.Print logMessage  ' Also output to immediate window
 End Sub
 
-Private Sub InitializeApplication()
+Private Sub InitializeEnvironment()
+    ' Reset statistics
+    With gStats
+        .StartTime = Timer
+        .TotalRecords = 0
+        .ApprovedRecords = 0
+        .SamplesCreated = 0
+        .ErrorCount = 0
+    End With
+    
+    ' Initialize Excel environment
     With Application
         .ScreenUpdating = False
         .Calculation = xlCalculationManual
         .EnableEvents = False
         .DisplayAlerts = False
     End With
+    
+    ' Clear status bar
     UpdateStatus "Initializing data processing..."
 End Sub
 
-Private Sub CleanupApplication()
+Private Sub CleanupEnvironment()
+    ' Update statistics
+    gStats.EndTime = Timer
+    gStats.ProcessingTime = gStats.EndTime - gStats.StartTime
+    
+    ' Restore Excel environment
     With Application
-        .StatusBar = False
         .ScreenUpdating = True
         .Calculation = xlCalculationAutomatic
         .EnableEvents = True
         .DisplayAlerts = True
+        .StatusBar = False
     End With
     
-    ' Clean up any leftover sample sheets
+    ' Clean up temporary worksheets
+    CleanupWorksheets
+End Sub
+
+Private Sub CleanupWorksheets()
     Dim ws As Worksheet
+    Application.DisplayAlerts = False
     For Each ws In ThisWorkbook.Worksheets
-        If Left(ws.Name, 6) = "Sample" Then
+        If Left(ws.Name, 6) = "Sample" Or _
+           Left(ws.Name, 7) = "RawData" Or _
+           ws.Name = "ApprovedData" Then
             ws.Delete
         End If
     Next ws
+    Application.DisplayAlerts = True
 End Sub
 
-' Helper function to format numbers with commas
-Private Function FormatNumber(ByVal number As Long) As String
-    FormatNumber = Format(number, "#,##0")
+Private Function CreateSampleSheets() As Collection
+    Dim sampleSheets As Collection
+    Dim sampleSheet As Worksheet
+    Dim numSheets As Long
+    Dim i As Long
+    
+    Set sampleSheets = New Collection
+    
+    ' Randomly determine number of sample sheets
+    Randomize
+    numSheets = Int((MAX_SAMPLE_SHEETS - MIN_SAMPLE_SHEETS + 1) * Rnd + MIN_SAMPLE_SHEETS)
+    
+    ' Create new sample sheets
+    For i = 1 To numSheets
+        Set sampleSheet = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        sampleSheet.Name = GetUniqueSheetName("Sample" & i)
+        sampleSheets.Add sampleSheet
+    Next i
+    
+    Set CreateSampleSheets = sampleSheets
 End Function
 
-' Helper function to validate headers
-Private Function ValidateHeaders(ByRef ws As Worksheet) As Boolean
+Private Sub CreateSamples(ByRef wsSource As Worksheet, ByRef sampleSheets As Collection)
+    Dim sampleSheet As Worksheet
+    Dim headerRange As Range
+    Dim dataRange As Range
+    Dim lastRow As Long, lastCol As Long
+    
+    ' Get source data range
+    lastRow = wsSource.Cells(wsSource.Rows.Count, 1).End(xlUp).Row
+    lastCol = wsSource.Cells(1, wsSource.Columns.Count).End(xlToLeft).Column
+    Set headerRange = wsSource.Range(wsSource.Cells(1, 1), wsSource.Cells(1, lastCol))
+    
+    ' Process each sample sheet
+    For Each sampleSheet In sampleSheets
+        UpdateStatus "Creating sample in " & sampleSheet.Name
+        
+        ' Copy headers
+        headerRange.Copy Destination:=sampleSheet.Range("A1")
+        
+        ' Generate and copy random sample
+        GenerateRandomSample wsSource, sampleSheet, lastRow, lastCol
+        
+        ' Format sample sheet
+        FormatSampleSheet sampleSheet
+        
+        gStats.SamplesCreated = gStats.SamplesCreated + 1
+    Next sampleSheet
+End Sub
+
+Private Sub GenerateRandomSample(ByRef wsSource As Worksheet, ByRef wsTarget As Worksheet, _
+                               ByVal sourceRows As Long, ByVal sourceCols As Long)
+    Dim randomRows() As Long
+    Dim i As Long, j As Long
+    Dim targetRow As Long
+    Dim sourceRow As Long
+    
+    ' Generate random row indices
+    ReDim randomRows(1 To Application.Min(SAMPLE_SIZE, sourceRows - 1))
+    Call GenerateUniqueRandomNumbers randomRows, 2, sourceRows
+    
+    ' Copy random rows
+    targetRow = 2 ' Start after header
+    For i = LBound(randomRows) To UBound(randomRows)
+        sourceRow = randomRows(i)
+        wsSource.Range(wsSource.Cells(sourceRow, 1), wsSource.Cells(sourceRow, sourceCols)).Copy _
+            Destination:=wsTarget.Cells(targetRow, 1)
+        targetRow = targetRow + 1
+    Next i
+End Sub
+
+Private Sub GenerateUniqueRandomNumbers(ByRef numbers() As Long, _
+                                      ByVal minValue As Long, _
+                                      ByVal maxValue As Long)
+    Dim i As Long, j As Long
+    Dim temp As Long
+    Dim count As Long
+    
+    count = UBound(numbers) - LBound(numbers) + 1
+    
+    ' Initialize array with sequential numbers
+    For i = LBound(numbers) To UBound(numbers)
+        numbers(i) = minValue + i - 1
+        If numbers(i) > maxValue Then
+            numbers(i) = maxValue
+        End If
+    Next i
+    
+    ' Fisher-Yates shuffle
+    Randomize
+    For i = UBound(numbers) To LBound(numbers) + 1 Step -1
+        j = Int((i - LBound(numbers) + 1) * Rnd + LBound(numbers))
+        temp = numbers(i)
+        numbers(i) = numbers(j)
+        numbers(j) = temp
+    Next i
+End Sub
+
+Private Sub FormatSampleSheet(ByRef ws As Worksheet)
+    Dim dataRange As Range
+    Dim lastRow As Long
     Dim lastCol As Long
+    
+    ' Get data range
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    Set dataRange = ws.Range(ws.Cells(1, 1), ws.Cells(lastRow, lastCol))
+    
+    ' Format as table
+    With dataRange
+        .Borders(xlEdgeLeft).LineStyle = xlContinuous
+        .Borders(xlEdgeRight).LineStyle = xlContinuous
+        .Borders(xlEdgeTop).LineStyle = xlContinuous
+        .Borders(xlEdgeBottom).LineStyle = xlContinuous
+        .Borders(xlInsideVertical).LineStyle = xlContinuous
+        .Borders(xlInsideHorizontal).LineStyle = xlContinuous
+        
+        ' Format headers
+        .Rows(1).Font.Bold = True
+        .Rows(1).Interior.Color = RGB(217, 217, 217)
+    End With
+    
+    ' Autofit columns
+    ws.Cells.EntireColumn.AutoFit
+End Sub
+
+Private Function HandleUserInteraction() As Boolean
+    ' Check for user cancellation (ESC key)
+    If GetAsyncKeyState(vbKeyEscape) <> 0 Then
+        If MsgBox("Do you want to stop processing?", vbQuestion + vbYesNo) = vbYes Then
+            HandleUserInteraction = False
+            Exit Function
+        End If
+    End If
+    
+    HandleUserInteraction = True
+End Function
+
+Private Sub ProcessingDelay()
+    Dim delaySeconds As Long
+    Dim startTime As Double
+    
+    ' Generate random delay
+    Randomize
+    delaySeconds = Int((MAX_REFRESH_INTERVAL - MIN_REFRESH_INTERVAL + 1) * Rnd + MIN_REFRESH_INTERVAL)
+    
+    UpdateStatus "Waiting " & delaySeconds & " seconds before next iteration..."
+    
+    startTime = Timer
+    Do While Timer < startTime + delaySeconds
+        DoEvents
+        If Not HandleUserInteraction Then Exit Do
+    Loop
+End Sub
+
+Private Function ValidateDataStructure(ByRef ws As Worksheet) As Boolean
+    Dim lastCol As Long
+    Dim headerRange As Range
     Dim cell As Range
     
-    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    ' Check if worksheet has data
+    If ws.Cells(1, 1).Value = "" Then
+        ValidateDataStructure = False
+        Exit Function
+    End If
     
-    ' Check for empty headers
-    For Each cell In ws.Range(ws.Cells(1, 1), ws.Cells(1, lastCol))
+    ' Check headers
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    Set headerRange = ws.Range(ws.Cells(1, 1), ws.Cells(1, lastCol))
+    
+    For Each cell In headerRange
         If Len(Trim(cell.Value)) = 0 Then
-            ValidateHeaders = False
+            ValidateDataStructure = False
             Exit Function
         End If
     Next cell
     
-    ValidateHeaders = True
+    ValidateDataStructure = True
 End Function
 
-' Helper function to check if a worksheet exists
+Private Sub DisplayProcessingResults()
+    Dim msg As String
+    
+    msg = "Processing completed successfully." & vbNewLine & vbNewLine & _
+          "Total records processed: " & FormatNumber(gStats.TotalRecords) & vbNewLine & _
+          "Approved records: " & FormatNumber(gStats.ApprovedRecords) & vbNewLine & _
+          "Samples created: " & FormatNumber(gStats.SamplesCreated) & vbNewLine & _
+          "Processing time: " & FormatNumber(gStats.ProcessingTime) & " seconds" & vbNewLine & _
+          "Error count: " & FormatNumber(gStats.ErrorCount)
+    
+    MsgBox msg, vbInformation, "Processing Results"
+End Sub
+
+Private Function GetColumnByHeaderName(ByRef ws As Worksheet, ByVal headerName As String) As Long
+    Dim lastCol As Long
+    Dim col As Long
+    
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    
+    For col = 1 To lastCol
+        If StrComp(ws.Cells(1, col).Value, headerName, vbTextCompare) = 0 Then
+            GetColumnByHeaderName = col
+            Exit Function
+        End If
+    Next col
+    
+    GetColumnByHeaderName = 0
+End Function
+
+Private Function GetUniqueSheetName(ByVal baseName As String) As String
+    Dim counter As Long
+    Dim proposedName As String
+    
+    counter = 1
+    proposedName = baseName
+    
+    Do While WorksheetExists(proposedName)
+        counter = counter + 1
+        proposedName = baseName & counter
+    Loop
+    
+    GetUniqueSheetName = proposedName
+End Function
+
 Private Function WorksheetExists(ByVal wsName As String) As Boolean
     Dim ws As Worksheet
     
@@ -487,18 +657,11 @@ Private Function WorksheetExists(ByVal wsName As String) As Boolean
     WorksheetExists = Not ws Is Nothing
 End Function
 
-' Helper function to get a unique sheet name
-Private Function GetUniqueSheetName(ByVal baseName As String) As String
-    Dim counter As Long
-    Dim proposedName As String
-    
-    counter = 1
-    proposedName = baseName
-    
-    Do While WorksheetExists(proposedName)
-        counter = counter + 1
-        proposedName = baseName & "_" & counter
-    Loop
-    
-    GetUniqueSheetName = proposedName
+Private Sub UpdateStatus(ByVal statusText As String)
+    Application.StatusBar = statusText
+    DoEvents
+End Sub
+
+Private Function FormatNumber(ByVal number As Double) As String
+    FormatNumber = Format(number, "#,##0.00")
 End Function
