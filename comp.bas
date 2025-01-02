@@ -6,8 +6,15 @@ Sub ProcessCSVData()
     Range("A1").Select
     ActiveSheet.ListObjects.Add(xlSrcRange, Range("A1").CurrentRegion, , xlYes).Name = "DataTable"
     
-    'Remove blank rows
-    Range("A1").CurrentRegion.SpecialCells(xlCellTypeBlanks).EntireRow.Delete
+    'Remove blank rows - modified approach
+    Dim lastRow As Long
+    lastRow = Cells(Rows.Count, "A").End(xlUp).Row
+    
+    For i = lastRow To 1 Step -1
+        If WorksheetFunction.CountA(Rows(i)) = 0 Then
+            Rows(i).Delete
+        End If
+    Next i
     
     'Filter for Approved status
     ActiveSheet.ListObjects("DataTable").Range.AutoFilter Field:=Application.WorksheetFunction.Match("Review Status", Range("1:1"), 0), Criteria1:="Approved"
