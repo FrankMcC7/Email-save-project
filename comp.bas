@@ -16,7 +16,6 @@ Sub AutomatedDataProcessing()
     Dim reviewStatusCol As Long
     Dim lastRow As Long, lastCol As Long
     Dim rng As Range
-    Dim cell As Range
     Dim i As Long, j As Long
     Dim sampleSheets As Collection
     Dim sampleSheet As Worksheet
@@ -51,7 +50,7 @@ Sub AutomatedDataProcessing()
     End With
     
     ' Determine file extension
-    fileExt = LCase(Right(rawFilePath, Len(rawFilePath) - InStrRev(rawFilePath, ".")))
+    fileExt = LCase(Mid(rawFilePath, InStrRev(rawFilePath, ".") + 1))
     
     ' Open or Import the raw data file
     If fileExt = "csv" Then
@@ -134,6 +133,7 @@ Sub AutomatedDataProcessing()
     Application.DisplayAlerts = False
     wsRaw.Delete
     Application.DisplayAlerts = True
+    Set wsRaw = Nothing ' **Set wsRaw to Nothing after deletion**
     
     ' Check if there is data to process
     approvedDataRows = wsApproved.Cells(wsApproved.Rows.Count, 1).End(xlUp).Row
