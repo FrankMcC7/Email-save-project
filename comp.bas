@@ -147,6 +147,8 @@ Sub AutomatedDataProcessing()
     Do While isRunning
         Set sampleSheets = New Collection
         
+        ' Suppress alerts before deleting sample sheets
+        Application.DisplayAlerts = False
         ' Create 5 sample sheets
         For i = 1 To 5
             On Error Resume Next
@@ -154,12 +156,14 @@ Sub AutomatedDataProcessing()
             If Not sampleSheet Is Nothing Then
                 sampleSheet.Delete
             End If
-            On Error GoTo Cleanup
+            On Error GoTo 0
             
             Set sampleSheet = Worksheets.Add(After:=Worksheets(Worksheets.Count))
             sampleSheet.Name = "Sample" & i
             sampleSheets.Add sampleSheet
         Next i
+        ' Restore alerts after deletion
+        Application.DisplayAlerts = True
         
         ' Copy headers from "ApprovedData"
         Set headerRange = wsApproved.Rows(1)
@@ -211,10 +215,14 @@ Sub AutomatedDataProcessing()
             End If
         Loop
         
+        ' Suppress alerts before deleting sample sheets
+        Application.DisplayAlerts = False
         ' Delete all sample sheets
         For Each sampleSheet In sampleSheets
             sampleSheet.Delete
         Next sampleSheet
+        ' Restore alerts after deletion
+        Application.DisplayAlerts = True
     Loop
     
     MsgBox "Macro execution stopped by user.", vbInformation
