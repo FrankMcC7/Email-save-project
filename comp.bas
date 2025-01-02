@@ -1,5 +1,12 @@
 Option Explicit
 
+' Declare API function for key state
+#If VBA7 Then
+    Private Declare PtrSafe Function GetAsyncKeyState Lib "user32" (ByVal vKey As Long) As Integer
+#Else
+    Private Declare Function GetAsyncKeyState Lib "user32" (ByVal vKey As Long) As Integer
+#End If
+
 Sub AutomatedDataProcessing()
     Dim rawFilePath As String
     Dim wbRaw As Workbook
@@ -217,8 +224,8 @@ Cleanup:
     Application.ScreenUpdating = True
     Application.Calculation = xlCalculationAutomatic
     On Error Resume Next
-    Worksheets("RawData").AutoFilterMode = False
-    Worksheets("ApprovedData").AutoFilterMode = False
+    If Not wsRaw Is Nothing Then wsRaw.AutoFilterMode = False
+    If Not wsApproved Is Nothing Then wsApproved.AutoFilterMode = False
     On Error GoTo 0
 End Sub
 
@@ -254,10 +261,3 @@ Function ImportCSV(filePath As String) As Worksheet
     
     Set ImportCSV = ws
 End Function
-
-' Declare API function for key state
-#If VBA7 Then
-    Private Declare PtrSafe Function GetAsyncKeyState Lib "user32" (ByVal vKey As Long) As Integer
-#Else
-    Private Declare Function GetAsyncKeyState Lib "user32" (ByVal vKey As Long) As Integer
-#End If
