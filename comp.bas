@@ -27,6 +27,7 @@ Sub AutomatedDataProcessing()
     Dim fDialog As FileDialog
     Dim fileSelected As Boolean
     Dim fileExt As String
+    Dim lastHeaderCol As Long
     
     ' Initialize
     Application.ScreenUpdating = False
@@ -149,26 +150,49 @@ Sub AutomatedDataProcessing()
         
         ' Suppress alerts before deleting sample sheets
         Application.DisplayAlerts = False
-        ' Create 5 sample sheets
+        
+        ' Delete existing Sample sheets if they exist
         For i = 1 To 5
             On Error Resume Next
             Set sampleSheet = Worksheets("Sample" & i)
             If Not sampleSheet Is Nothing Then
                 sampleSheet.Delete
             End If
+            Set sampleSheet = Nothing
             On Error GoTo 0
-            
+        Next i
+        
+        ' Restore alerts after deletion
+        Application.DisplayAlerts = True
+        
+        ' Create 5 new Sample sheets
+        For i = 1 To 5
             Set sampleSheet = Worksheets.Add(After:=Worksheets(Worksheets.Count))
             sampleSheet.Name = "Sample" & i
             sampleSheets.Add sampleSheet
         Next i
-        ' Restore alerts after deletion
-        Application.DisplayAlerts = True
         
-        ' Copy headers from "ApprovedData"
-        Set headerRange = wsApproved.Rows(1)
+        ' Verify that wsApproved has headers
+        If wsApproved.Cells(1, 1).Value = "" Then
+            MsgBox """ApprovedData"" sheet does not contain headers in the first row.", vbCritical
+            GoTo Cleanup
+        End If
+        
+        ' Determine the last used column in the header row
+        lastHeaderCol = wsApproved.Cells(1, wsApproved.Columns.Count).End(xlToLeft).Column
+        
+        ' Set the headerRange to only include used columns
+        Set headerRange = wsApproved.Range(wsApproved.Cells(1, 1), wsApproved.Cells(1, lastHeaderCol))
+        
+        ' Verify that headerRange is set correctly
+        If headerRange Is Nothing Then
+            MsgBox "Failed to set header range. Please check the ""ApprovedData"" sheet.", vbCritical
+            GoTo Cleanup
+        End If
+        
+        ' Copy headers to each sample sheet
         For Each sampleSheet In sampleSheets
-            headerRange.Copy Destination:=sampleSheet.Rows(1)
+            headerRange.Copy Destination:=sampleSheet.Range("A1")
         Next sampleSheet
         
         ' Prepare for random selection
@@ -187,7 +211,7 @@ Sub AutomatedDataProcessing()
         
         ' Distribute samples to each sample sheet
         For Each sampleSheet In sampleSheets
-            ' Optional: Clear previous data
+            ' Optional: Clear previous data except headers
             sampleSheet.Rows("2:" & sampleSheet.Rows.Count).ClearContents
             
             If randIndices.Count - 1 >= 100 Then
