@@ -2,8 +2,10 @@ Option Explicit
 
 ' Configuration Constants
 Private Const SAMPLE_SIZE As Long = 100
-Private Const SAMPLE_SHEETS As Long = 5
-Private Const REFRESH_INTERVAL As Long = 5 ' seconds
+Private Const MIN_SAMPLE_SHEETS As Long = 5
+Private Const MAX_SAMPLE_SHEETS As Long = 15
+Private Const MIN_REFRESH_INTERVAL As Long = 5  ' seconds
+Private Const MAX_REFRESH_INTERVAL As Long = 30 ' seconds
 Private Const LOG_FILE_PATH As String = "DataProcessing_Log.txt"
 
 ' API Declarations
@@ -83,7 +85,7 @@ Sub AutomatedDataProcessing()
         Call UpdateStatus("Processing complete. Samples created: " & stats.SamplesCreated)
         
         ' Pause between iterations
-        Call ProcessingDelay(REFRESH_INTERVAL)
+        Call ProcessingDelay()
     Loop
     
     MsgBox "Processing completed successfully." & vbNewLine & _
@@ -318,8 +320,13 @@ Private Function PrepareSampleSheets() As Collection
     Next i
     Application.DisplayAlerts = True
     
+    ' Randomly determine number of sample sheets
+    Randomize
+    Dim numSheets As Long
+    numSheets = Int((MAX_SAMPLE_SHEETS - MIN_SAMPLE_SHEETS + 1) * Rnd + MIN_SAMPLE_SHEETS)
+    
     ' Create new sample sheets
-    For i = 1 To SAMPLE_SHEETS
+    For i = 1 To numSheets
         Set sampleSheet = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
         sampleSheet.Name = "Sample" & i
         sampleSheets.Add sampleSheet
@@ -381,11 +388,19 @@ Private Function CheckContinueProcessing() As Boolean
     CheckContinueProcessing = (GetAsyncKeyState(vbKeyEscape) = 0)
 End Function
 
-Private Sub ProcessingDelay(ByVal seconds As Long)
+Private Sub ProcessingDelay()
     Dim startTime As Double
-    startTime = Timer
+    Dim delaySeconds As Long
     
-    Do While Timer < startTime + seconds
+    ' Generate random delay between MIN_REFRESH_INTERVAL and MAX_REFRESH_INTERVAL
+    Randomize
+    delaySeconds = Int((MAX_REFRESH_INTERVAL - MIN_REFRESH_INTERVAL + 1) * Rnd + MIN_REFRESH_INTERVAL)
+    
+    ' Update status to show wait time
+    UpdateStatus "Waiting for " & delaySeconds & " seconds before next iteration..."
+    
+    startTime = Timer
+    Do While Timer < startTime + delaySeconds
         DoEvents
         If Not CheckContinueProcessing Then Exit Sub
     Loop
