@@ -373,18 +373,16 @@ End Function
 ' ---------------------------------------------------
 Private Sub PreprocessRawData(ByVal ws As Worksheet)
     On Error GoTo ErrorHandler
-
-    ' 1) Delete the very first row
+    
+    ' 1) Delete the original first row
     ws.Rows(1).Delete Shift:=xlUp
     
-    ' 2) Convert the remaining data to an Excel Table
+    ' 2) Identify the new used range
     Dim lastRow As Long, lastCol As Long
     lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
     lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
     
-    If lastRow < 1 Or lastCol < 1 Then
-        Exit Sub
-    End If
+    If lastRow < 1 Or lastCol < 1 Then Exit Sub
     
     Dim dataRange As Range
     Set dataRange = ws.Range(ws.Cells(1, 1), ws.Cells(lastRow, lastCol))
@@ -395,19 +393,24 @@ Private Sub PreprocessRawData(ByVal ws As Worksheet)
         lo.Delete
     Next lo
     
-    ' Create new ListObject (Excel Table)
+    ' 3) Create a new table
     Dim newTable As ListObject
-    Set newTable = ws.ListObjects.Add(xlSrcRange, dataRange, , xlYes)
+    Set newTable = ws.ListObjects.Add( _
+        SourceType:=xlSrcRange, _
+        Source:=dataRange, _
+        XlListObjectHasHeaders:=xlYes _
+    )
     newTable.Name = "RawDataTable"
     
-    ' 3) Delete any blank rows in the new table
+    ' 4) (Optional) Remove any blank rows from the table
     RemoveBlankRows ws, newTable
     
     Exit Sub
-
+    
 ErrorHandler:
     MsgBox "Error in PreprocessRawData: " & Err.Description, vbCritical
 End Sub
+
 
 Private Sub RemoveBlankRows(ByVal ws As Worksheet, ByVal tbl As ListObject)
     On Error GoTo ErrorHandler
