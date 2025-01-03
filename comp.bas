@@ -234,6 +234,29 @@ Private Sub ProcessContinuously(ByVal wsMaster As Worksheet)
     Dim lastRow As Long
     Dim randRows() As Long
     Dim pauseTime As Long
+    Dim controlSheet As Worksheet
+    
+    ' Create or get control sheet
+    If Not SheetExists("Control") Then
+        Set controlSheet = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        controlSheet.Name = "Control"
+        
+        ' Add stop button using a shape
+        Dim btnStop As Shape
+        Set btnStop = controlSheet.Shapes.AddShape(msoShapeRectangle, 10, 10, 100, 30)
+        With btnStop
+            .Fill.ForeColor.RGB = RGB(255, 0, 0)
+            .TextFrame.Characters.Text = "Stop Process"
+            .OnAction = "StopProcess"
+        End With
+        
+        ' Add status cell
+        controlSheet.Range("A1").Value = "Process Status:"
+        controlSheet.Range("B1").Value = "Running"
+    End If
+    
+    Set controlSheet = ThisWorkbook.Sheets("Control")
+    controlSheet.Range("B1").Value = "Running"
     
     Do
         ' Create 5 sheets with random data
@@ -270,7 +293,19 @@ Private Sub ProcessContinuously(ByVal wsMaster As Worksheet)
         Application.DisplayAlerts = True
         
         DoEvents ' Allow for user interruption
+        
+        ' Check if process should stop
+        If controlSheet.Range("B1").Value = "Stopped" Then
+            Exit Do
+        End If
     Loop
+    
+    ' Clean up
+    Application.DisplayAlerts = False
+    If SheetExists("Control") Then
+        ThisWorkbook.Sheets("Control").Delete
+    End If
+    Application.DisplayAlerts = True
     
     Exit Sub
     
@@ -339,4 +374,12 @@ End Sub
 ' Raise custom error
 Private Sub RaiseError(ByVal errorNumber As Long, ByVal errorMessage As String)
     Err.Raise errorNumber, "ProcessDataset", errorMessage
+End Sub
+
+Public Sub StopProcess()
+    ' This procedure is called by the Stop button
+    On Error Resume Next
+    If SheetExists("Control") Then
+        ThisWorkbook.Sheets("Control").Range("B1").Value = "Stopped"
+    End If
 End Sub
