@@ -4,6 +4,7 @@ Option Explicit
 Private Const ERR_NO_FILE_SELECTED As Long = 1001
 Private Const ERR_NO_DATA As Long = 1002
 Private Const ERR_SHEET_EXISTS As Long = 1003
+Private Const ERR_INSUFFICIENT_DATA As Long = 1004
 Private Const SHEET_PREFIX As String = "RandomData_"
 Private Const MASTER_SHEET_NAME As String = "ApprovedData"
 Private Const REVIEW_STATUS_COLUMN As String = "Review Status"
@@ -284,11 +285,21 @@ Private Sub GetRandomRows(ByVal totalRows As Long, ByRef randRows() As Long)
     Dim i As Long
     Dim temp As Long
     Dim usedRows() As Boolean
+    Dim numRowsToGet As Long
     
-    ReDim usedRows(2 To totalRows) ' Skip header row
+    ' Calculate how many rows we need
+    numRowsToGet = UBound(randRows)
+    
+    ' Make sure we don't try to get more rows than available
+    If numRowsToGet > (totalRows - 1) Then
+        Err.Raise ERR_NO_DATA, "GetRandomRows", "Not enough rows in source data"
+    End If
+    
+    ' Initialize tracking array (subtract 1 to account for header)
+    ReDim usedRows(1 To totalRows - 1)
     
     ' Generate random rows
-    For i = 1 To UBound(randRows)
+    For i = 1 To numRowsToGet
         Do
             ' Generate random row number (skip header row)
             temp = Int((totalRows - 1) * Rnd + 2)
