@@ -276,23 +276,103 @@ Private Sub RestoreAppState()
     End With
 End Sub
 
-' [Previous support functions remain the same]
+Private Sub DeleteSampleSheets()
+    Dim i As Long
+    Dim ws As Worksheet
+    
+    Application.DisplayAlerts = False
+    For i = 1 To 5
+        If SheetExists(SHEET_PREFIX & i) Then
+            ThisWorkbook.Sheets(SHEET_PREFIX & i).Delete
+        End If
+    Next i
+    Application.DisplayAlerts = True
+End Sub
+
+Private Sub RemoveBlankRows(ByVal ws As Worksheet)
+    On Error GoTo ErrorHandler
+    
+    Dim lastRow As Long
+    Dim i As Long
+    
+    lastRow = GetLastRow(ws)
+    For i = lastRow To 1 Step -1
+        If WorksheetFunction.CountA(ws.Rows(i)) = 0 Then
+            ws.Rows(i).Delete
+        End If
+    Next i
+    
+    Exit Sub
+    
+ErrorHandler:
+    Err.Raise Err.Number, "RemoveBlankRows", "Error removing blank rows: " & Err.Description
+End Sub
+
 Private Sub GetRandomRows(ByVal totalRows As Long, ByRef randRows() As Long)
-    ' ... [Same as before]
+    On Error GoTo ErrorHandler
+    
+    Dim i As Long
+    Dim temp As Long
+    Dim usedRows() As Boolean
+    Dim numRowsToGet As Long
+    
+    ' Calculate how many rows we need
+    numRowsToGet = UBound(randRows)
+    
+    ' Make sure we don't try to get more rows than available
+    If numRowsToGet > (totalRows - 1) Then
+        Err.Raise ERR_INSUFFICIENT_DATA, "GetRandomRows", "Not enough rows in source data"
+    End If
+    
+    ' Initialize tracking array (subtract 1 to account for header)
+    ReDim usedRows(1 To totalRows - 1)
+    
+    ' Generate random rows
+    For i = 1 To numRowsToGet
+        Do
+            ' Generate random row number (skip header row)
+            temp = Int((totalRows - 1) * Rnd + 2)
+        Loop Until Not usedRows(temp - 1)
+        
+        randRows(i) = temp
+        usedRows(temp - 1) = True
+    Next i
+    
+    Exit Sub
+    
+ErrorHandler:
+    Err.Raise Err.Number, "GetRandomRows", "Error generating random rows: " & Err.Description
 End Sub
 
 Private Function GetLastRow(ByVal ws As Worksheet) As Long
-    ' ... [Same as before]
+    On Error Resume Next
+    GetLastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    If Err.Number <> 0 Then GetLastRow = 0
 End Function
 
 Private Function GetLastColumn(ByVal ws As Worksheet) As Long
-    ' ... [Same as before]
+    On Error Resume Next
+    GetLastColumn = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    If Err.Number <> 0 Then GetLastColumn = 0
 End Function
 
 Private Function SheetExists(ByVal sheetName As String) As Boolean
-    ' ... [Same as before]
+    Dim ws As Worksheet
+    
+    On Error Resume Next
+    Set ws = ThisWorkbook.Sheets(sheetName)
+    On Error GoTo 0
+    
+    SheetExists = Not ws Is Nothing
 End Function
 
+Private Sub RaiseError(ByVal errorNumber As Long, ByVal errorMessage As String)
+    Err.Raise errorNumber, "ProcessDataset", errorMessage
+End Sub
+
 Public Sub StopProcess()
-    ' ... [Same as before]
+    On Error Resume Next
+    If SheetExists("Control") Then
+        ThisWorkbook.Sheets("Control").Range("B1").Value = "Stopped"
+    End If
 End Sub
