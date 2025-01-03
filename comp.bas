@@ -99,17 +99,20 @@ Public Sub AutomatedDataProcessing()
     Dim wsRaw As Worksheet
     Set wsRaw = ImportData(rawFilePath)
     
-    ' 5. Validate the imported worksheet (headers, data presence, etc.).
+    ' 5. PREPROCESS: Delete 1st row, convert to table, remove blank rows.
+    PreprocessRawData wsRaw
+    
+    ' 6. Validate the preprocessed worksheet.
     If Not ValidateWorksheet(wsRaw) Then
         Err.Raise ProcessingError.ERR_INVALID_DATA, "AutomatedDataProcessing", _
                   "Worksheet is invalid or contains no usable data."
     End If
     
-    ' 6. Process raw data in chunks (filter "APPROVED" → "ApprovedData" sheet).
+    ' 7. Process raw data in chunks (filter "APPROVED" → "ApprovedData" sheet).
     Dim wsApproved As Worksheet
     Set wsApproved = ProcessRawDataInChunks(wsRaw)
     
-    ' 7. Begin the sampling process.
+    ' 8. Begin the sampling process (iterates as long as gIsProcessing).
     gIsProcessing = True
     Do While gIsProcessing And Not gCancelled
         If Not ProcessSampleBatch(wsApproved) Then Exit Do
@@ -117,13 +120,13 @@ Public Sub AutomatedDataProcessing()
         Call ProcessingDelay
     Loop
     
-    ' 8. Display results if user did not cancel.
+    ' 9. Display results if user did not cancel.
     If Not gCancelled Then
         DisplayProcessingResults
     End If
 
 Cleanup:
-    ' 9. Final cleanup (restore environment).
+    ' 10. Final cleanup (restore environment).
     CleanupEnvironment
     Exit Sub
 
@@ -320,7 +323,7 @@ End Function
 '  CSV/EXCEL IMPORT PLACEHOLDERS
 ' ---------------------------------------------------
 Private Function ImportCSVWithProgress(ByVal filePath As String) As Worksheet
-    ' TODO: Implement CSV-specific import logic
+    ' TODO: Implement CSV-specific import logic to meet your exact needs
     ' For demonstration, we simply open the CSV and copy to a new worksheet.
     
     Dim wbTemp As Workbook
@@ -331,7 +334,7 @@ Private Function ImportCSVWithProgress(ByVal filePath As String) As Worksheet
     Set wbTemp = Workbooks.Open(filePath)
     Set wsTemp = wbTemp.Sheets(1)
     
-    ' Copy contents to new worksheet in ThisWorkbook
+    ' Copy contents to a new worksheet in ThisWorkbook
     Dim wsNew As Worksheet
     Set wsNew = ThisWorkbook.Worksheets.Add
     wsTemp.UsedRange.Copy wsNew.Range("A1")
@@ -343,7 +346,7 @@ Private Function ImportCSVWithProgress(ByVal filePath As String) As Worksheet
 End Function
 
 Private Function ImportExcelWithProgress(ByVal filePath As String) As Worksheet
-    ' TODO: Implement Excel-specific import logic
+    ' TODO: Implement Excel-specific import logic to meet your exact needs
     ' For demonstration, just open the file, copy the first sheet into ThisWorkbook.
 
     Dim wbTemp As Workbook
@@ -364,6 +367,73 @@ Private Function ImportExcelWithProgress(ByVal filePath As String) As Worksheet
     wsNew.Name = "RawData_Excel"
     Set ImportExcelWithProgress = wsNew
 End Function
+
+' ---------------------------------------------------
+'  RAW DATA PREPROCESSING
+' ---------------------------------------------------
+Private Sub PreprocessRawData(ByVal ws As Worksheet)
+    On Error GoTo ErrorHandler
+
+    ' 1) Delete the very first row
+    ws.Rows(1).Delete Shift:=xlUp
+    
+    ' 2) Convert the remaining data to an Excel Table
+    Dim lastRow As Long, lastCol As Long
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    
+    If lastRow < 1 Or lastCol < 1 Then
+        Exit Sub
+    End If
+    
+    Dim dataRange As Range
+    Set dataRange = ws.Range(ws.Cells(1, 1), ws.Cells(lastRow, lastCol))
+    
+    ' Remove any existing tables on this sheet
+    Dim lo As ListObject
+    For Each lo In ws.ListObjects
+        lo.Delete
+    Next lo
+    
+    ' Create new ListObject (Excel Table)
+    Dim newTable As ListObject
+    Set newTable = ws.ListObjects.Add(xlSrcRange, dataRange, , xlYes)
+    newTable.Name = "RawDataTable"
+    
+    ' 3) Delete any blank rows in the new table
+    RemoveBlankRows ws, newTable
+    
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Error in PreprocessRawData: " & Err.Description, vbCritical
+End Sub
+
+Private Sub RemoveBlankRows(ByVal ws As Worksheet, ByVal tbl As ListObject)
+    On Error GoTo ErrorHandler
+    
+    Dim r As Long
+    Dim tblDataRange As Range
+    
+    If tbl.DataBodyRange Is Nothing Then
+        Exit Sub
+    End If
+    
+    Set tblDataRange = tbl.DataBodyRange
+    
+    ' Iterate from bottom to top so we don't skip rows after deleting
+    For r = tblDataRange.Rows.Count To 1 Step -1
+        If Application.CountA(tblDataRange.Rows(r)) = 0 Then
+            ' Delete entire row on the sheet
+            tblDataRange.Rows(r).EntireRow.Delete
+        End If
+    Next r
+    
+    Exit Sub
+    
+ErrorHandler:
+    MsgBox "Error removing blank rows: " & Err.Description, vbCritical
+End Sub
 
 ' ---------------------------------------------------
 '  DATA VALIDATION
@@ -441,7 +511,7 @@ Private Function ProcessRawDataInChunks(ByRef wsRaw As Worksheet) As Worksheet
     ' Process data in CHUNK_SIZE increments
     lastRow = wsRaw.Cells(wsRaw.Rows.Count, 1).End(xlUp).Row
     Dim chunkStart As Long, chunkEnd As Long
-    chunkStart = 2 ' skip header
+    chunkStart = 2 ' skip header row
     
     Do While chunkStart <= lastRow And Not gCancelled
         chunkEnd = Application.Min(chunkStart + CHUNK_SIZE - 1, lastRow)
@@ -601,7 +671,7 @@ Private Sub GenerateRandomSample(ByRef wsSource As Worksheet, ByRef wsTarget As 
     ' Fill target array
     For i = 1 To UBound(randomRows)
         For j = 1 To sourceCols
-            ' randomRows(i) - 1 because dataRange starts at row 2 in the sheet
+            ' randomRows(i) - 1 because dataRange starts at row 2
             targetData(i, j) = sourceData(randomRows(i) - 1, j)
         Next j
     Next i
