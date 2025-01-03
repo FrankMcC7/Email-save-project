@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+parser.add_argument("--input", default="C:/MyLogs/ActivityLog.txt", help="Path to the .txt (or .json) log file.")
 
 import json
 import re
