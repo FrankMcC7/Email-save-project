@@ -1,0 +1,31 @@
+Let's fix that. First, you need to install pip-review:
+
+```bash
+pip install pip-review
+```
+
+If that doesn't work, try:
+```bash
+python -m pip install pip-review
+```
+
+If you're still getting the "not recognized" error, let's use the alternative method which works on all systems:
+
+```bash
+# First, see your outdated packages
+pip list --outdated
+
+# Then update all packages (for Windows)
+pip freeze | %{$_.split('==')[0]} | %{pip install --upgrade $_}
+```
+
+Or you can do it in two simple steps:
+```bash
+# Step 1: Create a requirements file
+pip freeze > requirements.txt
+
+# Step 2: Upgrade all packages from the requirements file
+pip install -r requirements.txt --upgrade
+```
+
+Are you getting any specific error messages? Let me know if you need help with any of these methods.
