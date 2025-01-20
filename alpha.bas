@@ -108,7 +108,48 @@ Sub ProcessAllData()
     Set wbAllFunds = Workbooks.Open(allFundsFile, UpdateLinks:=False, ReadOnly:=True)
     Set allFundsSheet = wbAllFunds.Sheets(1)
     
-    ' Load data into memory
+    ' Always delete the first row
+    allFundsSheet.Rows(1).Delete
+    
+    ' Clean up the All Funds sheet
+    With allFundsSheet
+        
+        ' Find the actual header row (the one with "Fund GCI", "IA GCI", etc.)
+        Dim headerRow As Long
+        headerRow = 1
+        Do While headerRow <= .UsedRange.Rows.Count
+            If Not IsEmpty(.Cells(headerRow, 1)) Then
+                Dim headerFound As Boolean
+                headerFound = False
+                For i = 1 To .UsedRange.Columns.Count
+                    If Trim(CStr(.Cells(headerRow, i).Value)) Like "*Fund GCI*" Or _
+                       Trim(CStr(.Cells(headerRow, i).Value)) Like "*IA GCI*" Then
+                        headerFound = True
+                        Exit For
+                    End If
+                Next i
+                If headerFound Then Exit Do
+            End If
+            headerRow = headerRow + 1
+        Loop
+        
+        ' Delete any rows above the header row if needed
+        If headerRow > 1 Then
+            .Rows("1:" & headerRow - 1).Delete
+        End If
+        
+        ' Clean up header row - trim spaces and remove any special characters
+        For i = 1 To .UsedRange.Columns.Count
+            Dim headerValue As String
+            headerValue = Trim(.Cells(1, i).Value)
+            headerValue = Replace(headerValue, vbLf, "")
+            headerValue = Replace(headerValue, vbCr, "")
+            headerValue = Replace(headerValue, vbNewLine, "")
+            .Cells(1, i).Value = headerValue
+        Next i
+    End With
+    
+    ' Now load the cleaned data into memory
     Set dictFundGCI = CreateObject("Scripting.Dictionary")
     Set dictLatestNAVDate = CreateObject("Scripting.Dictionary")
     
@@ -118,8 +159,8 @@ Sub ProcessAllData()
     Dim fundGCICol As Long, iaGCICol As Long, latestNAVCol As Long, statusCol As Long
     fundGCICol = 0: iaGCICol = 0: latestNAVCol = 0: statusCol = 0
     
-    ' Debug print the headers
-    Debug.Print "All Funds Headers:"
+    ' Debug print the cleaned headers
+    Debug.Print "All Funds Headers after cleaning:"
     For i = 1 To UBound(dataArray, 2)
         Debug.Print i & ": " & dataArray(1, i)
         Select Case Trim(CStr(dataArray(1, i)))
