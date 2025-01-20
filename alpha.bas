@@ -8,29 +8,18 @@ Sub ProcessAllData()
     Dim triggerFile As String, allFundsFile As String, nonTriggerFile As String
     Dim triggerSheet As Worksheet, allFundsSheet As Worksheet, nonTriggerSheet As Worksheet
     Dim triggerTable As ListObject, portfolioTable As ListObject, allFundsTable As ListObject, nonTriggerTable As ListObject
-    Dim dictFundGCI As Object, dictDataset As Object, dictLatestNAVDate As Object
-    Dim fundGCIArray As Variant, resultArray As Variant, navDateArray As Variant
-    Dim i As Long, lastRowPortfolio As Long
-    Dim triggerColIndex As Long
-    Dim startTime As Double
-    Dim wsDataset As Worksheet
-    Dim datasetTable As ListObject
-    Dim portfolioFundManagerGCI As Variant
-    Dim portfolioFamily As Variant
-    Dim portfolioECAAnalyst As Variant
-    Dim datasetFundManagerGCI As Variant
-    Dim datasetFamily As Variant
-    Dim datasetECAAnalyst As Variant
-    Dim numRowsPortfolio As Long
-    Dim numRowsDataset As Long
+    Dim dictFundGCI As Object, dictLatestNAVDate As Object
+    Dim i As Long, j As Long
     Dim baseFolder As String
-    Dim headers As Variant
-    Dim fundGCICol As Range, iaGCICol As Range, latestNAVDateCol As Range
-    Dim lastRowPF As Long
-    Dim sourceHeaders As Variant, destHeaders As Variant
-    Dim numRowsToCopy As Long
-    Dim arrIdx As Long
-    Dim nonTriggerLObj As ListObject
+    Dim dataArray As Variant
+    Dim triggerHeaders As Variant, nonTriggerHeaders As Variant
+    Dim headerMapping As Object
+    
+    ' Additional Performance Optimizations
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
     
     ' Define file paths - MODIFY THIS PATH TO MATCH YOUR ENVIRONMENT
     baseFolder = "C:\Data\NAV Reports\"  
@@ -41,204 +30,178 @@ Sub ProcessAllData()
     On Error GoTo ErrorHandler
 
     ' Verify file existence
-    If Dir(triggerFile) = "" Then
-        MsgBox "Trigger.csv not found at: " & triggerFile, vbCritical
-        Exit Sub
+    If Dir(triggerFile) = "" Or Dir(allFundsFile) = "" Or Dir(nonTriggerFile) = "" Then
+        MsgBox "One or more required files not found. Please check paths.", vbCritical
+        GoTo CleanUp
     End If
-    If Dir(allFundsFile) = "" Then
-        MsgBox "All Funds.csv not found at: " & allFundsFile, vbCritical
-        Exit Sub
-    End If
-    If Dir(nonTriggerFile) = "" Then
-        MsgBox "Non-Trigger.csv not found at: " & nonTriggerFile, vbCritical
-        Exit Sub
-    End If
-
-    ' Optimize performance
-    Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
-    Application.EnableEvents = False
-
-    ' Record the start time
-    startTime = Timer
 
     ' Set up the Portfolio sheet
     Set wbMaster = ThisWorkbook
     Set wsPortfolio = wbMaster.Sheets("Portfolio")
+    
+    ' Create header mapping dictionary
+    Set headerMapping = CreateObject("Scripting.Dictionary")
+    With headerMapping
+        .Add "Region", "Region"
+        .Add "Fund Manager", "Fund Manager"
+        .Add "Fund GCI", "Fund GCI"
+        .Add "Fund Name", "Fund Name"
+        .Add "Wks Missing", "Wks Missing"
+        .Add "Credit Officer", "Credit Officer"
+        .Add "Req NAV Date", "Required NAV Date"
+        .Add "Latest NAV Date", "Latest NAV Date"
+        .Add "Family", "Family"
+    End With
 
-    ' Ensure the Portfolio sheet is converted to a table
+    ' === Step 1: Set up Portfolio Table ===
     On Error Resume Next
     Set portfolioTable = wsPortfolio.ListObjects("PortfolioTable")
     On Error GoTo 0
+    
     If portfolioTable Is Nothing Then
         Set portfolioTable = wsPortfolio.ListObjects.Add(xlSrcRange, wsPortfolio.UsedRange, , xlYes)
         portfolioTable.Name = "PortfolioTable"
     End If
 
-    ' Add new columns if they don't exist
-    On Error Resume Next
-    If portfolioTable.ListColumns("Latest NAV Date").Index = 0 Then
-        portfolioTable.ListColumns.Add.Name = "Latest NAV Date"
-    End If
-    If portfolioTable.ListColumns("Required NAV Date").Index = 0 Then
-        portfolioTable.ListColumns.Add.Name = "Required NAV Date"
-    End If
-    On Error GoTo 0
-
-    ' Clear existing data in the Portfolio table except headers
-    If Not portfolioTable.DataBodyRange Is Nothing Then
-        portfolioTable.DataBodyRange.Delete
-    End If
-
-    ' === Step 1: Process Trigger.csv ===
-    Set wbTrigger = Workbooks.Open(triggerFile)
-    Set triggerSheet = wbTrigger.Sheets(1)
-
-    ' Convert Trigger data to a table if it isn't already one
-    On Error Resume Next
-    Set triggerTable = triggerSheet.ListObjects(1)
-    On Error GoTo 0
-    If triggerTable Is Nothing Then
-        Set triggerTable = triggerSheet.ListObjects.Add(xlSrcRange, triggerSheet.UsedRange, , xlYes)
-        triggerTable.Name = "TriggerTable"
-    End If
-
-    ' Copy specific columns from Trigger.csv to Portfolio
-    headers = Array("Region", "Fund Manager", "Fund GCI", "Fund Name", "Wks Missing", "Credit Officer", "Req NAV Date")
-    lastRowPortfolio = portfolioTable.HeaderRowRange.Row + 1
-    For i = LBound(headers) To UBound(headers)
-        With triggerTable.ListColumns(headers(i)).DataBodyRange
-            If headers(i) = "Req NAV Date" Then
-                wsPortfolio.Cells(lastRowPortfolio, portfolioTable.ListColumns("Required NAV Date").Index).Resize(.Rows.Count, 1).Value = .Value
-            Else
-                wsPortfolio.Cells(lastRowPortfolio, portfolioTable.ListColumns(headers(i)).Index).Resize(.Rows.Count, 1).Value = .Value
-            End If
-        End With
+    ' Clear existing data and ensure required columns exist
+    If Not portfolioTable.DataBodyRange Is Nothing Then portfolioTable.DataBodyRange.Delete
+    
+    ' Ensure all required columns exist
+    Dim reqColumns As Variant
+    reqColumns = Array("Latest NAV Date", "Required NAV Date", "Trigger/Non-Trigger")
+    For i = LBound(reqColumns) To UBound(reqColumns)
+        On Error Resume Next
+        If portfolioTable.ListColumns(reqColumns(i)).Index = 0 Then
+            portfolioTable.ListColumns.Add.Name = reqColumns(i)
+        End If
+        On Error GoTo 0
     Next i
 
-    ' Replace Region values and populate Trigger/Non-Trigger column
-    triggerColIndex = portfolioTable.ListColumns("Trigger/Non-Trigger").Index
-    With portfolioTable.DataBodyRange
-        .Columns(portfolioTable.ListColumns("Region").Index).Replace What:="US", Replacement:="AMRS", LookAt:=xlWhole
-        .Columns(portfolioTable.ListColumns("Region").Index).Replace What:="ASIA", Replacement:="APAC", LookAt:=xlWhole
-        .Columns(triggerColIndex).Value = "Trigger"
-    End With
-
+    ' === Step 2: Process Trigger.csv using arrays ===
+    Set wbTrigger = Workbooks.Open(triggerFile, UpdateLinks:=False, ReadOnly:=True)
+    Set triggerSheet = wbTrigger.Sheets(1)
+    
+    ' Load entire trigger data into array for faster processing
+    dataArray = triggerSheet.UsedRange.Value
+    
+    ' Process trigger data in memory
+    Dim triggerData() As Variant
+    ReDim triggerData(1 To UBound(dataArray, 1) - 1, 1 To UBound(dataArray, 2))
+    
+    ' Copy and process data in memory
+    For i = 2 To UBound(dataArray, 1)
+        For j = 1 To UBound(dataArray, 2)
+            triggerData(i - 1, j) = dataArray(i, j)
+            ' Process regions inline
+            If j = 1 Then ' Assuming Region is first column
+                Select Case triggerData(i - 1, j)
+                    Case "US": triggerData(i - 1, j) = "AMRS"
+                    Case "ASIA": triggerData(i - 1, j) = "APAC"
+                End Select
+            End If
+        Next j
+    Next i
+    
     wbTrigger.Close SaveChanges:=False
-
-    ' === Step 2: Process All Funds.csv ===
-    Set wbAllFunds = Workbooks.Open(allFundsFile)
+    
+    ' === Step 3: Process All Funds.csv using arrays ===
+    Set wbAllFunds = Workbooks.Open(allFundsFile, UpdateLinks:=False, ReadOnly:=True)
     Set allFundsSheet = wbAllFunds.Sheets(1)
-
-    ' Delete the first row
-    allFundsSheet.Rows(1).Delete
-
-    ' Convert All Funds data to a table
-    On Error Resume Next
-    Set allFundsTable = allFundsSheet.ListObjects(1)
-    On Error GoTo 0
-    If allFundsTable Is Nothing Then
-        Set allFundsTable = allFundsSheet.ListObjects.Add(xlSrcRange, allFundsSheet.UsedRange, , xlYes)
-        allFundsTable.Name = "AllFundsTable"
-    End If
-
-    ' Filter Review Status to Approved
-    allFundsTable.Range.AutoFilter Field:=allFundsTable.ListColumns("Review Status").Index, Criteria1:="Approved"
-
-    ' Load Fund GCI, IA GCI, and Latest NAV Date into dictionaries
+    
+    ' Load data into memory
     Set dictFundGCI = CreateObject("Scripting.Dictionary")
     Set dictLatestNAVDate = CreateObject("Scripting.Dictionary")
-    Set fundGCICol = allFundsTable.ListColumns("Fund GCI").DataBodyRange
-    Set iaGCICol = allFundsTable.ListColumns("IA GCI").DataBodyRange
-    Set latestNAVDateCol = allFundsTable.ListColumns("Latest NAV Date").DataBodyRange
-
-    For i = 1 To fundGCICol.Rows.Count
-        If Not IsEmpty(fundGCICol.Cells(i, 1).Value) Then
-            If Not dictFundGCI.exists(fundGCICol.Cells(i, 1).Value) Then
-                dictFundGCI.Add fundGCICol.Cells(i, 1).Value, iaGCICol.Cells(i, 1).Value
-            End If
-            If Not dictLatestNAVDate.exists(fundGCICol.Cells(i, 1).Value) Then
-                dictLatestNAVDate.Add fundGCICol.Cells(i, 1).Value, latestNAVDateCol.Cells(i, 1).Value
+    
+    dataArray = allFundsSheet.UsedRange.Value
+    
+    ' Create quick lookup dictionaries
+    Dim fundGCICol As Long, iaGCICol As Long, latestNAVCol As Long, statusCol As Long
+    For i = 1 To UBound(dataArray, 2)
+        Select Case dataArray(1, i)
+            Case "Fund GCI": fundGCICol = i
+            Case "IA GCI": iaGCICol = i
+            Case "Latest NAV Date": latestNAVCol = i
+            Case "Review Status": statusCol = i
+        End Select
+    Next i
+    
+    ' Build dictionaries in memory
+    For i = 2 To UBound(dataArray, 1)
+        If dataArray(i, statusCol) = "Approved" Then
+            Dim fundGCI As Variant
+            fundGCI = dataArray(i, fundGCICol)
+            If Not IsEmpty(fundGCI) Then
+                If Not dictFundGCI.exists(fundGCI) Then
+                    dictFundGCI.Add fundGCI, dataArray(i, iaGCICol)
+                    dictLatestNAVDate.Add fundGCI, dataArray(i, latestNAVCol)
+                End If
             End If
         End If
     Next i
-
-    ' Match Fund GCI in Portfolio and write IA GCI and Latest NAV Date
-    lastRowPF = portfolioTable.DataBodyRange.Rows.Count
-    fundGCIArray = portfolioTable.ListColumns("Fund GCI").DataBodyRange.Value
-    ReDim resultArray(1 To lastRowPF, 1 To 1)
-    ReDim navDateArray(1 To lastRowPF, 1 To 1)
-
-    For i = 1 To UBound(fundGCIArray, 1)
-        If dictFundGCI.exists(fundGCIArray(i, 1)) Then
-            resultArray(i, 1) = dictFundGCI(fundGCIArray(i, 1))
-            navDateArray(i, 1) = dictLatestNAVDate(fundGCIArray(i, 1))
-        Else
-            resultArray(i, 1) = "No Match Found"
-            navDateArray(i, 1) = "No Match Found"
-        End If
-    Next i
-
-    ' Write results back to Fund Manager GCI and Latest NAV Date columns
-    portfolioTable.ListColumns("Fund Manager GCI").DataBodyRange.Value = resultArray
-    portfolioTable.ListColumns("Latest NAV Date").DataBodyRange.Value = navDateArray
-
-    ' Clear filters in All Funds table
-    If allFundsTable.ShowAutoFilter Then allFundsTable.AutoFilter.ShowAllData
-
+    
     wbAllFunds.Close SaveChanges:=False
-
-    ' === Step 3: Process Non-Trigger.csv ===
-    Set wbNonTrigger = Workbooks.Open(nonTriggerFile)
+    
+    ' === Step 4: Process Non-Trigger.csv using arrays ===
+    Set wbNonTrigger = Workbooks.Open(nonTriggerFile, UpdateLinks:=False, ReadOnly:=True)
     Set nonTriggerSheet = wbNonTrigger.Sheets(1)
-
-    ' Convert Non-Trigger data to a table
-    On Error Resume Next
-    Set nonTriggerTable = nonTriggerSheet.ListObjects(1)
-    On Error GoTo 0
-    If nonTriggerTable Is Nothing Then
-        Set nonTriggerTable = nonTriggerSheet.ListObjects.Add(xlSrcRange, nonTriggerSheet.UsedRange, , xlYes)
-        nonTriggerTable.Name = "NonTriggerTable"
-    End If
-
-    ' Filter out rows where FI-ASIA is present
-    nonTriggerTable.Range.AutoFilter Field:=nonTriggerTable.ListColumns("Region").Index, Criteria1:="<>FI-ASIA"
-
-    ' Append Non-Trigger data to Portfolio
-    sourceHeaders = Array("Region", "Family", "Fund Manager GCI", "Fund Manager", "Fund GCI", "Fund Name", "Credit Officer", "Weeks Missing", "Required NAV Date")
-    destHeaders = Array("Region", "Family", "Fund Manager GCI", "Fund Manager", "Fund GCI", "Fund Name", "Credit Officer", "Wks Missing", "Required NAV Date")
-
-    lastRowPortfolio = portfolioTable.DataBodyRange.Rows.Count + portfolioTable.HeaderRowRange.Row
-
-    numRowsToCopy = nonTriggerTable.DataBodyRange.SpecialCells(xlCellTypeVisible).Rows.Count
-
-    For arrIdx = LBound(sourceHeaders) To UBound(sourceHeaders)
-        With nonTriggerTable.ListColumns(sourceHeaders(arrIdx)).DataBodyRange.SpecialCells(xlCellTypeVisible)
-            wsPortfolio.Cells(lastRowPortfolio + 1, portfolioTable.ListColumns(destHeaders(arrIdx)).Index).Resize(.Rows.Count, 1).Value = .Value
-        End With
-    Next arrIdx
-
-    ' Fill Trigger/Non-Trigger column with 'Non-Trigger'
-    With wsPortfolio
-        .Range(.Cells(lastRowPortfolio + 1, triggerColIndex), .Cells(lastRowPortfolio + numRowsToCopy, triggerColIndex)).Value = "Non-Trigger"
-    End With
-
-    ' Clear filters in Non-Trigger table
-    Set nonTriggerLObj = nonTriggerTable
-    If nonTriggerLObj.AutoFilter.FilterMode Then nonTriggerLObj.AutoFilter.ShowAllData
-
+    
+    dataArray = nonTriggerSheet.UsedRange.Value
+    
+    ' Filter and process non-trigger data in memory
+    Dim nonTriggerRows As Long
+    nonTriggerRows = UBound(dataArray, 1) - 1
+    
+    Dim nonTriggerData() As Variant
+    ReDim nonTriggerData(1 To nonTriggerRows, 1 To UBound(dataArray, 2))
+    
+    Dim validRow As Long: validRow = 0
+    For i = 2 To UBound(dataArray, 1)
+        If dataArray(i, 1) <> "FI-ASIA" Then ' Assuming Region is first column
+            validRow = validRow + 1
+            For j = 1 To UBound(dataArray, 2)
+                nonTriggerData(validRow, j) = dataArray(i, j)
+            Next j
+        End If
+    Next i
+    
     wbNonTrigger.Close SaveChanges:=False
-
-    MsgBox "Data processed successfully from:" & vbCrLf & _
-           "- " & triggerFile & vbCrLf & _
-           "- " & allFundsFile & vbCrLf & _
-           "- " & nonTriggerFile, vbInformation
+    
+    ' === Step 5: Write all data to Portfolio table ===
+    ' Combine trigger and non-trigger data
+    Dim finalData() As Variant
+    ReDim finalData(1 To UBound(triggerData, 1) + validRow, 1 To portfolioTable.ListColumns.Count)
+    
+    ' Copy trigger data
+    For i = 1 To UBound(triggerData, 1)
+        For j = 1 To UBound(triggerData, 2)
+            finalData(i, j) = triggerData(i, j)
+        Next j
+        ' Set Trigger/Non-Trigger flag
+        finalData(i, portfolioTable.ListColumns("Trigger/Non-Trigger").Index) = "Trigger"
+    Next i
+    
+    ' Copy non-trigger data
+    Dim currentRow As Long
+    currentRow = UBound(triggerData, 1) + 1
+    For i = 1 To validRow
+        For j = 1 To UBound(nonTriggerData, 2)
+            finalData(currentRow, j) = nonTriggerData(i, j)
+        Next j
+        finalData(currentRow, portfolioTable.ListColumns("Trigger/Non-Trigger").Index) = "Non-Trigger"
+        currentRow = currentRow + 1
+    Next i
+    
+    ' Write final data to sheet in one operation
+    portfolioTable.ListObject.Range.Resize(UBound(finalData, 1) + 1, UBound(finalData, 2)).Value = finalData
+    
+    MsgBox "Data processed successfully!", vbInformation
 
 CleanUp:
     ' Reset Application settings
     Application.ScreenUpdating = True
-    Application.Calculation = xlCalculationAutomatic
     Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
     
     ' Clean up objects
     Set wsPortfolio = Nothing
@@ -246,30 +209,13 @@ CleanUp:
     Set wbTrigger = Nothing
     Set wbAllFunds = Nothing
     Set wbNonTrigger = Nothing
-    Set triggerSheet = Nothing
-    Set allFundsSheet = Nothing
-    Set nonTriggerSheet = Nothing
-    Set triggerTable = Nothing
-    Set portfolioTable = Nothing
-    Set allFundsTable = Nothing
-    Set nonTriggerTable = Nothing
+    Set headerMapping = Nothing
     Set dictFundGCI = Nothing
-    Set dictDataset = Nothing
     Set dictLatestNAVDate = Nothing
-    Set fundGCICol = Nothing
-    Set iaGCICol = Nothing
-    Set latestNAVDateCol = Nothing
-    Set nonTriggerLObj = Nothing
-
+    
     Exit Sub
 
 ErrorHandler:
-    MsgBox "An error occurred: " & Err.Description & vbCrLf & _
-           "Current file being processed: " & _
-           IIf(wbTrigger Is Nothing, _
-               IIf(wbAllFunds Is Nothing, _
-                   IIf(wbNonTrigger Is Nothing, "Unknown", nonTriggerFile), _
-                   allFundsFile), _
-               triggerFile), vbCritical
+    MsgBox "An error occurred: " & Err.Description, vbCritical
     Resume CleanUp
 End Sub
