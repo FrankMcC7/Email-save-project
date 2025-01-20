@@ -114,10 +114,15 @@ Sub ProcessAllData()
     
     dataArray = allFundsSheet.UsedRange.Value
     
-    ' Create quick lookup dictionaries
+    ' Create quick lookup dictionaries with validation
     Dim fundGCICol As Long, iaGCICol As Long, latestNAVCol As Long, statusCol As Long
+    fundGCICol = 0: iaGCICol = 0: latestNAVCol = 0: statusCol = 0
+    
+    ' Debug print the headers
+    Debug.Print "All Funds Headers:"
     For i = 1 To UBound(dataArray, 2)
-        Select Case dataArray(1, i)
+        Debug.Print i & ": " & dataArray(1, i)
+        Select Case Trim(CStr(dataArray(1, i)))
             Case "Fund GCI": fundGCICol = i
             Case "IA GCI": iaGCICol = i
             Case "Latest NAV Date": latestNAVCol = i
@@ -125,15 +130,34 @@ Sub ProcessAllData()
         End Select
     Next i
     
-    ' Build dictionaries in memory
+    ' Validate required columns were found
+    If fundGCICol = 0 Or iaGCICol = 0 Or latestNAVCol = 0 Or statusCol = 0 Then
+        MsgBox "Required columns not found in All Funds.csv:" & vbCrLf & _
+               IIf(fundGCICol = 0, "- Fund GCI" & vbCrLf, "") & _
+               IIf(iaGCICol = 0, "- IA GCI" & vbCrLf, "") & _
+               IIf(latestNAVCol = 0, "- Latest NAV Date" & vbCrLf, "") & _
+               IIf(statusCol = 0, "- Review Status", ""), vbCritical
+        GoTo CleanUp
+    End If
+    
+    Debug.Print "Column Indexes found:"
+    Debug.Print "Fund GCI: " & fundGCICol
+    Debug.Print "IA GCI: " & iaGCICol
+    Debug.Print "Latest NAV Date: " & latestNAVCol
+    Debug.Print "Review Status: " & statusCol
+    
+    ' Build dictionaries in memory with additional validation
     For i = 2 To UBound(dataArray, 1)
-        If dataArray(i, statusCol) = "Approved" Then
-            Dim fundGCI As Variant
-            fundGCI = dataArray(i, fundGCICol)
-            If Not IsEmpty(fundGCI) Then
-                If Not dictFundGCI.exists(fundGCI) Then
-                    dictFundGCI.Add fundGCI, dataArray(i, iaGCICol)
-                    dictLatestNAVDate.Add fundGCI, dataArray(i, latestNAVCol)
+        If i <= UBound(dataArray, 1) And statusCol <= UBound(dataArray, 2) Then
+            If Trim(CStr(dataArray(i, statusCol))) = "Approved" Then
+                Dim fundGCI As Variant
+                fundGCI = dataArray(i, fundGCICol)
+                
+                If Not IsEmpty(fundGCI) And Not IsNull(fundGCI) Then
+                    If Not dictFundGCI.exists(fundGCI) Then
+                        dictFundGCI.Add fundGCI, dataArray(i, iaGCICol)
+                        dictLatestNAVDate.Add fundGCI, dataArray(i, latestNAVCol)
+                    End If
                 End If
             End If
         End If
