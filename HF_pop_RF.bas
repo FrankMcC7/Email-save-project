@@ -186,9 +186,16 @@ Private Sub CreateUploadSheet()
     row = 2
     Set tblSource = wsSource.ListObjects(1)
     
-    For Each cell In tblSource.ListColumns("HFAD_Fund_CoperID").DataBodyRange
-        If Not IsEmpty(cell) And Not dictSharePoint.Exists(cell.Value) Then
-            With wsUpload
+    ' Get visible (filtered) cells only
+    Dim visibleCells As Range
+    On Error Resume Next
+    Set visibleCells = tblSource.ListColumns("HFAD_Fund_CoperID").DataBodyRange.SpecialCells(xlCellTypeVisible)
+    On Error GoTo 0
+    
+    If Not visibleCells Is Nothing Then
+        For Each cell In visibleCells
+            If Not IsEmpty(cell) And Not dictSharePoint.Exists(cell.Value) Then
+                With wsUpload
                 .Cells(row, 1).Value = cell.Value  ' CoperID
                 .Cells(row, 2).Value = GetValueFromSource(tblSource, cell.Row, "HFAD_Fund_Name")
                 .Cells(row, 3).Value = GetValueFromSource(tblSource, cell.Row, "HFAD_IM_CoperID")
@@ -196,10 +203,11 @@ Private Sub CreateUploadSheet()
                 .Cells(row, 5).Value = GetValueFromSource(tblSource, cell.Row, "HFAD_Credit_Officer")
                 .Cells(row, 6).Value = GetValueFromSource(tblSource, cell.Row, "IRR_Transparency_Tier")
                 .Cells(row, 7).Value = "Active"
-            End With
-            row = row + 1
-        End If
-    Next cell
+                End With
+                row = row + 1
+            End If
+        Next cell
+    End If
     
     ' Convert range to table if we have data
     If row > 2 Then
