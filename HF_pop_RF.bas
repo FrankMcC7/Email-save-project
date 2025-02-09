@@ -217,6 +217,7 @@ Sub NewFundsIdentificationMacro()
         wsUpload.Cells.Clear
     End If
     
+    ' Create initial headers for UploadHF table.
     headers = Array("HFAD_Fund_CoperID", "HFAD_Fund_Name", "HFAD_IM_CoperID", _
                     "HFAD_IM_Name", "HFAD_Credit_Officer", "Tier", "Status")
     For j = LBound(headers) To UBound(headers)
@@ -243,10 +244,161 @@ Sub NewFundsIdentificationMacro()
         loUpload.Resize rngUpload
     End If
     
+    ' === 7. Additional Enhancements: Update UploadHF with extra lookup columns ============
+    ' (a) & (b): Using CO_Table from the "CO_Table" sheet to add "Region" and update "HFAD_Credit_Officer"
+    Dim wsCO As Worksheet, loCO As ListObject
+    Dim coDict As Object ' Dictionary: key = Credit Officer, value = Array(Region, Email Address)
+    Set coDict = CreateObject("Scripting.Dictionary")
+    coDict.CompareMode = vbTextCompare
+    
+    On Error Resume Next
+    Set wsCO = wbMain.Sheets("CO_Table")
+    On Error GoTo 0
+    If wsCO Is Nothing Then
+        MsgBox "CO_Table sheet not found.", vbCritical
+        Exit Sub
+    End If
+    On Error Resume Next
+    Set loCO = wsCO.ListObjects("CO_Table")
+    On Error GoTo 0
+    If loCO Is Nothing Then
+        MsgBox "CO_Table table not found on CO_Table sheet.", vbCritical
+        Exit Sub
+    End If
+    
+    Dim coCredCol As Long, coRegionCol As Long, coEmailCol As Long
+    coCredCol = GetColumnIndex(loCO, "Credit Officer")
+    coRegionCol = GetColumnIndex(loCO, "Region")
+    coEmailCol = GetColumnIndex(loCO, "Email Address")
+    If coCredCol = 0 Or coRegionCol = 0 Or coEmailCol = 0 Then
+        MsgBox "Required columns not found in CO_Table.", vbCritical
+        Exit Sub
+    End If
+    
+    Dim coData As Variant, rIdx As Long, coKey As String
+    coData = loCO.DataBodyRange.Value
+    For rIdx = 1 To UBound(coData, 1)
+        coKey = Trim(CStr(coData(rIdx, coCredCol)))
+        If Not coDict.Exists(coKey) Then
+            coDict.Add coKey, Array(coData(rIdx, coRegionCol), coData(rIdx, coEmailCol))
+        End If
+    Next rIdx
+    
+    ' (c) Build a dictionary from the SharePoint table for IM info using HFAD_IM_CoperID.
+    Dim imDict As Object
+    Set imDict = CreateObject("Scripting.Dictionary")
+    imDict.CompareMode = vbTextCompare
+    
+    Dim spData As Variant, imKey As String
+    Dim sp_IMCol As Long, sp_NAVCol As Long, sp_FreqCol As Long, sp_AdHocCol As Long, sp_ParentFlagCol As Long
+    sp_IMCol = GetColumnIndex(loMainSP, "HFAD_IM_CoperID")
+    sp_NAVCol = GetColumnIndex(loMainSP, "NAV Source")
+    sp_FreqCol = GetColumnIndex(loMainSP, "Frequency")
+    sp_AdHocCol = GetColumnIndex(loMainSP, "Ad Hoc Reporting")
+    sp_ParentFlagCol = GetColumnIndex(loMainSP, "Parent/Flagship Reporting")
+    If sp_IMCol = 0 Or sp_NAVCol = 0 Or sp_FreqCol = 0 Or sp_AdHocCol = 0 Or sp_ParentFlagCol = 0 Then
+        MsgBox "One or more required columns not found in SharePoint table.", vbCritical
+        Exit Sub
+    End If
+    
+    spData = loMainSP.DataBodyRange.Value
+    For rIdx = 1 To UBound(spData, 1)
+        imKey = Trim(CStr(spData(rIdx, sp_IMCol)))
+        If Not imDict.Exists(imKey) Then
+            imDict.Add imKey, Array(spData(rIdx, sp_NAVCol), spData(rIdx, sp_FreqCol), spData(rIdx, sp_AdHocCol), spData(rIdx, sp_ParentFlagCol))
+        End If
+    Next rIdx
+    
+    ' (e) Build a dictionary from the HFTable for "Days to Report" using HFAD_Fund_CoperID.
+    Dim daysDict As Object
+    Set daysDict = CreateObject("Scripting.Dictionary")
+    daysDict.CompareMode = vbTextCompare
+    
+    Dim hfData As Variant
+    Dim hfFundIDCol As Long, hfDaysCol As Long
+    hfFundIDCol = GetColumnIndex(loMainHF, "HFAD_Fund_CoperID")
+    hfDaysCol = GetColumnIndex(loMainHF, "HFAD_days_to_report")
+    If hfFundIDCol = 0 Or hfDaysCol = 0 Then
+        MsgBox "Required columns not found in HFTable for Days to Report.", vbCritical
+        Exit Sub
+    End If
+    
+    hfData = loMainHF.DataBodyRange.Value
+    For rIdx = 1 To UBound(hfData, 1)
+        Dim fundKey As String
+        fundKey = Trim(CStr(hfData(rIdx, hfFundIDCol)))
+        If Not daysDict.Exists(fundKey) Then
+            daysDict.Add fundKey, hfData(rIdx, hfDaysCol)
+        End If
+    Next rIdx
+    
+    ' Add new columns to UploadHF if they do not already exist.
+    If Not ColumnExists(loUpload, "Region") Then loUpload.ListColumns.Add.Name = "Region"
+    If Not ColumnExists(loUpload, "NAV Source") Then loUpload.ListColumns.Add.Name = "NAV Source"
+    If Not ColumnExists(loUpload, "Frequency") Then loUpload.ListColumns.Add.Name = "Frequency"
+    If Not ColumnExists(loUpload, "Ad Hoc Reporting") Then loUpload.ListColumns.Add.Name = "Ad Hoc Reporting"
+    If Not ColumnExists(loUpload, "Parent/Flagship Reporting") Then loUpload.ListColumns.Add.Name = "Parent/Flagship Reporting"
+    If Not ColumnExists(loUpload, "Days to Report") Then loUpload.ListColumns.Add.Name = "Days to Report"
+    
+    ' Get the column indices in UploadHF for the lookup updates.
+    Dim up_CreditOfficerCol As Long, up_RegionCol As Long, up_IMCoperIDCol As Long, up_NAVSourceCol As Long
+    Dim up_FrequencyCol As Long, up_AdHocCol As Long, up_ParentFlagCol As Long, up_FundCoperIDCol As Long, up_DaysToReportCol As Long
+    up_CreditOfficerCol = GetColumnIndex(loUpload, "HFAD_Credit_Officer")
+    up_RegionCol = GetColumnIndex(loUpload, "Region")
+    up_IMCoperIDCol = GetColumnIndex(loUpload, "HFAD_IM_CoperID")
+    up_NAVSourceCol = GetColumnIndex(loUpload, "NAV Source")
+    up_FrequencyCol = GetColumnIndex(loUpload, "Frequency")
+    up_AdHocCol = GetColumnIndex(loUpload, "Ad Hoc Reporting")
+    up_ParentFlagCol = GetColumnIndex(loUpload, "Parent/Flagship Reporting")
+    up_FundCoperIDCol = GetColumnIndex(loUpload, "HFAD_Fund_CoperID")
+    up_DaysToReportCol = GetColumnIndex(loUpload, "Days to Report")
+    
+    ' Loop through each row in UploadHF and update with lookup values.
+    Dim upRow As ListRow
+    For Each upRow In loUpload.ListRows
+        Dim creditOfficerName As String, imCoperID As String, fundCoperID As String
+        creditOfficerName = Trim(CStr(upRow.Range.Cells(1, up_CreditOfficerCol).Value))
+        imCoperID = Trim(CStr(upRow.Range.Cells(1, up_IMCoperIDCol).Value))
+        fundCoperID = Trim(CStr(upRow.Range.Cells(1, up_FundCoperIDCol).Value))
+        
+        ' (a) & (b): Lookup in CO_Table dictionary using the credit officer name.
+        If coDict.Exists(creditOfficerName) Then
+            Dim coInfo As Variant
+            coInfo = coDict(creditOfficerName)
+            ' coInfo(0) = Region, coInfo(1) = Email Address.
+            upRow.Range.Cells(1, up_CreditOfficerCol).Value = coInfo(1)
+            upRow.Range.Cells(1, up_RegionCol).Value = coInfo(0)
+        Else
+            upRow.Range.Cells(1, up_RegionCol).Value = ""
+        End If
+        
+        ' (c) & (d): Lookup in SharePoint dictionary using HFAD_IM_CoperID.
+        If imDict.Exists(imCoperID) Then
+            Dim imInfo As Variant
+            imInfo = imDict(imCoperID)
+            upRow.Range.Cells(1, up_NAVSourceCol).Value = imInfo(0)
+            upRow.Range.Cells(1, up_FrequencyCol).Value = imInfo(1)
+            upRow.Range.Cells(1, up_AdHocCol).Value = imInfo(2)
+            upRow.Range.Cells(1, up_ParentFlagCol).Value = imInfo(3)
+        Else
+            upRow.Range.Cells(1, up_NAVSourceCol).Value = "Client Email"
+            upRow.Range.Cells(1, up_FrequencyCol).Value = "Monthly"
+            upRow.Range.Cells(1, up_AdHocCol).Value = "No"
+            upRow.Range.Cells(1, up_ParentFlagCol).Value = "No"
+        End If
+        
+        ' (e) Lookup in HFTable dictionary for Days to Report using HFAD_Fund_CoperID.
+        If daysDict.Exists(fundCoperID) Then
+            upRow.Range.Cells(1, up_DaysToReportCol).Value = daysDict(fundCoperID)
+        Else
+            upRow.Range.Cells(1, up_DaysToReportCol).Value = ""
+        End If
+    Next upRow
+    
     MsgBox "Macro completed successfully.", vbInformation
 End Sub
 
-' -----------------------------------------
+' -------------------------------
 ' Helper function: Returns the relative column index (within the ListObject)
 ' for a given header name. Returns 0 if the header is not found.
 Function GetColumnIndex(lo As ListObject, headerName As String) As Long
@@ -260,7 +412,7 @@ Function GetColumnIndex(lo As ListObject, headerName As String) As Long
     GetColumnIndex = 0
 End Function
 
-' -----------------------------------------
+' -------------------------------
 ' Helper function: Returns an array of unique allowed values from a given field
 ' in the ListObject that are NOT in the provided exclusion list.
 Function GetAllowedValues(lo As ListObject, fieldName As String, excludeArr As Variant) As Variant
@@ -300,12 +452,11 @@ Function GetAllowedValues(lo As ListObject, fieldName As String, excludeArr As V
     End If
 End Function
 
-' -----------------------------------------
+' -------------------------------
 ' Helper function: Appends a value to an existing array.
 Function AppendToArray(arr As Variant, valueToAppend As Variant) As Variant
     Dim newArr() As Variant
     Dim i As Long, n As Long
-    ' If arr is not already an array, create one with both values.
     If Not IsArray(arr) Then
         newArr = Array(arr, valueToAppend)
     Else
@@ -317,4 +468,17 @@ Function AppendToArray(arr As Variant, valueToAppend As Variant) As Variant
         newArr(UBound(arr) + 1) = valueToAppend
     End If
     AppendToArray = newArr
+End Function
+
+' -------------------------------
+' Helper function: Checks if a column with the given name exists in the ListObject.
+Function ColumnExists(lo As ListObject, colName As String) As Boolean
+    Dim cl As ListColumn
+    For Each cl In lo.ListColumns
+        If Trim(cl.Name) = colName Then
+            ColumnExists = True
+            Exit Function
+        End If
+    Next cl
+    ColumnExists = False
 End Function
