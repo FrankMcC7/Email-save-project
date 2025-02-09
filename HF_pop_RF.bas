@@ -11,16 +11,8 @@ Sub Phase1_NewFundsIdentification()
     Application.EnableEvents = False
     Application.Calculation = xlCalculationManual
     
-    ' Step 1 & 2: Import and convert files to tables
-    ImportAndConvertToTables
-    
-    ' Step 3: Create required sheets if they don't exist and paste tables
-    CreateRequiredSheets
-    
-    ' Step 4: Apply filters to HFTable
+    ImportAndProcessTables
     ApplyHFTableFilters
-    
-    ' Step 5 & 6: Compare and create upload sheet
     CreateUploadSheet
     
     Application.ScreenUpdating = True
@@ -37,9 +29,10 @@ ErrorHandler:
     MsgBox "Error: " & Err.Description, vbCritical
 End Sub
 
-Private Sub ImportAndConvertToTables()
+Private Sub ImportAndProcessTables()
     Dim wbHF As Workbook, wbSP As Workbook
     Dim wsHF As Worksheet, wsSP As Worksheet
+    Dim wsTarget As Worksheet
     Dim rngHF As Range, rngSP As Range
     
     ' Open source workbooks
@@ -54,39 +47,43 @@ Private Sub ImportAndConvertToTables()
     Set rngHF = wsHF.UsedRange
     Set rngSP = wsSP.UsedRange
     
-    ' Convert HF data to table if not already
+    ' Process HF Table
     If Not IsTable(rngHF) Then
         wsHF.ListObjects.Add(xlSrcRange, rngHF, , xlYes).Name = "HFTable"
     ElseIf wsHF.ListObjects(1).Name <> "HFTable" Then
         wsHF.ListObjects(1).Name = "HFTable"
     End If
     
-    ' Convert SharePoint data to table if not already
+    ' Process SharePoint Table
     If Not IsTable(rngSP) Then
         wsSP.ListObjects.Add(xlSrcRange, rngSP, , xlYes).Name = "SharePoint"
     ElseIf wsSP.ListObjects(1).Name <> "SharePoint" Then
         wsSP.ListObjects(1).Name = "SharePoint"
     End If
     
-    ' Copy tables to clipboard
-    wsHF.ListObjects("HFTable").Range.Copy
-    
-    ' Create Source Population sheet and paste
+    ' Create and populate Source Population sheet
     If Not SheetExists("Source Population") Then
-        ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count)).Name = "Source Population"
+        Set wsTarget = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        wsTarget.Name = "Source Population"
+    Else
+        Set wsTarget = ThisWorkbook.Sheets("Source Population")
     End If
-    ThisWorkbook.Sheets("Source Population").Range("A1").PasteSpecial xlPasteAll
-    Application.CutCopyMode = False  ' Clear clipboard
     
-    ' Copy SharePoint table
-    wsSP.ListObjects("SharePoint").Range.Copy
+    wsHF.ListObjects("HFTable").Range.Copy
+    wsTarget.Range("A1").PasteSpecial xlPasteAll
+    Application.CutCopyMode = False
     
-    ' Create SharePoint sheet and paste
+    ' Create and populate SharePoint sheet
     If Not SheetExists("SharePoint") Then
-        ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count)).Name = "SharePoint"
+        Set wsTarget = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        wsTarget.Name = "SharePoint"
+    Else
+        Set wsTarget = ThisWorkbook.Sheets("SharePoint")
     End If
-    ThisWorkbook.Sheets("SharePoint").Range("A1").PasteSpecial xlPasteAll
-    Application.CutCopyMode = False  ' Clear clipboard
+    
+    wsSP.ListObjects("SharePoint").Range.Copy
+    wsTarget.Range("A1").PasteSpecial xlPasteAll
+    Application.CutCopyMode = False
     
     ' Close source workbooks
     wbHF.Close False
@@ -96,6 +93,8 @@ End Sub
 Private Sub ApplyHFTableFilters()
     Dim ws As Worksheet
     Dim tbl As ListObject
+    Dim strategyExclusions As Variant
+    Dim entityExclusions As Variant
     
     Set ws = ThisWorkbook.Sheets("Source Population")
     On Error Resume Next
@@ -103,37 +102,34 @@ Private Sub ApplyHFTableFilters()
     If tbl Is Nothing Then Set tbl = ws.ListObjects(1)
     On Error GoTo 0
     
+    ' Define exclusion arrays
+    strategyExclusions = Array("FIF", "Fund of Funds", "Sub/Sleeve- No Benchmark")
+    entityExclusions = Array("Guaranteed subsidiary", "Investment Manager as Agent", _
+                           "Managed Account", "Managed Account - No AF", "Loan Monitoring", _
+                           "Loan FiF - No tracking", "Sleeve/share class/sub-account")
+    
     With tbl.Range
         ' Clear any existing filters
         If .AutoFilter Then .AutoFilter
         
-        ' 1. Filter IRR_Transparency_Tier for values 1 and 2
+        ' Apply all filters
         .AutoFilter Field:=GetColumnNumber(tbl, "IRR_Transparency_Tier"), _
                    Criteria1:=Array("1", "2"), _
                    Operator:=xlFilterValues
         
-        ' 2. Filter out specified values from HFAD_Strategy
+        ' Filter out strategies using NOT IN logic
         .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Strategy"), _
-                   Criteria1:="<>FIF", _
-                   Operator:=xlAnd
-        .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Strategy"), _
-                   Criteria1:="<>Fund of Funds", _
-                   Operator:=xlAnd
-        .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Strategy"), _
-                   Criteria1:="<>Sub/Sleeve- No Benchmark"
+                   Criteria1:=strategyExclusions, _
+                   Operator:=xlFilterValues, _
+                   Criteria2:="="
         
-        ' 3. Filter out specified values from HFAD_Entity_type
+        ' Filter out entity types using NOT IN logic
         .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Entity_type"), _
-                   Criteria1:=Array("<>Guaranteed subsidiary", _
-                                  "<>Investment Manager as Agent", _
-                                  "<>Managed Account", _
-                                  "<>Managed Account - No AF", _
-                                  "<>Loan Monitoring", _
-                                  "<>Loan FiF - No tracking", _
-                                  "<>Sleeve/share class/sub-account"), _
-                   Operator:=xlFilterValues
+                   Criteria1:=entityExclusions, _
+                   Operator:=xlFilterValues, _
+                   Criteria2:="="
         
-        ' 4. Filter IRR_last_update_date for 2023 and beyond
+        ' Filter for dates 2023 and beyond
         .AutoFilter Field:=GetColumnNumber(tbl, "IRR_last_update_date"), _
                    Criteria1:=">=" & DateSerial(2023, 1, 1)
     End With
@@ -144,10 +140,9 @@ Private Sub CreateUploadSheet()
     Dim tblSource As ListObject, tblSharePoint As ListObject, tblUpload As ListObject
     Dim dictSharePoint As Object
     Dim visibleRange As Range
-    Dim cell As Range
+    Dim dataRow As Range
     Dim row As Long
     Dim rngUpload As Range
-    Dim sourceCoperID As Variant
     
     ' Setup sheets
     Set wsSource = ThisWorkbook.Sheets("Source Population")
@@ -178,9 +173,9 @@ Private Sub CreateUploadSheet()
     Set dictSharePoint = CreateObject("Scripting.Dictionary")
     Set tblSharePoint = wsSharePoint.ListObjects(1)
     
-    For Each cell In tblSharePoint.ListColumns("HFAD_Fund_CoperID").DataBodyRange
-        If Not IsEmpty(cell) Then dictSharePoint(cell.Value) = True
-    Next cell
+    For Each dataRow In tblSharePoint.ListColumns("HFAD_Fund_CoperID").DataBodyRange
+        If Not IsEmpty(dataRow) Then dictSharePoint(dataRow.Value) = True
+    Next dataRow
     
     ' Get visible rows after filtering
     On Error Resume Next
@@ -192,27 +187,27 @@ Private Sub CreateUploadSheet()
         Exit Sub
     End If
     
-    ' Populate upload table with new funds from visible rows only
+    ' Populate upload table with new funds
     row = 2
     
-    For Each cell In tblSource.ListColumns("HFAD_Fund_CoperID").DataBodyRange
-        ' Check if the entire row is visible (not filtered out)
-        If Not cell.EntireRow.Hidden Then
-            sourceCoperID = cell.Value
-            If Not IsEmpty(sourceCoperID) And Not dictSharePoint.Exists(sourceCoperID) Then
-                With wsUpload
-                    .Cells(row, 1).Value = sourceCoperID  ' CoperID
-                    .Cells(row, 2).Value = GetValueFromVisibleRow(tblSource, cell.Row, "HFAD_Fund_Name")
-                    .Cells(row, 3).Value = GetValueFromVisibleRow(tblSource, cell.Row, "HFAD_IM_CoperID")
-                    .Cells(row, 4).Value = GetValueFromVisibleRow(tblSource, cell.Row, "HFAD_IM_Name")
-                    .Cells(row, 5).Value = GetValueFromVisibleRow(tblSource, cell.Row, "HFAD_Credit_Officer")
-                    .Cells(row, 6).Value = GetValueFromVisibleRow(tblSource, cell.Row, "IRR_Transparency_Tier")
-                    .Cells(row, 7).Value = "Active"
-                End With
-                row = row + 1
-            End If
+    ' Loop through visible rows only
+    For Each dataRow In visibleRange.Rows
+        Dim coperID As Variant
+        coperID = dataRow.Cells(GetColumnNumber(tblSource, "HFAD_Fund_CoperID"), 1).Value
+        
+        If Not IsEmpty(coperID) And Not dictSharePoint.Exists(coperID) Then
+            With wsUpload
+                .Cells(row, 1).Value = coperID
+                .Cells(row, 2).Value = dataRow.Cells(GetColumnNumber(tblSource, "HFAD_Fund_Name"), 1).Value
+                .Cells(row, 3).Value = dataRow.Cells(GetColumnNumber(tblSource, "HFAD_IM_CoperID"), 1).Value
+                .Cells(row, 4).Value = dataRow.Cells(GetColumnNumber(tblSource, "HFAD_IM_Name"), 1).Value
+                .Cells(row, 5).Value = dataRow.Cells(GetColumnNumber(tblSource, "HFAD_Credit_Officer"), 1).Value
+                .Cells(row, 6).Value = dataRow.Cells(GetColumnNumber(tblSource, "IRR_Transparency_Tier"), 1).Value
+                .Cells(row, 7).Value = "Active"
+            End With
+            row = row + 1
         End If
-    Next cell
+    Next dataRow
     
     ' Convert range to table if we have data
     If row > 2 Then
@@ -221,17 +216,6 @@ Private Sub CreateUploadSheet()
         tblUpload.Name = "UploadHF"
     End If
 End Sub
-
-Private Function GetValueFromVisibleRow(tbl As ListObject, rowNum As Long, columnName As String) As Variant
-    Dim targetCell As Range
-    
-    On Error Resume Next
-    Set targetCell = tbl.ListColumns(columnName).Range.Cells(rowNum - tbl.HeaderRowRange.Row + 1, 1)
-    If Not targetCell.EntireRow.Hidden Then
-        GetValueFromVisibleRow = targetCell.Value
-    End If
-    On Error GoTo 0
-End Function
 
 ' Helper Functions
 Private Function SheetExists(sheetName As String) As Boolean
