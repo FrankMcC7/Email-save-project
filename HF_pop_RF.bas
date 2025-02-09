@@ -39,26 +39,52 @@ End Sub
 
 Private Sub ImportAndConvertToTables()
     Dim wbHF As Workbook, wbSP As Workbook
+    Dim wsHF As Worksheet, wsSP As Worksheet
+    Dim rngHF As Range, rngSP As Range
     
     ' Open source workbooks
     Set wbHF = Workbooks.Open(HF_FILE_PATH)
     Set wbSP = Workbooks.Open(SHAREPOINT_FILE_PATH)
     
+    ' Get first worksheet from each workbook
+    Set wsHF = wbHF.Sheets(1)
+    Set wsSP = wbSP.Sheets(1)
+    
+    ' Set ranges
+    Set rngHF = wsHF.UsedRange
+    Set rngSP = wsSP.UsedRange
+    
     ' Convert HF data to table if not already
-    If Not IsTable(wbHF.Sheets(1).UsedRange) Then
-        wbHF.Sheets(1).UsedRange.Select
-        ActiveSheet.ListObjects.Add(xlSrcRange, Selection, , xlYes).Name = "HFTable"
+    If Not IsTable(rngHF) Then
+        wsHF.ListObjects.Add(xlSrcRange, rngHF, , xlYes).Name = "HFTable"
+    ElseIf wsHF.ListObjects(1).Name <> "HFTable" Then
+        wsHF.ListObjects(1).Name = "HFTable"
     End If
     
     ' Convert SharePoint data to table if not already
-    If Not IsTable(wbSP.Sheets(1).UsedRange) Then
-        wbSP.Sheets(1).UsedRange.Select
-        ActiveSheet.ListObjects.Add(xlSrcRange, Selection, , xlYes).Name = "SharePoint"
+    If Not IsTable(rngSP) Then
+        wsSP.ListObjects.Add(xlSrcRange, rngSP, , xlYes).Name = "SharePoint"
+    ElseIf wsSP.ListObjects(1).Name <> "SharePoint" Then
+        wsSP.ListObjects(1).Name = "SharePoint"
     End If
     
-    ' Copy tables
-    wbHF.Sheets(1).ListObjects("HFTable").Range.Copy
-    wbSP.Sheets(1).ListObjects("SharePoint").Range.Copy
+    ' Copy tables to clipboard
+    wsHF.ListObjects("HFTable").Range.Copy
+    
+    ' Create Source Population sheet and paste
+    If Not SheetExists("Source Population") Then
+        ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count)).Name = "Source Population"
+    End If
+    ThisWorkbook.Sheets("Source Population").Range("A1").PasteSpecial xlPasteAll
+    
+    ' Copy SharePoint table
+    wsSP.ListObjects("SharePoint").Range.Copy
+    
+    ' Create SharePoint sheet and paste
+    If Not SheetExists("SharePoint") Then
+        ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count)).Name = "SharePoint"
+    End If
+    ThisWorkbook.Sheets("SharePoint").Range("A1").PasteSpecial xlPasteAll
     
     ' Close source workbooks
     wbHF.Close False
@@ -66,25 +92,8 @@ Private Sub ImportAndConvertToTables()
 End Sub
 
 Private Sub CreateRequiredSheets()
-    Dim ws As Worksheet
-    
-    ' Create Source Population sheet if it doesn't exist
-    If Not SheetExists("Source Population") Then
-        Set ws = ThisWorkbook.Sheets.Add
-        ws.Name = "Source Population"
-    End If
-    
-    ' Create SharePoint sheet if it doesn't exist
-    If Not SheetExists("SharePoint") Then
-        Set ws = ThisWorkbook.Sheets.Add
-        ws.Name = "SharePoint"
-    End If
-    
-    ' Paste HFTable in Source Population sheet
-    ThisWorkbook.Sheets("Source Population").Range("A1").PasteSpecial xlPasteAll
-    
-    ' Paste SharePoint table in SharePoint sheet
-    ThisWorkbook.Sheets("SharePoint").Range("A1").PasteSpecial xlPasteAll
+    ' Sheets are now created in ImportAndConvertToTables
+    ' This sub is kept for potential future use
 End Sub
 
 Private Sub ApplyHFTableFilters()
@@ -92,7 +101,10 @@ Private Sub ApplyHFTableFilters()
     Dim tbl As ListObject
     
     Set ws = ThisWorkbook.Sheets("Source Population")
+    On Error Resume Next
     Set tbl = ws.ListObjects("HFTable")
+    If tbl Is Nothing Then Set tbl = ws.ListObjects(1)
+    On Error GoTo 0
     
     With tbl.Range
         ' Clear any existing filters
@@ -119,10 +131,11 @@ End Sub
 
 Private Sub CreateUploadSheet()
     Dim wsSource As Worksheet, wsSharePoint As Worksheet, wsUpload As Worksheet
-    Dim tblSource As ListObject, tblSharePoint As ListObject
+    Dim tblSource As ListObject, tblSharePoint As ListObject, tblUpload As ListObject
     Dim dictSharePoint As Object
     Dim cell As Range
     Dim row As Long
+    Dim rngUpload As Range
     
     ' Setup sheets
     Set wsSource = ThisWorkbook.Sheets("Source Population")
@@ -130,7 +143,7 @@ Private Sub CreateUploadSheet()
     
     ' Create Upload to SP sheet
     If Not SheetExists("Upload to SP") Then
-        Set wsUpload = ThisWorkbook.Sheets.Add
+        Set wsUpload = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
         wsUpload.Name = "Upload to SP"
     Else
         Set wsUpload = ThisWorkbook.Sheets("Upload to SP")
@@ -150,7 +163,7 @@ Private Sub CreateUploadSheet()
     
     ' Create dictionary of SharePoint CoperIDs
     Set dictSharePoint = CreateObject("Scripting.Dictionary")
-    Set tblSharePoint = wsSharePoint.ListObjects("SharePoint")
+    Set tblSharePoint = wsSharePoint.ListObjects(1)
     
     For Each cell In tblSharePoint.ListColumns("HFAD_Fund_CoperID").DataBodyRange
         If Not IsEmpty(cell) Then dictSharePoint(cell.Value) = True
@@ -158,7 +171,7 @@ Private Sub CreateUploadSheet()
     
     ' Populate upload table with new funds
     row = 2
-    Set tblSource = wsSource.ListObjects("HFTable")
+    Set tblSource = wsSource.ListObjects(1)
     
     For Each cell In tblSource.ListColumns("HFAD_Fund_CoperID").DataBodyRange
         If Not IsEmpty(cell) And Not dictSharePoint.Exists(cell.Value) Then
@@ -175,10 +188,11 @@ Private Sub CreateUploadSheet()
         End If
     Next cell
     
-    ' Convert range to table
+    ' Convert range to table if we have data
     If row > 2 Then
-        wsUpload.Range("A1").CurrentRegion.Select
-        wsUpload.ListObjects.Add(xlSrcRange, Selection, , xlYes).Name = "UploadHF"
+        Set rngUpload = wsUpload.Range("A1").Resize(row - 1, 7)
+        Set tblUpload = wsUpload.ListObjects.Add(xlSrcRange, rngUpload, , xlYes)
+        tblUpload.Name = "UploadHF"
     End If
 End Sub
 
@@ -188,6 +202,7 @@ Private Function SheetExists(sheetName As String) As Boolean
     On Error Resume Next
     Set ws = ThisWorkbook.Sheets(sheetName)
     SheetExists = Not ws Is Nothing
+    On Error GoTo 0
 End Function
 
 Private Function IsTable(rng As Range) As Boolean
