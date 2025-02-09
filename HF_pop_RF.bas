@@ -76,6 +76,7 @@ Private Sub ImportAndConvertToTables()
         ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count)).Name = "Source Population"
     End If
     ThisWorkbook.Sheets("Source Population").Range("A1").PasteSpecial xlPasteAll
+    Application.CutCopyMode = False  ' Clear clipboard
     
     ' Copy SharePoint table
     wsSP.ListObjects("SharePoint").Range.Copy
@@ -85,6 +86,7 @@ Private Sub ImportAndConvertToTables()
         ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count)).Name = "SharePoint"
     End If
     ThisWorkbook.Sheets("SharePoint").Range("A1").PasteSpecial xlPasteAll
+    Application.CutCopyMode = False  ' Clear clipboard
     
     ' Close source workbooks
     wbHF.Close False
@@ -115,13 +117,13 @@ Private Sub ApplyHFTableFilters()
         
         .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Strategy"), _
             Criteria1:=Array("FIF", "Fund of Funds", "Sub/Sleeve- No Benchmark"), _
-            Operator:=xlFilterValues
+            Operator:=xlFilterValues, Criteria2:="<>"
         
         .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Entity_type"), _
             Criteria1:=Array("Guaranteed subsidiary", "Investment Manager as Agent", _
                            "Managed Account", "Managed Account - No AF", "Loan Monitoring", _
                            "Loan FiF - No tracking", "Sleeve/share class/sub-account"), _
-            Operator:=xlFilterValues
+            Operator:=xlFilterValues, Criteria2:="<>"
         
         ' Filter for dates 2023 and beyond
         .AutoFilter Field:=GetColumnNumber(tbl, "IRR_last_update_date"), _
