@@ -93,11 +93,6 @@ Private Sub ImportAndConvertToTables()
     wbSP.Close False
 End Sub
 
-Private Sub CreateRequiredSheets()
-    ' Sheets are now created in ImportAndConvertToTables
-    ' This sub is kept for potential future use
-End Sub
-
 Private Sub ApplyHFTableFilters()
     Dim ws As Worksheet
     Dim tbl As ListObject
@@ -112,33 +107,35 @@ Private Sub ApplyHFTableFilters()
         ' Clear any existing filters
         If .AutoFilter Then .AutoFilter
         
-        ' Apply all filters
-        .AutoFilter Field:=GetColumnNumber(tbl, "IRR_Transparency_Tier"), Criteria1:=Array("1", "2"), Operator:=xlFilterValues
+        ' 1. Filter IRR_Transparency_Tier for values 1 and 2
+        .AutoFilter Field:=GetColumnNumber(tbl, "IRR_Transparency_Tier"), _
+                   Criteria1:=Array("1", "2"), _
+                   Operator:=xlFilterValues
         
+        ' 2. Filter out specified values from HFAD_Strategy
         .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Strategy"), _
-            Criteria1:="<>FIF", Operator:=xlAnd, _
-            Criteria2:="<>Fund of Funds", _
-            Criteria2:="<>Sub/Sleeve- No Benchmark"
+                   Criteria1:="<>FIF", _
+                   Operator:=xlAnd
+        .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Strategy"), _
+                   Criteria1:="<>Fund of Funds", _
+                   Operator:=xlAnd
+        .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Strategy"), _
+                   Criteria1:="<>Sub/Sleeve- No Benchmark"
         
+        ' 3. Filter out specified values from HFAD_Entity_type
         .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Entity_type"), _
-            Criteria1:="<>Guaranteed subsidiary", Operator:=xlAnd, _
-            Criteria2:="<>Investment Manager as Agent"
+                   Criteria1:=Array("<>Guaranteed subsidiary", _
+                                  "<>Investment Manager as Agent", _
+                                  "<>Managed Account", _
+                                  "<>Managed Account - No AF", _
+                                  "<>Loan Monitoring", _
+                                  "<>Loan FiF - No tracking", _
+                                  "<>Sleeve/share class/sub-account"), _
+                   Operator:=xlFilterValues
         
-        ' Apply second set of filters for HFAD_Entity_type since we have more exclusions
-        .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Entity_type"), _
-            Criteria1:="<>Managed Account", Operator:=xlAnd, _
-            Criteria2:="<>Managed Account - No AF"
-            
-        .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Entity_type"), _
-            Criteria1:="<>Loan Monitoring", Operator:=xlAnd, _
-            Criteria2:="<>Loan FiF - No tracking"
-            
-        .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Entity_type"), _
-            Criteria1:="<>Sleeve/share class/sub-account"
-        
-        ' Filter for dates 2023 and beyond
+        ' 4. Filter IRR_last_update_date for 2023 and beyond
         .AutoFilter Field:=GetColumnNumber(tbl, "IRR_last_update_date"), _
-            Criteria1:=">=" & DateSerial(2023, 1, 1)
+                   Criteria1:=">=" & DateSerial(2023, 1, 1)
     End With
 End Sub
 
@@ -146,13 +143,16 @@ Private Sub CreateUploadSheet()
     Dim wsSource As Worksheet, wsSharePoint As Worksheet, wsUpload As Worksheet
     Dim tblSource As ListObject, tblSharePoint As ListObject, tblUpload As ListObject
     Dim dictSharePoint As Object
+    Dim visibleRange As Range
     Dim cell As Range
     Dim row As Long
     Dim rngUpload As Range
+    Dim sourceCoperID As Variant
     
     ' Setup sheets
     Set wsSource = ThisWorkbook.Sheets("Source Population")
     Set wsSharePoint = ThisWorkbook.Sheets("SharePoint")
+    Set tblSource = wsSource.ListObjects(1)
     
     ' Create Upload to SP sheet
     If Not SheetExists("Upload to SP") Then
@@ -182,32 +182,37 @@ Private Sub CreateUploadSheet()
         If Not IsEmpty(cell) Then dictSharePoint(cell.Value) = True
     Next cell
     
-    ' Populate upload table with new funds
-    row = 2
-    Set tblSource = wsSource.ListObjects(1)
-    
-    ' Get visible (filtered) cells only
-    Dim visibleCells As Range
+    ' Get visible rows after filtering
     On Error Resume Next
-    Set visibleCells = tblSource.ListColumns("HFAD_Fund_CoperID").DataBodyRange.SpecialCells(xlCellTypeVisible)
+    Set visibleRange = tblSource.DataBodyRange.SpecialCells(xlCellTypeVisible)
     On Error GoTo 0
     
-    If Not visibleCells Is Nothing Then
-        For Each cell In visibleCells
-            If Not IsEmpty(cell) And Not dictSharePoint.Exists(cell.Value) Then
+    If visibleRange Is Nothing Then
+        MsgBox "No visible rows found after filtering.", vbInformation
+        Exit Sub
+    End If
+    
+    ' Populate upload table with new funds from visible rows only
+    row = 2
+    
+    For Each cell In tblSource.ListColumns("HFAD_Fund_CoperID").DataBodyRange
+        ' Check if the entire row is visible (not filtered out)
+        If Not cell.EntireRow.Hidden Then
+            sourceCoperID = cell.Value
+            If Not IsEmpty(sourceCoperID) And Not dictSharePoint.Exists(sourceCoperID) Then
                 With wsUpload
-                .Cells(row, 1).Value = cell.Value  ' CoperID
-                .Cells(row, 2).Value = GetValueFromSource(tblSource, cell.Row, "HFAD_Fund_Name")
-                .Cells(row, 3).Value = GetValueFromSource(tblSource, cell.Row, "HFAD_IM_CoperID")
-                .Cells(row, 4).Value = GetValueFromSource(tblSource, cell.Row, "HFAD_IM_Name")
-                .Cells(row, 5).Value = GetValueFromSource(tblSource, cell.Row, "HFAD_Credit_Officer")
-                .Cells(row, 6).Value = GetValueFromSource(tblSource, cell.Row, "IRR_Transparency_Tier")
-                .Cells(row, 7).Value = "Active"
+                    .Cells(row, 1).Value = sourceCoperID  ' CoperID
+                    .Cells(row, 2).Value = GetValueFromVisibleRow(tblSource, cell.Row, "HFAD_Fund_Name")
+                    .Cells(row, 3).Value = GetValueFromVisibleRow(tblSource, cell.Row, "HFAD_IM_CoperID")
+                    .Cells(row, 4).Value = GetValueFromVisibleRow(tblSource, cell.Row, "HFAD_IM_Name")
+                    .Cells(row, 5).Value = GetValueFromVisibleRow(tblSource, cell.Row, "HFAD_Credit_Officer")
+                    .Cells(row, 6).Value = GetValueFromVisibleRow(tblSource, cell.Row, "IRR_Transparency_Tier")
+                    .Cells(row, 7).Value = "Active"
                 End With
                 row = row + 1
             End If
-        Next cell
-    End If
+        End If
+    Next cell
     
     ' Convert range to table if we have data
     If row > 2 Then
@@ -216,6 +221,17 @@ Private Sub CreateUploadSheet()
         tblUpload.Name = "UploadHF"
     End If
 End Sub
+
+Private Function GetValueFromVisibleRow(tbl As ListObject, rowNum As Long, columnName As String) As Variant
+    Dim targetCell As Range
+    
+    On Error Resume Next
+    Set targetCell = tbl.ListColumns(columnName).Range.Cells(rowNum - tbl.HeaderRowRange.Row + 1, 1)
+    If Not targetCell.EntireRow.Hidden Then
+        GetValueFromVisibleRow = targetCell.Value
+    End If
+    On Error GoTo 0
+End Function
 
 ' Helper Functions
 Private Function SheetExists(sheetName As String) As Boolean
@@ -241,10 +257,4 @@ Private Function GetColumnNumber(tbl As ListObject, columnName As String) As Lon
         End If
     Next col
     GetColumnNumber = 0
-End Function
-
-Private Function GetValueFromSource(tbl As ListObject, rowNum As Long, columnName As String) As Variant
-    On Error Resume Next
-    GetValueFromSource = tbl.ListColumns(columnName).DataBodyRange.Cells(rowNum - tbl.HeaderRowRange.Row, 1).Value
-    On Error GoTo 0
 End Function
