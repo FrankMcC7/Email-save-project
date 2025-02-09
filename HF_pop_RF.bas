@@ -115,10 +115,13 @@ Sub NewFundsIdentificationMacro()
     ' 4.2 Filter HFAD_Strategy to remove "FIF", "Fund of Funds" and "Sub/Sleeve- No Benchmark"
     colIndex = GetColumnIndex(loMainHF, "HFAD_Strategy")
     If colIndex > 0 Then
-        ' Build an array of allowed values (i.e. all unique values not in the exclusion list)
         Dim allowedStrategy As Variant
         allowedStrategy = GetAllowedValues(loMainHF, "HFAD_Strategy", _
                             Array("FIF", "Fund of Funds", "Sub/Sleeve- No Benchmark"))
+        ' Include blank values if not already present
+        If IsError(Application.Match("", allowedStrategy, 0)) Then
+            allowedStrategy = AppendToArray(allowedStrategy, "")
+        End If
         If Not IsEmpty(allowedStrategy) Then
             loMainHF.Range.AutoFilter Field:=colIndex, _
                 Criteria1:=allowedStrategy, Operator:=xlFilterValues
@@ -134,6 +137,10 @@ Sub NewFundsIdentificationMacro()
                                   "Managed Account", "Managed Account - No AF", _
                                   "Loan Monitoring", "Loan FiF - No tracking", _
                                   "Sleeve/share class/sub-account"))
+        ' Include blank values if not already present
+        If IsError(Application.Match("", allowedEntity, 0)) Then
+            allowedEntity = AppendToArray(allowedEntity, "")
+        End If
         If Not IsEmpty(allowedEntity) Then
             loMainHF.Range.AutoFilter Field:=colIndex, _
                 Criteria1:=allowedEntity, Operator:=xlFilterValues
@@ -143,7 +150,6 @@ Sub NewFundsIdentificationMacro()
     ' 4.4 Filter IRR_last_update_date to keep only dates from 2023 and later
     colIndex = GetColumnIndex(loMainHF, "IRR_last_update_date")
     If colIndex > 0 Then
-        ' Adjust the date string format if needed for your locale.
         loMainHF.Range.AutoFilter Field:=colIndex, _
             Criteria1:=">=" & Format(DateSerial(2023, 1, 1), "mm/dd/yyyy"), Operator:=xlAnd
     End If
@@ -293,4 +299,23 @@ Function GetAllowedValues(lo As ListObject, fieldName As String, excludeArr As V
     Else
         GetAllowedValues = Array() ' return empty array if no allowed values found
     End If
+End Function
+
+' -------------------------------
+' Helper function: Appends a value to an existing array.
+Function AppendToArray(arr As Variant, valueToAppend As Variant) As Variant
+    Dim newArr() As Variant
+    Dim i As Long, n As Long
+    ' If arr is not an array, create a new array with two elements.
+    If Not IsArray(arr) Then
+        newArr = Array(arr, valueToAppend)
+    Else
+        n = UBound(arr) - LBound(arr) + 1
+        ReDim newArr(LBound(arr) To UBound(arr) + 1)
+        For i = LBound(arr) To UBound(arr)
+            newArr(i) = arr(i)
+        Next i
+        newArr(UBound(arr) + 1) = valueToAppend
+    End If
+    AppendToArray = newArr
 End Function
