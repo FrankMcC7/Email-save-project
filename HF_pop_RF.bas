@@ -39,6 +39,7 @@ Sub NewFundsIdentificationMacro()
     Dim up_FrequencyCol As Long, up_AdHocCol As Long, up_ParentFlagCol As Long, up_FundCoperIDCol As Long, up_DaysToReportCol As Long
     Dim upRow As ListRow
     Dim creditOfficerName As String, imCoperID As String
+    ' (Note: Removed duplicate declaration of fundCoperID from here)
     
     ' ============================================================
     ' 1. Define file paths (hardcoded)
