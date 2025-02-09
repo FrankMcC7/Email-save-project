@@ -116,14 +116,25 @@ Private Sub ApplyHFTableFilters()
         .AutoFilter Field:=GetColumnNumber(tbl, "IRR_Transparency_Tier"), Criteria1:=Array("1", "2"), Operator:=xlFilterValues
         
         .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Strategy"), _
-            Criteria1:=Array("FIF", "Fund of Funds", "Sub/Sleeve- No Benchmark"), _
-            Operator:=xlFilterValues, Criteria2:="<>"
+            Criteria1:="<>FIF", Operator:=xlAnd, _
+            Criteria2:="<>Fund of Funds", _
+            Criteria2:="<>Sub/Sleeve- No Benchmark"
         
         .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Entity_type"), _
-            Criteria1:=Array("Guaranteed subsidiary", "Investment Manager as Agent", _
-                           "Managed Account", "Managed Account - No AF", "Loan Monitoring", _
-                           "Loan FiF - No tracking", "Sleeve/share class/sub-account"), _
-            Operator:=xlFilterValues, Criteria2:="<>"
+            Criteria1:="<>Guaranteed subsidiary", Operator:=xlAnd, _
+            Criteria2:="<>Investment Manager as Agent"
+        
+        ' Apply second set of filters for HFAD_Entity_type since we have more exclusions
+        .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Entity_type"), _
+            Criteria1:="<>Managed Account", Operator:=xlAnd, _
+            Criteria2:="<>Managed Account - No AF"
+            
+        .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Entity_type"), _
+            Criteria1:="<>Loan Monitoring", Operator:=xlAnd, _
+            Criteria2:="<>Loan FiF - No tracking"
+            
+        .AutoFilter Field:=GetColumnNumber(tbl, "HFAD_Entity_type"), _
+            Criteria1:="<>Sleeve/share class/sub-account"
         
         ' Filter for dates 2023 and beyond
         .AutoFilter Field:=GetColumnNumber(tbl, "IRR_last_update_date"), _
