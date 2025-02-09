@@ -1,6 +1,5 @@
 Option Explicit
 
-' Main procedure for “Phase 1 – New funds identification”
 Sub NewFundsIdentificationMacro()
     Dim HFFilePath As String, SPFilePath As String
     Dim wbMain As Workbook, wbHF As Workbook, wbSP As Workbook
@@ -12,8 +11,8 @@ Sub NewFundsIdentificationMacro()
     Dim visData As Range, r As Range
     Dim colIndex As Long
     Dim dictSP As Object
-    Dim i As Long, j As Integer
-    Dim fundCoperID As Variant
+    Dim i As Long, j As Long
+    Dim fundCoperID As String
     Dim newFunds As Collection
     Dim rec As Variant
     Dim wsUpload As Worksheet
@@ -22,14 +21,13 @@ Sub NewFundsIdentificationMacro()
     Dim headers As Variant
     Dim rowCounter As Long
     
-    ' === 1. Define the file paths (hardcoded) ===
-    HFFilePath = "C:\YourFolder\HFFile.xlsx"           ' <<< CHANGE to your actual path
-    SPFilePath = "C:\YourFolder\SharePointFile.xlsx"     ' <<< CHANGE to your actual path
+    ' === 1. Define file paths (hardcoded) ===
+    HFFilePath = "C:\YourFolder\HFFile.xlsx"           ' <<< Change to your actual path
+    SPFilePath = "C:\YourFolder\SharePointFile.xlsx"     ' <<< Change to your actual path
     
-    ' Set main workbook (this workbook where the macro resides)
     Set wbMain = ThisWorkbook
     
-    ' === 2. Open the HF file and convert data to table "HFTable" ===
+    ' === 2. Open the HF file and convert its data to table "HFTable" ===
     Set wbHF = Workbooks.Open(HFFilePath)
     Set wsHFSource = wbHF.Sheets(1) ' Assumes data is in the first sheet
     If wsHFSource.ListObjects.Count > 0 Then
@@ -40,7 +38,7 @@ Sub NewFundsIdentificationMacro()
     End If
     loHF.Name = "HFTable"
     
-    ' === 2. Open the SharePoint file and convert data to table "SharePoint" ===
+    ' === 2. Open the SharePoint file and convert its data to table "SharePoint" ===
     Set wbSP = Workbooks.Open(SPFilePath)
     Set wsSPSource = wbSP.Sheets(1)
     If wsSPSource.ListObjects.Count > 0 Then
@@ -74,9 +72,9 @@ Sub NewFundsIdentificationMacro()
         wsSPMain.Cells.Clear
     End If
     
-    ' Copy HF data table from source file into "Source Population"
+    ' Copy HF table into "Source Population"
     loHF.Range.Copy Destination:=wsSourcePop.Range("A1")
-    ' Copy SharePoint data table from source file into "SharePoint"
+    ' Copy SharePoint table into "SharePoint"
     loSP.Range.Copy Destination:=wsSPMain.Range("A1")
     
     ' Close the source workbooks without saving changes
@@ -92,7 +90,7 @@ Sub NewFundsIdentificationMacro()
         loMainHF.Name = "HFTable"
     End If
     
-    ' (Optional) Ensure the SharePoint pasted data is a ListObject
+    ' Ensure the pasted SharePoint data is a ListObject
     On Error Resume Next
     Set loMainSP = wsSPMain.ListObjects("SharePoint")
     On Error GoTo 0
@@ -113,12 +111,13 @@ Sub NewFundsIdentificationMacro()
     End If
     
     ' 4.2 Filter HFAD_Strategy to remove "FIF", "Fund of Funds" and "Sub/Sleeve- No Benchmark"
+    '      but include blanks if they exist.
     colIndex = GetColumnIndex(loMainHF, "HFAD_Strategy")
     If colIndex > 0 Then
         Dim allowedStrategy As Variant
         allowedStrategy = GetAllowedValues(loMainHF, "HFAD_Strategy", _
                             Array("FIF", "Fund of Funds", "Sub/Sleeve- No Benchmark"))
-        ' Include blank values if not already present
+        ' Include blank values if not already present.
         If IsError(Application.Match("", allowedStrategy, 0)) Then
             allowedStrategy = AppendToArray(allowedStrategy, "")
         End If
@@ -128,7 +127,8 @@ Sub NewFundsIdentificationMacro()
         End If
     End If
     
-    ' 4.3 Filter HFAD_Entity_type to remove specific unwanted values
+    ' 4.3 Filter HFAD_Entity_type to remove unwanted values
+    '      but include blanks if they exist.
     colIndex = GetColumnIndex(loMainHF, "HFAD_Entity_type")
     If colIndex > 0 Then
         Dim allowedEntity As Variant
@@ -137,7 +137,7 @@ Sub NewFundsIdentificationMacro()
                                   "Managed Account", "Managed Account - No AF", _
                                   "Loan Monitoring", "Loan FiF - No tracking", _
                                   "Sleeve/share class/sub-account"))
-        ' Include blank values if not already present
+        ' Include blank values if not already present.
         If IsError(Application.Match("", allowedEntity, 0)) Then
             allowedEntity = AppendToArray(allowedEntity, "")
         End If
@@ -147,7 +147,7 @@ Sub NewFundsIdentificationMacro()
         End If
     End If
     
-    ' 4.4 Filter IRR_last_update_date to keep only dates from 2023 and later
+    ' 4.4 Filter IRR_last_update_date to keep only dates from 2023 and later.
     colIndex = GetColumnIndex(loMainHF, "IRR_last_update_date")
     If colIndex > 0 Then
         loMainHF.Range.AutoFilter Field:=colIndex, _
@@ -155,20 +155,24 @@ Sub NewFundsIdentificationMacro()
     End If
     
     ' === 5. Identify new funds (present in HFTable but missing in SharePoint) ============
-    ' Build a dictionary of SharePoint HFAD_Fund_CoperID values
+    ' Build a dictionary of SharePoint HFAD_Fund_CoperID values, standardizing the keys.
     Set dictSP = CreateObject("Scripting.Dictionary")
+    dictSP.CompareMode = vbTextCompare  ' Ensure case-insensitive comparisons.
+    
     colIndex = GetColumnIndex(loMainSP, "HFAD_Fund_CoperID")
     If colIndex > 0 Then
-        Dim dataSP As Variant, rIndex As Long
+        Dim dataSP As Variant, rIndex As Long, key As String
         dataSP = loMainSP.DataBodyRange.Value
         For rIndex = 1 To UBound(dataSP, 1)
-            If Not dictSP.Exists(dataSP(rIndex, colIndex)) Then
-                dictSP.Add dataSP(rIndex, colIndex), True
+            key = Trim(CStr(dataSP(rIndex, colIndex)))
+            If Not dictSP.Exists(key) Then
+                dictSP.Add key, True
             End If
         Next rIndex
     End If
     
-    ' Loop through visible rows in HFTable and check HFAD_Fund_CoperID
+    ' Loop through the visible rows in HFTable and collect records where the HFAD_Fund_CoperID
+    ' is not found in the SharePoint dictionary.
     Set newFunds = New Collection
     colIndex = GetColumnIndex(loMainHF, "HFAD_Fund_CoperID")
     If colIndex > 0 Then
@@ -184,19 +188,17 @@ Sub NewFundsIdentificationMacro()
             idxTier = GetColumnIndex(loMainHF, "IRR_Transparency_Tier")
             
             For Each r In visData.Rows
-                ' Check if the entire row is visible (it might be hidden by the filter)
                 If r.EntireRow.Hidden = False Then
-                    fundCoperID = r.Cells(1, colIndex).Value
+                    fundCoperID = Trim(CStr(r.Cells(1, colIndex).Value))
                     If Not dictSP.Exists(fundCoperID) Then
-                        ' Store the record as an array:
                         rec = Array( _
-                                fundCoperID, _
-                                r.Cells(1, idxFundName).Value, _
-                                r.Cells(1, idxIMCoperID).Value, _
-                                r.Cells(1, idxIMName).Value, _
-                                r.Cells(1, idxCreditOfficer).Value, _
-                                r.Cells(1, idxTier).Value, _
-                                "Active")
+                            fundCoperID, _
+                            r.Cells(1, idxFundName).Value, _
+                            r.Cells(1, idxIMCoperID).Value, _
+                            r.Cells(1, idxIMName).Value, _
+                            r.Cells(1, idxCreditOfficer).Value, _
+                            r.Cells(1, idxTier).Value, _
+                            "Active")
                         newFunds.Add rec
                     End If
                 End If
@@ -215,14 +217,12 @@ Sub NewFundsIdentificationMacro()
         wsUpload.Cells.Clear
     End If
     
-    ' Define headers in the order required
     headers = Array("HFAD_Fund_CoperID", "HFAD_Fund_Name", "HFAD_IM_CoperID", _
                     "HFAD_IM_Name", "HFAD_Credit_Officer", "Tier", "Status")
     For j = LBound(headers) To UBound(headers)
         wsUpload.Cells(1, j + 1).Value = headers(j)
     Next j
     
-    ' Write new funds data (each record from the collection)
     rowCounter = 2
     For i = 1 To newFunds.Count
         rec = newFunds(i)
@@ -232,7 +232,6 @@ Sub NewFundsIdentificationMacro()
         rowCounter = rowCounter + 1
     Next i
     
-    ' Convert the Upload data into a table named "UploadHF"
     Set rngUpload = wsUpload.Range(wsUpload.Cells(1, 1), wsUpload.Cells(rowCounter - 1, UBound(headers) + 1))
     On Error Resume Next
     Set loUpload = wsUpload.ListObjects("UploadHF")
@@ -247,9 +246,9 @@ Sub NewFundsIdentificationMacro()
     MsgBox "Macro completed successfully.", vbInformation
 End Sub
 
-' -------------------------------
+' -----------------------------------------
 ' Helper function: Returns the relative column index (within the ListObject)
-' for a given header name. Returns 0 if not found.
+' for a given header name. Returns 0 if the header is not found.
 Function GetColumnIndex(lo As ListObject, headerName As String) As Long
     Dim i As Long
     For i = 1 To lo.HeaderRowRange.Columns.Count
@@ -261,14 +260,14 @@ Function GetColumnIndex(lo As ListObject, headerName As String) As Long
     GetColumnIndex = 0
 End Function
 
-' -------------------------------
+' -----------------------------------------
 ' Helper function: Returns an array of unique allowed values from a given field
 ' in the ListObject that are NOT in the provided exclusion list.
 Function GetAllowedValues(lo As ListObject, fieldName As String, excludeArr As Variant) As Variant
     Dim colIndex As Long
     colIndex = GetColumnIndex(lo, fieldName)
     If colIndex = 0 Then
-        GetAllowedValues = Array() ' return empty array if header not found
+        GetAllowedValues = Array() ' Return an empty array if the header is not found.
         Exit Function
     End If
     
@@ -297,16 +296,16 @@ Function GetAllowedValues(lo As ListObject, fieldName As String, excludeArr As V
     If dict.Count > 0 Then
         GetAllowedValues = dict.Keys
     Else
-        GetAllowedValues = Array() ' return empty array if no allowed values found
+        GetAllowedValues = Array()
     End If
 End Function
 
-' -------------------------------
+' -----------------------------------------
 ' Helper function: Appends a value to an existing array.
 Function AppendToArray(arr As Variant, valueToAppend As Variant) As Variant
     Dim newArr() As Variant
     Dim i As Long, n As Long
-    ' If arr is not an array, create a new array with two elements.
+    ' If arr is not already an array, create one with both values.
     If Not IsArray(arr) Then
         newArr = Array(arr, valueToAppend)
     Else
