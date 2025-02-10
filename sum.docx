@@ -1,0 +1,10 @@
+This script automates backing up emails from a shared Outlook mailbox and logs what happens along the way. Here’s a human-friendly rundown:
+
+Connecting to Outlook: It uses Outlook’s COM interface to access a shared mailbox and its Inbox.
+Filtering Emails by Date: The script lets you choose to back up yesterday’s emails or emails from specific dates. It then filters the emails based on the selected date(s).
+Saving Emails: Each email is saved as a .msg file. The script cleans up the email’s subject to create a safe filename, adjusting it if necessary (for example, if a file with the same name already exists).
+Extracting Email Details: It grabs key details like the sender’s name and email address (by parsing the email headers) to keep a record.
+Logging Activity:
+Email Log: Details of every saved email (date, sender info, subject with a clickable link to the saved file) are recorded in a macro-enabled Excel file.
+Metrics Log: Summary statistics such as total emails processed, successfully saved emails, fallback naming occurrences, and any errors are stored in another Excel file.
+Organized Backup Structure: Saved emails are organized into folders by year, month, and day, making it easy to locate them later.
