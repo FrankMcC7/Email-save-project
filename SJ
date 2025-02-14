@@ -1,0 +1,50 @@
+Sub CopyDataFromMultipleWorkbooks()
+    Dim SourceWorkbook As Workbook
+    Dim TargetWorkbook As Workbook
+    Dim SourceWorksheet As Worksheet
+    Dim TargetWorksheet As Worksheet
+    Dim SourceRange As Range
+    Dim TargetRange As Range
+    Dim i As Integer
+    Dim SourceFileName As String
+    Dim SourceFolderPath As String
+    
+    ' Folder path where all source workbooks are located (replace with your folder path)
+    SourceFolderPath = "C:\path\to\your\folder\"
+
+    ' Open the target workbook where the data will be copied (replace with the actual path of your target file)
+    Set TargetWorkbook = Workbooks.Open("C:\path\to\target\workbook.xlsx")
+    
+    ' Reference the target worksheet (replace "Sheet1" with your actual sheet name)
+    Set TargetWorksheet = TargetWorkbook.Sheets("Sheet1")
+    
+    ' Loop through the source workbooks (a.xlsx, b.xlsx, c.xlsx, ..., i.xlsx)
+    For i = 1 To 9
+        ' Construct the filename for each source workbook (a.xlsx, b.xlsx, etc.)
+        SourceFileName = SourceFolderPath & Chr(96 + i) & ".xlsx"  ' This creates "a.xlsx", "b.xlsx", etc.
+        
+        ' Open the source workbook
+        Set SourceWorkbook = Workbooks.Open(SourceFileName)
+        
+        ' Reference the source worksheet (assuming the same sheet name in each workbook)
+        Set SourceWorksheet = SourceWorkbook.Sheets("Sheet1") ' Change if needed
+        
+        ' Set the source range you want to copy (adjust range as needed)
+        Set SourceRange = SourceWorksheet.Range("A1:B10") ' Change as needed
+        
+        ' Find the next available row in the target worksheet
+        Set TargetRange = TargetWorksheet.Cells(TargetWorksheet.Rows.Count, 1).End(xlUp).Offset(1, 0)
+        
+        ' Copy the data from the source to the target workbook
+        SourceRange.Copy Destination:=TargetRange
+        
+        ' Close the source workbook without saving changes
+        SourceWorkbook.Close False
+    Next i
+    
+    ' Save the target workbook
+    TargetWorkbook.Save
+    
+    ' Optionally, close the target workbook
+    ' TargetWorkbook.Close
+End Sub
