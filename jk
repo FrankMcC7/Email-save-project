@@ -1,0 +1,32 @@
+import openpyxl
+
+# Specify your input and output file names
+input_file = "merged_data.xlsx"
+output_file = "unmerged_data.xlsx"
+
+# Load the workbook
+wb = openpyxl.load_workbook(input_file)
+
+# Iterate over each worksheet in the workbook
+for ws in wb.worksheets:
+    # Make a list of all merged cell ranges (copy the list since we'll modify it)
+    merged_ranges = list(ws.merged_cells.ranges)
+    
+    for merged_range in merged_ranges:
+        # Get the boundaries of the merged range
+        min_col, min_row, max_col, max_row = merged_range.bounds
+        # Retrieve the value from the top-left cell of the merged area
+        cell_value = ws.cell(row=min_row, column=min_col).value
+        
+        # Unmerge the cells
+        ws.unmerge_cells(range_string=str(merged_range))
+        
+        # Fill each cell in the previously merged area with the original value
+        for row in ws.iter_rows(min_row=min_row, max_row=max_row, 
+                                min_col=min_col, max_col=max_col):
+            for cell in row:
+                cell.value = cell_value
+
+# Save the updated workbook to a new file
+wb.save(output_file)
+print(f"Unmerged cells and saved file as '{output_file}'.")
