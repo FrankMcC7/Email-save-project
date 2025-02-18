@@ -177,10 +177,8 @@ def extract_date_from_text(text, default_year=None):
 
 def find_save_path(sender, subject, sender_path_table):
     rows = sender_path_table[sender_path_table['sender'].str.lower() == sender.lower()]
-
     if rows.empty:
         return None, None, False
-
     if len(rows) > 1:
         for _, row in rows.iterrows():
             coper_name = str(row.get('coper_name', '')).strip().lower()
@@ -212,26 +210,21 @@ def update_excel_summary(date_str, total_emails, saved_default, saved_actual, no
         sheet = workbook.active
         sheet.title = 'Summary'
         sheet.append(['Date', 'Total Emails', 'Saved in Default', 'Saved in Actual Paths', 'Not Saved'])
-
     sheet = workbook.active
     sheet.append([date_str, total_emails, saved_default, saved_actual, not_saved])
-
     if 'Failed Emails' not in workbook.sheetnames:
         failed_sheet = workbook.create_sheet('Failed Emails')
         failed_sheet.append(['Date', 'Email Address', 'Subject'])
     else:
         failed_sheet = workbook['Failed Emails']
-
     for email in failed_emails:
         failed_sheet.append([date_str, email['email_address'], email['subject']])
-
     workbook.save(EXCEL_FILE_PATH)
 
 def save_email(item, save_path, special_case):
     try:
         if not os.path.exists(save_path):
             os.makedirs(save_path)
-        
         valid_extensions = ('.xlsx', '.xls', '.csv', '.pdf', '.doc', '.docx')
         if special_case and item.Attachments.Count > 0:
             for attachment in item.Attachments:
@@ -242,21 +235,17 @@ def save_email(item, save_path, special_case):
                 filename_base = sanitize_filename(item.Subject)
         else:
             filename_base = sanitize_filename(item.Subject)
-        
         extension = ".msg"
         max_filename_length = 255 - len(save_path) - len(extension) - 1
         if len(filename_base) > max_filename_length:
             filename_base = filename_base[:max_filename_length]
-        
         filename = f"{filename_base}{extension}"
         full_path = os.path.join(save_path, filename)
-        
         counter = 1
         while os.path.exists(full_path):
             filename = f"{filename_base}_{counter}{extension}"
             full_path = os.path.join(save_path, filename)
             counter += 1
-        
         item.SaveAs(full_path, 3)
         return filename
     except pythoncom.com_error as com_err:
@@ -273,7 +262,6 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
     failed_emails = []
     retries = 3
     processed = False
-
     # Attempt to extract sender email safely
     try:
         if hasattr(item, 'SenderEmailAddress') and item.SenderEmailAddress:
@@ -286,7 +274,6 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
     except Exception:
         logs.append(f"Skipped email '{item.Subject}' due to error fetching sender info.")
         return logs, failed_emails
-
     while retries > 0 and not processed:
         try:
             year, month = extract_date_from_text(item.Subject, default_year)
@@ -296,12 +283,10 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
                     if year and month:
                         break
             year = year or default_year
-
             base_path, special_case, is_csv_path = find_save_path(sender_email, item.Subject, sender_path_table)
             if base_path is None:
                 base_path = DEFAULT_SAVE_PATH
-
-            # If it's a default path email
+            # Determine save path based on CSV settings or default
             if not is_csv_path:
                 save_path = os.path.join(base_path, specific_date_str)
             else:
@@ -312,12 +297,10 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
                         save_path = os.path.join(base_path, str(year), month)
                     else:
                         save_path = os.path.join(base_path, str(year))
-
             print(f"Email from: {sender_email}")
             print(f"Subject: {item.Subject}")
             print(f"Special Case: {special_case}")
             print(f"Save Path: {save_path}")
-
             filename = save_email(item, save_path, special_case)
             logs.append(f"Saved: {filename} to {save_path}")
             processed = True
@@ -331,7 +314,6 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
             retries = 0
             logs.append(f"Error handling email '{item.Subject}' from '{sender_email}': {str(e)}")
             failed_emails.append({'email_address': sender_email, 'subject': item.Subject})
-
     return logs, failed_emails
 
 def save_emails_from_senders_on_date(email_address, specific_date_str, sender_path_table, default_year):
@@ -339,7 +321,6 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     pythoncom.CoInitialize()
     specific_date = datetime.datetime.strptime(specific_date_str, '%Y-%m-%d').date()
     outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
-
     def find_folder_by_name(parent_folder, target_name):
         for f in parent_folder.Folders:
             if f.Name.lower() == target_name.lower():
@@ -348,13 +329,10 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
             if sub_result is not None:
                 return sub_result
         return None
-
     # Hard-code the folder name to "NAV and Performance"
     folder_to_find = "NAV and Performance"
-
     inbox = None
     target_folder = None
-
     for store in outlook.Stores:
         if store.DisplayName.lower() == email_address.lower() or store.ExchangeStoreType == 3:
             try:
@@ -366,7 +344,6 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
             except AttributeError as e:
                 logs.append(f"Error accessing folders: {str(e)}")
                 continue
-
     if not inbox:
         logs.append(f"No Inbox found for the account with email address: {email_address}")
         pythoncom.CoUninitialize()
@@ -375,12 +352,10 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
         return
     else:
         logs.append("Inbox found successfully.")
-
     if folder_to_find and not target_folder:
         logs.append(f"No '{folder_to_find}' folder found as a subfolder of Inbox.")
     elif folder_to_find and target_folder:
         logs.append(f"'{folder_to_find}' folder found successfully.")
-
     def get_items_for_folder(folder, date):
         filtered_items = []
         if folder:
@@ -392,17 +367,13 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
             for item in items:
                 filtered_items.append(item)
         return filtered_items
-
     inbox_items = get_items_for_folder(inbox, specific_date) if inbox else []
     target_items = get_items_for_folder(target_folder, specific_date) if target_folder else []
-
     all_items = inbox_items + target_items
     logs.append(f"Total emails found: {len(all_items)} (Inbox: {len(inbox_items)}, '{folder_to_find}': {len(target_items)})")
-
     total_emails = len(all_items)
     saved_default, saved_actual, not_saved = 0, 0, 0
     failed_emails = []
-
     for item in all_items:
         email_logs, email_failed_emails = process_email(item, sender_path_table, default_year, specific_date_str)
         logs.extend(email_logs)
@@ -411,60 +382,17 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
             saved_default += 1
         else:
             saved_actual += 1
-
     pythoncom.CoUninitialize()
     with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
         f.writelines("\n".join(logs))
-
     update_excel_summary(specific_date_str, total_emails, saved_default, saved_actual, not_saved, failed_emails)
     print("Process completed for", specific_date_str, ". Check logs.txt and email_summary.xlsx for details.")
-
-# ------------------ Calendar Helper Functions ------------------ #
-# These functions use tkinter and tkcalendar for a graphical date selection.
-def select_date_via_calendar(title="Select Date"):
-    try:
-        import tkinter as tk
-        from tkcalendar import Calendar
-    except ImportError:
-        print("tkinter and/or tkcalendar not available. Falling back to text input.")
-        return None
-
-    selected_date = []
-
-    def on_select():
-        selected_date.append(cal.get_date())
-        root.destroy()
-
-    root = tk.Tk()
-    root.title(title)
-    cal = Calendar(root, selectmode='day', date_pattern='yyyy-mm-dd')
-    cal.pack(padx=10, pady=10)
-    btn = tk.Button(root, text="Select", command=on_select)
-    btn.pack(pady=10)
-    root.mainloop()
-    if selected_date:
-        return selected_date[0]
-    return None
 
 # ------------------ Main Interactive Section ------------------ #
 if __name__ == '__main__':
     # Hard-code the email account here:
     email_address = 'your_email@domain.com'
-
-    # Check if calendar selection is available
-    try:
-        import tkinter as tk
-        from tkcalendar import Calendar
-        calendar_available = True
-    except ImportError:
-        calendar_available = False
-
-    use_calendar = False
-    if calendar_available:
-        cal_choice = input("Do you want to use the calendar for date selection? (Y/N): ").strip().lower()
-        if cal_choice == 'y':
-            use_calendar = True
-
+    
     print("\nSelect date option:")
     print("1: Yesterday")
     print("2: Specific Date")
@@ -472,32 +400,20 @@ if __name__ == '__main__':
     option = input("Enter option number: ").strip()
 
     date_list = []
-
     if option == '1':
         yesterday = datetime.date.today() - datetime.timedelta(days=1)
         date_list = [yesterday.strftime('%Y-%m-%d')]
     elif option == '2':
-        if use_calendar:
-            selected = select_date_via_calendar("Select a Date")
-            if not selected:
-                print("No date selected. Exiting.")
-                exit(1)
-            date_list = [selected]
-        else:
-            date_input = input("Enter the date (YYYY-MM-DD): ").strip()
-            try:
-                datetime.datetime.strptime(date_input, '%Y-%m-%d')
-                date_list = [date_input]
-            except ValueError:
-                print("Invalid date format. Please use YYYY-MM-DD.")
-                exit(1)
+        date_input = input("Enter the date (YYYY-MM-DD): ").strip()
+        try:
+            datetime.datetime.strptime(date_input, '%Y-%m-%d')
+            date_list = [date_input]
+        except ValueError:
+            print("Invalid date format. Please use YYYY-MM-DD.")
+            exit(1)
     elif option == '3':
-        if use_calendar:
-            start = select_date_via_calendar("Select Start Date")
-            end = select_date_via_calendar("Select End Date")
-        else:
-            start = input("Enter the start date (YYYY-MM-DD): ").strip()
-            end = input("Enter the end date (YYYY-MM-DD): ").strip()
+        start = input("Enter the start date (YYYY-MM-DD): ").strip()
+        end = input("Enter the end date (YYYY-MM-DD): ").strip()
         try:
             start_date = datetime.datetime.strptime(start, '%Y-%m-%d').date()
             end_date = datetime.datetime.strptime(end, '%Y-%m-%d').date()
@@ -507,7 +423,6 @@ if __name__ == '__main__':
         if start_date > end_date:
             print("Start date must not be after end date.")
             exit(1)
-        # Generate list of dates in the range
         delta = end_date - start_date
         date_list = [(start_date + datetime.timedelta(days=i)).strftime('%Y-%m-%d') for i in range(delta.days + 1)]
     else:
@@ -536,7 +451,7 @@ if __name__ == '__main__':
 
     os.makedirs(DEFAULT_SAVE_PATH, exist_ok=True)
 
-    # Process each selected date
+    # Process emails for each selected date
     for d in date_list:
         print("\nProcessing emails for:", d)
         save_emails_from_senders_on_date(email_address, d, sender_path_table, default_year)
