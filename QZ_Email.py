@@ -262,7 +262,6 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
     failed_emails = []
     retries = 3
     processed = False
-    # Attempt to extract sender email safely
     try:
         if hasattr(item, 'SenderEmailAddress') and item.SenderEmailAddress:
             sender_email = item.SenderEmailAddress.lower()
@@ -286,7 +285,6 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
             base_path, special_case, is_csv_path = find_save_path(sender_email, item.Subject, sender_path_table)
             if base_path is None:
                 base_path = DEFAULT_SAVE_PATH
-            # Determine save path based on CSV settings or default
             if not is_csv_path:
                 save_path = os.path.join(base_path, specific_date_str)
             else:
@@ -329,7 +327,6 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
             if sub_result is not None:
                 return sub_result
         return None
-    # Hard-code the folder name to "NAV and Performance"
     folder_to_find = "NAV and Performance"
     inbox = None
     target_folder = None
@@ -388,8 +385,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     update_excel_summary(specific_date_str, total_emails, saved_default, saved_actual, not_saved, failed_emails)
     print("Process completed for", specific_date_str, ". Check logs.txt and email_summary.xlsx for details.")
 
-# ------------------ Main Interactive Section ------------------ #
-if __name__ == '__main__':
+def main():
     # Hard-code the email account here:
     email_address = 'your_email@domain.com'
     
@@ -455,3 +451,6 @@ if __name__ == '__main__':
     for d in date_list:
         print("\nProcessing emails for:", d)
         save_emails_from_senders_on_date(email_address, d, sender_path_table, default_year)
+
+if __name__ == '__main__':
+    main()
