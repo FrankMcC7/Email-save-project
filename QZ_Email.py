@@ -8,16 +8,23 @@ import openpyxl
 import unicodedata
 
 # Hardcoded paths and settings
-DEFAULT_SAVE_PATH = 'path_to_default_folder'
+DEFAULT_SAVE_PATH = 'path_to_default_folder'  # Update this path as needed
 LOG_FILE_PATH = 'logs.txt'
 EXCEL_FILE_PATH = 'email_summary.xlsx'
-SENDER_PATH_TABLE_PATH = r'path_to_sender_path_table.csv'  # Update this to your CSV file path
+SENDER_PATH_TABLE_PATH = r'path_to_sender_path_table.csv'  # Update this CSV file path
+
+# Hard-coded email account
+EMAIL_ACCOUNT = 'your_email@domain.com'
+
+def clear_screen():
+    # Clear the terminal screen (Windows)
+    os.system('cls')
 
 def sanitize_filename(filename):
     # Normalize unicode characters to their closest ASCII equivalent (e.g., é -> e)
     normalized_filename = unicodedata.normalize('NFKD', filename).encode('ASCII', 'ignore').decode('ASCII')
     # Replace common problematic characters with underscores or remove them
-    sanitized = re.sub(r'[<>:"/\\|?*\[\]\'`~!@#$%^&*()+={};,]', '_', normalized_filename)
+    sanitized = re.sub(r'[<>:"/\\|?*\'`~!@#$%^&*()+={};,]', '_', normalized_filename)
     # Replace dots (.) followed by a space or end of the string with an underscore
     sanitized = re.sub(r'\.(?=\s|$)', '_', sanitized)
     # Replace multiple underscores with a single underscore
@@ -29,16 +36,13 @@ def sanitize_filename(filename):
     return sanitized
 
 def extract_date_from_text(text, default_year=None):
-    # Map quarters to months
     quarter_mappings = {
         '1': '03-March', '2': '06-June', '3': '09-September', '4': '12-December',
         'Q1': '03-March', 'Q2': '06-June', 'Q3': '09-September', 'Q4': '12-December',
     }
-
     text = text.replace("'", "").replace(",", " ").replace("-", " ").replace("/", " ").replace(".", " ")
     text = re.sub(r'\s+', ' ', text)
     text = text.strip()
-
     patterns = [
         r'(?i)\b(?:on|as of|for)?\s*(\d{1,2})?\s*(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s*(\d{4}|\d{2})?\b',
         r'\b(\d{4})\s+(\d{1,2})\b',
@@ -66,7 +70,6 @@ def extract_date_from_text(text, default_year=None):
         matches = re.findall(pattern, text)
         if not matches:
             continue
-
         for match in matches:
             if len(match) == 3 and re.match(
                 r'(?i)^(January|February|March|April|May|June|July|August|September|October|November|December|'
@@ -83,7 +86,6 @@ def extract_date_from_text(text, default_year=None):
                     year_parsed, month_parsed = try_parsing_with_formats(date_str, ['%d %B %Y', '%d %b %Y'])
                     if year_parsed and month_parsed:
                         return year_parsed, month_parsed
-
             elif len(match) == 2 and all(part.isdigit() for part in match):
                 part1, part2 = match
                 if len(part1) == 4:
@@ -96,7 +98,6 @@ def extract_date_from_text(text, default_year=None):
                     year_parsed, month_parsed = try_parsing_with_formats(date_str, ['%m %Y'])
                     if year_parsed and month_parsed:
                         return year_parsed, month_parsed
-
             elif len(match) == 2 and all(part.isdigit() for part in match) and (len(match[0]) == 4 or len(match[1]) == 4):
                 part1, part2 = match
                 if len(part1) == 4 and len(part2) == 2:
@@ -119,7 +120,6 @@ def extract_date_from_text(text, default_year=None):
                         return year, f"{month_num}-{month_name}"
                     except ValueError:
                         pass
-
             if len(match) == 2 and any('Q' in m for m in match):
                 quarter_str, year = match
                 quarter = re.sub(r'[^1-4]', '', quarter_str)
@@ -130,7 +130,6 @@ def extract_date_from_text(text, default_year=None):
                     year = '20' + year
                 if year and quarter in quarter_mappings:
                     return year, quarter_mappings[quarter]
-
             if len(match) == 3 and all(part.isdigit() for part in match):
                 part1, part2, part3 = match
                 candidates = [
@@ -148,21 +147,12 @@ def extract_date_from_text(text, default_year=None):
                             return year_val, f"{month_num}-{month_name}"
                         except ValueError:
                             continue
-
-    # Fallback: If no patterns matched, try to find a month name and a 4-digit year manually.
+    # Fallback: search manually for month names and 4-digit year
     month_names = {
-        "january": "01-January",
-        "february": "02-February",
-        "march": "03-March",
-        "april": "04-April",
-        "may": "05-May",
-        "june": "06-June",
-        "july": "07-July",
-        "august": "08-August",
-        "september": "09-September",
-        "october": "10-October",
-        "november": "11-November",
-        "december": "12-December"
+        "january": "01-January", "february": "02-February", "march": "03-March",
+        "april": "04-April", "may": "05-May", "june": "06-June", "july": "07-July",
+        "august": "08-August", "september": "09-September", "october": "10-October",
+        "november": "11-November", "december": "12-December"
     }
     found_month = None
     for key, value in month_names.items():
@@ -172,7 +162,6 @@ def extract_date_from_text(text, default_year=None):
     year_match = re.search(r'\b(\d{4})\b', text)
     if found_month and year_match:
         return year_match.group(1), found_month
-
     return default_year, None
 
 def find_save_path(sender, subject, sender_path_table):
@@ -273,6 +262,7 @@ def process_email(item, sender_path_table, default_year, specific_date_str):
     except Exception:
         logs.append(f"Skipped email '{item.Subject}' due to error fetching sender info.")
         return logs, failed_emails
+
     while retries > 0 and not processed:
         try:
             year, month = extract_date_from_text(item.Subject, default_year)
@@ -319,6 +309,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     pythoncom.CoInitialize()
     specific_date = datetime.datetime.strptime(specific_date_str, '%Y-%m-%d').date()
     outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+    
     def find_folder_by_name(parent_folder, target_name):
         for f in parent_folder.Folders:
             if f.Name.lower() == target_name.lower():
@@ -327,9 +318,12 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
             if sub_result is not None:
                 return sub_result
         return None
+
+    # Hard-code target folder name
     folder_to_find = "NAV and Performance"
     inbox = None
     target_folder = None
+
     for store in outlook.Stores:
         if store.DisplayName.lower() == email_address.lower() or store.ExchangeStoreType == 3:
             try:
@@ -341,6 +335,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
             except AttributeError as e:
                 logs.append(f"Error accessing folders: {str(e)}")
                 continue
+
     if not inbox:
         logs.append(f"No Inbox found for the account with email address: {email_address}")
         pythoncom.CoUninitialize()
@@ -349,10 +344,12 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
         return
     else:
         logs.append("Inbox found successfully.")
+
     if folder_to_find and not target_folder:
         logs.append(f"No '{folder_to_find}' folder found as a subfolder of Inbox.")
     elif folder_to_find and target_folder:
         logs.append(f"'{folder_to_find}' folder found successfully.")
+
     def get_items_for_folder(folder, date):
         filtered_items = []
         if folder:
@@ -364,6 +361,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
             for item in items:
                 filtered_items.append(item)
         return filtered_items
+
     inbox_items = get_items_for_folder(inbox, specific_date) if inbox else []
     target_items = get_items_for_folder(target_folder, specific_date) if target_folder else []
     all_items = inbox_items + target_items
@@ -371,6 +369,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     total_emails = len(all_items)
     saved_default, saved_actual, not_saved = 0, 0, 0
     failed_emails = []
+
     for item in all_items:
         email_logs, email_failed_emails = process_email(item, sender_path_table, default_year, specific_date_str)
         logs.extend(email_logs)
@@ -379,6 +378,7 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
             saved_default += 1
         else:
             saved_actual += 1
+
     pythoncom.CoUninitialize()
     with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
         f.writelines("\n".join(logs))
@@ -386,71 +386,98 @@ def save_emails_from_senders_on_date(email_address, specific_date_str, sender_pa
     print("Process completed for", specific_date_str, ". Check logs.txt and email_summary.xlsx for details.")
 
 def main():
-    # Hard-code the email account here:
-    email_address = 'your_email@domain.com'
-    
-    print("\nSelect date option:")
-    print("1: Yesterday")
-    print("2: Specific Date")
-    print("3: Date Range")
-    option = input("Enter option number: ").strip()
+    while True:
+        clear_screen()
+        print("Welcome to the Outlook Email Processor!")
+        print("----------------------------------------")
+        print("Select date option:")
+        print("1: Yesterday")
+        print("2: Specific Date")
+        print("3: Date Range")
+        print("Q: Quit")
+        option = input("Enter your choice: ").strip().lower()
+        if option == 'q':
+            print("Exiting the program. Goodbye!")
+            break
 
-    date_list = []
-    if option == '1':
-        yesterday = datetime.date.today() - datetime.timedelta(days=1)
-        date_list = [yesterday.strftime('%Y-%m-%d')]
-    elif option == '2':
-        date_input = input("Enter the date (YYYY-MM-DD): ").strip()
+        date_list = []
+        if option == '1':
+            yesterday = datetime.date.today() - datetime.timedelta(days=1)
+            date_list = [yesterday.strftime('%Y-%m-%d')]
+        elif option == '2':
+            while True:
+                date_input = input("Enter the date (YYYY-MM-DD): ").strip()
+                try:
+                    datetime.datetime.strptime(date_input, '%Y-%m-%d')
+                    date_list = [date_input]
+                    break
+                except ValueError:
+                    print("Invalid date format. Please try again.")
+        elif option == '3':
+            while True:
+                start = input("Enter the start date (YYYY-MM-DD): ").strip()
+                end = input("Enter the end date (YYYY-MM-DD): ").strip()
+                try:
+                    start_date = datetime.datetime.strptime(start, '%Y-%m-%d').date()
+                    end_date = datetime.datetime.strptime(end, '%Y-%m-%d').date()
+                    if start_date > end_date:
+                        print("Start date must not be after end date. Please try again.")
+                        continue
+                    delta = end_date - start_date
+                    date_list = [(start_date + datetime.timedelta(days=i)).strftime('%Y-%m-%d') for i in range(delta.days + 1)]
+                    break
+                except ValueError:
+                    print("Invalid date format. Please use YYYY-MM-DD.")
+        else:
+            print("Invalid option selected. Please try again.")
+            input("Press Enter to continue...")
+            continue
+
+        # Get default year with validation
+        while True:
+            default_year = input("Enter the default year (YYYY): ").strip()
+            if default_year.isdigit() and len(default_year) == 4:
+                break
+            else:
+                print("Invalid year format. Please enter a year in YYYY format.")
+
+        print("\nYou have selected the following dates:")
+        for d in date_list:
+            print("  -", d)
+        confirm = input("Proceed with processing these dates? (Y/N): ").strip().lower()
+        if confirm != 'y':
+            print("Operation cancelled. Restarting menu...")
+            input("Press Enter to continue...")
+            continue
+
+        # Load the sender path table
+        csv_file_path = SENDER_PATH_TABLE_PATH
+        if not os.path.exists(csv_file_path):
+            print("CSV file not found. Please provide a valid file path.")
+            input("Press Enter to exit...")
+            break
         try:
-            datetime.datetime.strptime(date_input, '%Y-%m-%d')
-            date_list = [date_input]
-        except ValueError:
-            print("Invalid date format. Please use YYYY-MM-DD.")
-            exit(1)
-    elif option == '3':
-        start = input("Enter the start date (YYYY-MM-DD): ").strip()
-        end = input("Enter the end date (YYYY-MM-DD): ").strip()
-        try:
-            start_date = datetime.datetime.strptime(start, '%Y-%m-%d').date()
-            end_date = datetime.datetime.strptime(end, '%Y-%m-%d').date()
-        except ValueError:
-            print("Invalid date format. Please use YYYY-MM-DD.")
-            exit(1)
-        if start_date > end_date:
-            print("Start date must not be after end date.")
-            exit(1)
-        delta = end_date - start_date
-        date_list = [(start_date + datetime.timedelta(days=i)).strftime('%Y-%m-%d') for i in range(delta.days + 1)]
-    else:
-        print("Invalid option selected.")
-        exit(1)
+            sender_path_table = pd.read_csv(csv_file_path, encoding='utf-8')
+        except UnicodeDecodeError:
+            try:
+                sender_path_table = pd.read_csv(csv_file_path, encoding='latin1')
+            except Exception as e:
+                print(f"Error reading the CSV file: {e}")
+                input("Press Enter to exit...")
+                break
+        sender_path_table.columns = sender_path_table.columns.str.lower()
 
-    default_year = input("Enter the default year (YYYY): ").strip()
-    if not (default_year.isdigit() and len(default_year) == 4):
-        print("Invalid year format. Please enter a year in YYYY format.")
-        exit(1)
+        os.makedirs(DEFAULT_SAVE_PATH, exist_ok=True)
 
-    # Load sender_path_table
-    csv_file_path = SENDER_PATH_TABLE_PATH
-    if not os.path.exists(csv_file_path):
-        print("CSV file not found. Please provide a valid file path.")
-        exit(1)
-    try:
-        sender_path_table = pd.read_csv(csv_file_path, encoding='utf-8')
-    except UnicodeDecodeError:
-        try:
-            sender_path_table = pd.read_csv(csv_file_path, encoding='latin1')
-        except Exception as e:
-            print(f"Error reading the CSV file: {e}")
-            exit(1)
-    sender_path_table.columns = sender_path_table.columns.str.lower()
+        for d in date_list:
+            print("\nProcessing emails for:", d)
+            save_emails_from_senders_on_date(EMAIL_ACCOUNT, d, sender_path_table, default_year)
+        print("\nProcessing complete for the selected dates.")
 
-    os.makedirs(DEFAULT_SAVE_PATH, exist_ok=True)
-
-    # Process emails for each selected date
-    for d in date_list:
-        print("\nProcessing emails for:", d)
-        save_emails_from_senders_on_date(email_address, d, sender_path_table, default_year)
+        again = input("\nDo you want to process another date or date range? (Y/N): ").strip().lower()
+        if again != 'y':
+            print("Exiting the program. Goodbye!")
+            break
 
 if __name__ == '__main__':
     main()
