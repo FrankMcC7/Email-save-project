@@ -12,15 +12,18 @@ import sys
 EMAIL_LOG_FILE = "backup_email_log.xlsm"  # Macro-enabled file to log email details
 METRICS_FILE = "backup_metrics.xlsx"      # File to log backup metrics
 
+
 def separator(char='=', length=50):
     """Returns a simple line separator."""
     return char * length
+
 
 def show_heading(text):
     """Prints a heading with separators for clarity."""
     print(separator())
     print(text)
     print(separator())
+
 
 def show_main_menu():
     """
@@ -41,6 +44,7 @@ def show_main_menu():
         return 'q'
     else:
         return None
+
 
 def show_date_menu():
     """
@@ -98,6 +102,7 @@ def show_date_menu():
     else:
         return None, None
 
+
 def sanitize_filename(filename, max_length=100):
     """
     Remove or replace invalid characters from filenames.
@@ -109,6 +114,7 @@ def sanitize_filename(filename, max_length=100):
     if len(filename) > max_length:
         filename = filename[:max_length]
     return filename
+
 
 def truncate_or_fallback_filename(save_directory, subject, max_path_length=255):
     """
@@ -141,6 +147,7 @@ def truncate_or_fallback_filename(save_directory, subject, max_path_length=255):
             return filename
         counter += 1
 
+
 def save_email(item, save_path):
     """
     Save an email as a .msg file.
@@ -152,6 +159,7 @@ def save_email(item, save_path):
         return False
     except Exception:
         return False
+
 
 def get_sender_email(message):
     """
@@ -173,6 +181,7 @@ def get_sender_email(message):
     except Exception as e:
         print(f"Failed to retrieve sender email: {str(e)}")
         return "Unknown"
+
 
 def log_email_details(backup_date, sender_name, sender_email, subject, file_path):
     """
@@ -218,6 +227,7 @@ def log_email_details(backup_date, sender_name, sender_email, subject, file_path
     except Exception as e:
         print(f"Failed to log email details: {str(e)}")
 
+
 def log_metrics(backup_date, total_emails, saved_emails, fallback_emails, errors):
     """
     Log backup metrics in a separate Excel file (backup_metrics.xlsx).
@@ -256,14 +266,18 @@ def log_metrics(backup_date, total_emails, saved_emails, fallback_emails, errors
     except Exception as e:
         print(f"Failed to log metrics: {str(e)}")
 
+
 def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
     """
-    Back up all emails from the specified shared mailbox for the given dates.
+    Back up all emails from both Inbox and Sent Items of the specified
+    shared mailbox for the given dates, storing them in the same folder.
+    If there are zero emails for a date, do not create that date's folder.
     """
     pythoncom.CoInitialize()
     try:
         outlook = win32.Dispatch("Outlook.Application").GetNamespace("MAPI")
 
+        # Locate the shared mailbox
         shared_mailbox = None
         for folder in outlook.Folders:
             if folder.Name.lower() == mailbox_name.lower():
@@ -274,66 +288,139 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
             print(f"Could not find the shared mailbox: {mailbox_name}")
             return
 
-        inbox = shared_mailbox.Folders["Inbox"]
+        # Attempt to get Inbox and Sent Items
+        try:
+            inbox_folder = shared_mailbox.Folders["Inbox"]
+        except:
+            inbox_folder = None
+            print(f"Could not find 'Inbox' in {mailbox_name}. Skipping Inbox...")
 
+        try:
+            sent_folder = shared_mailbox.Folders["Sent Items"]
+        except:
+            sent_folder = None
+            print(f"Could not find 'Sent Items' in {mailbox_name}. Skipping Sent Items...")
+
+        # Process each date in the backup list
         for backup_date_str in backup_dates:
             backup_date = datetime.datetime.strptime(backup_date_str, '%Y-%m-%d')
+
+            # We'll combine totals for both Inbox and Sent Items
+            total_messages_for_day = 0
+            saved_emails_for_day = 0
+            fallback_for_day = 0
+            errors_for_day = 0
+
+            # We'll only create the folder if we actually have emails
+            folder_created = False
             save_directory = os.path.join(
                 backup_root_directory,
                 backup_date.strftime('%Y'),
                 backup_date.strftime('%m-%B'),
                 backup_date.strftime('%d-%m-%Y')
             )
-            os.makedirs(save_directory, exist_ok=True)
 
-            start_date = backup_date.strftime('%m/%d/%Y 00:00')
-            end_date = (backup_date + datetime.timedelta(days=1)).strftime('%m/%d/%Y 00:00')
-            restriction = f"[ReceivedTime] >= '{start_date}' AND [ReceivedTime] < '{end_date}'"
-            messages = inbox.Items.Restrict(restriction).Restrict("[MessageClass] <> 'IPM.Outlook.Recall'")
+            def process_folder(folder_obj):
+                """
+                Restrict to the date range and save each email in this folder.
+                Only create the directory if at least 1 email is found.
+                """
+                nonlocal folder_created
+                nonlocal total_messages_for_day
+                nonlocal saved_emails_for_day
+                nonlocal fallback_for_day
+                nonlocal errors_for_day
 
-            total_messages = len(messages)
-            saved_emails = 0
-            fallback_emails = 0
-            errors = 0
+                if not folder_obj:
+                    return  # If folder doesn't exist, skip
 
-            print(separator('-', 60))
-            print(f"Backing up {total_messages} emails for {backup_date_str}...")
+                start_date = backup_date.strftime('%m/%d/%Y 00:00')
+                end_date = (backup_date + datetime.timedelta(days=1)).strftime('%m/%d/%Y 00:00')
+                restriction = f"[ReceivedTime] >= '{start_date}' AND [ReceivedTime] < '{end_date}'"
 
-            for index, message in enumerate(messages, start=1):
-                # Simple progress indicator
-                sys.stdout.write(f"\rProcessing email {index}/{total_messages}")
-                sys.stdout.flush()
+                messages = folder_obj.Items.Restrict(restriction).Restrict("[MessageClass] <> 'IPM.Outlook.Recall'")
+                total_in_this_folder = len(messages)
 
-                try:
-                    subject = sanitize_filename(message.Subject or "No Subject")
-                    sender_name = getattr(message, "SenderName", "Unknown")
-                    sender_email = get_sender_email(message)
-                    filename = truncate_or_fallback_filename(save_directory, subject)
-                    full_path = os.path.join(save_directory, filename)
+                print(separator('-', 60))
+                print(f"Folder '{folder_obj.Name}': {total_in_this_folder} emails for {backup_date_str}")
 
-                    if save_email(message, full_path):
-                        if filename != f"{subject}.msg":
-                            fallback_emails += 1
-                        saved_emails += 1
-                        log_email_details(
-                            backup_date.strftime('%Y-%m-%d'),
-                            sender_name,
-                            sender_email,
-                            subject,
-                            full_path
-                        )
-                    else:
-                        errors += 1
-                except Exception as e:
-                    print(f"\nFailed to process email: {str(e)}")
-                    errors += 1
+                # Update day-level total
+                total_messages_for_day += total_in_this_folder
 
-            print()  # Move to a new line after the progress indicator
-            log_metrics(backup_date.strftime('%Y-%m-%d'), total_messages, saved_emails, fallback_emails, errors)
-            print(f"Backup for {backup_date.strftime('%Y-%m-%d')} completed. "
-                  f"Saved: {saved_emails}, Errors: {errors}.")
+                if total_in_this_folder > 0 and not folder_created:
+                    # Create the folder only when we actually have emails
+                    os.makedirs(save_directory, exist_ok=True)
+                    folder_created = True
 
-        inbox = None
+                # Local counters for this folder only
+                saved_in_this_folder = 0
+                fallback_in_this_folder = 0
+                errors_in_this_folder = 0
+
+                for index, message in enumerate(messages, start=1):
+                    # Progress indicator
+                    sys.stdout.write(f"\rProcessing email {index}/{total_in_this_folder}")
+                    sys.stdout.flush()
+
+                    try:
+                        subject = sanitize_filename(message.Subject or "No Subject")
+                        sender_name = getattr(message, "SenderName", "Unknown")
+                        sender_email = get_sender_email(message)
+                        filename = truncate_or_fallback_filename(save_directory, subject)
+                        full_path = os.path.join(save_directory, filename)
+
+                        if save_email(message, full_path):
+                            if filename != f"{subject}.msg":
+                                fallback_in_this_folder += 1
+                            saved_in_this_folder += 1
+                            log_email_details(
+                                backup_date.strftime('%Y-%m-%d'),
+                                sender_name,
+                                sender_email,
+                                subject,
+                                full_path
+                            )
+                        else:
+                            errors_in_this_folder += 1
+
+                    except Exception as e:
+                        print(f"\nFailed to process email: {str(e)}")
+                        errors_in_this_folder += 1
+
+                print()  # Move to a new line after the progress indicator
+
+                # Add these folder-level counts to the day-level totals
+                saved_emails_for_day += saved_in_this_folder
+                fallback_for_day += fallback_in_this_folder
+                errors_for_day += errors_in_this_folder
+
+            # 1) Process Inbox
+            process_folder(inbox_folder)
+
+            # 2) Process Sent Items
+            process_folder(sent_folder)
+
+            # Log combined metrics for this date (even if zero)
+            log_metrics(
+                backup_date.strftime('%Y-%m-%d'),
+                total_messages_for_day,
+                saved_emails_for_day,
+                fallback_for_day,
+                errors_for_day
+            )
+
+            print(separator('='))
+            print(
+                f"Backup for {backup_date.strftime('%Y-%m-%d')} completed. "
+                f"Total: {total_messages_for_day}, Saved: {saved_emails_for_day}, "
+                f"Errors: {errors_for_day}."
+            )
+
+            # If folder was never created, we do not have an empty folder.
+
+        # Cleanup
+        inbox_folder = None
+        sent_folder = None
         shared_mailbox = None
         outlook = None
 
@@ -342,9 +429,10 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
     finally:
         pythoncom.CoUninitialize()
 
+
 if __name__ == "__main__":
-    mailbox_name = "GMailbox"
-    backup_root_directory = r"C:\EmailBackups"
+    mailbox_name = "GMailbox"  # Change to your mailbox if needed
+    backup_root_directory = r"C:\EmailBackups"  # Change to your desired path
 
     while True:
         main_choice = show_main_menu()
@@ -369,7 +457,7 @@ if __name__ == "__main__":
                     print("Invalid option, please try again.")
                     continue
 
-                # At this point we have a valid date or date range
+                # At this point we have a valid date/range
                 backup_shared_mailbox(mailbox_name, backup_root_directory, date_list)
                 break
             break
