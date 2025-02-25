@@ -6,9 +6,100 @@ import openpyxl
 from openpyxl import Workbook
 from openpyxl.styles import Font
 import re
+import sys
 
 EMAIL_LOG_FILE = "backup_email_log.xlsm"  # Macro-enabled file to log email details
-METRICS_FILE = "backup_metrics.xlsx"  # File to log backup metrics
+METRICS_FILE = "backup_metrics.xlsx"      # File to log backup metrics
+
+
+def separator(char='=', length=50):
+    """Returns a simple line separator."""
+    return char * length
+
+
+def show_heading(text):
+    """Prints a heading with separators for clarity."""
+    print(separator())
+    print(text)
+    print(separator())
+
+
+def show_main_menu():
+    """
+    Display the main menu options.
+    Returns the user's choice as an integer or None if invalid.
+    """
+    show_heading("Email Backup Menu")
+    print("1) Backup emails for yesterday")
+    print("2) Backup emails for a specific date or range of dates")
+    print("q) Quit")
+    choice = input("Please select an option (1, 2, or q): ").strip().lower()
+
+    if choice == '1':
+        return 1
+    elif choice == '2':
+        return 2
+    elif choice == 'q':
+        return 'q'
+    else:
+        return None
+
+
+def show_date_menu():
+    """
+    Display the sub-menu for backup date selection.
+    Returns:
+      (option, date_list_or_none)
+       - option: 1 for single date, 2 for date range, or None if invalid
+       - date_list_or_none: 
+            * a single [YYYY-MM-DD] if user chooses single date
+            * a list of [YYYY-MM-DD, YYYY-MM-DD, ...] for a date range
+            * None if user chooses to return or invalid input
+    """
+    show_heading("Backup Date Selection")
+    print("1) A single date")
+    print("2) A range of dates")
+    print("b) Back to main menu")
+    date_choice = input("Select an option (1, 2, or b): ").strip().lower()
+
+    if date_choice == '1':
+        date_input = input("Enter the date (YYYY-MM-DD): ")
+        # Validate
+        try:
+            datetime.datetime.strptime(date_input, '%Y-%m-%d')
+            return 1, [date_input]
+        except ValueError:
+            print("Invalid date format. Please try again.")
+            return None, None
+
+    elif date_choice == '2':
+        start_date_input = input("Enter the start date (YYYY-MM-DD): ")
+        end_date_input = input("Enter the end date (YYYY-MM-DD): ")
+        # Validate
+        try:
+            start_date_obj = datetime.datetime.strptime(start_date_input, '%Y-%m-%d')
+            end_date_obj = datetime.datetime.strptime(end_date_input, '%Y-%m-%d')
+            if start_date_obj > end_date_obj:
+                print("Start date cannot be after end date.")
+                return None, None
+
+            # Build a list of date strings in the range
+            date_list = []
+            current = start_date_obj
+            while current <= end_date_obj:
+                date_list.append(current.strftime('%Y-%m-%d'))
+                current += datetime.timedelta(days=1)
+            return 2, date_list
+
+        except ValueError:
+            print("One or more dates were invalid. Please try again.")
+            return None, None
+
+    elif date_choice == 'b':
+        return 'b', None
+
+    else:
+        return None, None
 
 
 def sanitize_filename(filename, max_length=100):
@@ -190,7 +281,14 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
             fallback_emails = 0
             errors = 0
 
-            for message in messages:
+            print(separator('-', 60))
+            print(f"Backing up {total_messages} emails for {backup_date_str}...")
+
+            for index, message in enumerate(messages, start=1):
+                # Simple progress indicator
+                sys.stdout.write(f"\rProcessing email {index}/{total_messages}")
+                sys.stdout.flush()
+
                 try:
                     subject = sanitize_filename(message.Subject or "No Subject")
                     sender_name = getattr(message, "SenderName", "Unknown")
@@ -212,11 +310,13 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
                     else:
                         errors += 1
                 except Exception as e:
-                    print(f"Failed to process email: {str(e)}")
+                    print(f"\nFailed to process email: {str(e)}")
                     errors += 1
 
+            print()  # move to a new line after the progress indicator
             log_metrics(backup_date.strftime('%Y-%m-%d'), total_messages, saved_emails, fallback_emails, errors)
-            print(f"Backup for {backup_date.strftime('%Y-%m-%d')} completed.")
+            print(f"Backup for {backup_date.strftime('%Y-%m-%d')} completed. "
+                  f"Saved: {saved_emails}, Errors: {errors}.")
 
         inbox = None
         shared_mailbox = None
@@ -233,23 +333,35 @@ if __name__ == "__main__":
     backup_root_directory = r"C:\EmailBackups"
 
     while True:
-        print("Select backup option:")
-        print("1. Backup emails for yesterday")
-        print("2. Backup emails for a specific date or range of dates")
-        choice = input("Enter 1 or 2: ")
+        main_choice = show_main_menu()
 
-        if choice == '1':
+        if main_choice == 1:
+            # Backup for yesterday
             yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
             backup_dates = [yesterday.strftime('%Y-%m-%d')]
+            backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates)
             break
-        elif choice == '2':
-            while True:
-                print("Do you want to backup emails for:")
-                print("1. A single date")
-                print("2. A range of dates")
-                date_choice = input("Enter 1 or 2: ")
 
-                if date_choice == '1':
-                    date_input = input("Enter the date (YYYY-MM-DD): ")
-                    try:
-                        backup_date = datetime.datetime.strptime(date_input, '%Y-%m-%d')
+        elif main_choice == 2:
+            while True:
+                option, date_list = show_date_menu()
+
+                # If user wants to go back to main menu
+                if option == 'b':
+                    break
+
+                # If user input was invalid or user re-tries
+                if option is None:
+                    print("Invalid option, please try again.")
+                    continue
+
+                # At this point we have a valid date/daterange
+                backup_shared_mailbox(mailbox_name, backup_root_directory, date_list)
+                break
+            break
+
+        elif main_choice == 'q':
+            print("Quitting... Goodbye!")
+            break
+        else:
+            print("Invalid choice. Please try again.")
