@@ -1,43 +1,39 @@
-Sub EmailSearchResults_WithFileNormalization()
-    Dim wsSearch As Worksheet
+Sub AttachOutlookEmailsFromSearch()
+    Dim ws As Worksheet
     Dim lastRow As Long, rowNum As Long
     
-    Dim outlookApp As Object  ' Late bound Outlook.Application
-    Dim outlookMail As Object ' Late bound Outlook.MailItem
+    Dim outlookApp As Object  ' Outlook.Application (late bound)
+    Dim outlookNs As Object   ' Outlook.Namespace
+    Dim sourceMailItem As Object ' Outlook.MailItem, but late bound
+    Dim newMailItem As Object    ' Outlook.MailItem, for the outgoing email
     
-    Dim rawPath As String
-    Dim recipientEmails As String
+    Dim outlookLink As String
+    Dim entryID As String
+    Dim tempFilePath As String
+    
+    Dim recipientEmail As String
     
     '-----------------------------------------------------------------------
-    ' 1. WHERE DOES THE RECIPIENT COME FROM?
-    '    (A) Hard-code a cell in "Search Email" with the user’s email address
-    '    (B) OR prompt with InputBox
+    ' 1. Identify the sheet and recipient
     '-----------------------------------------------------------------------
+    Set ws = ThisWorkbook.Sheets("Search Email")
     
-    Set wsSearch = ThisWorkbook.Sheets("Search Email")
-    
-    ' Example (A) – read from a cell in "Search Email", e.g., A1
-    recipientEmails = wsSearch.Range("A1").Value
-    
-    ' If instead you want an InputBox, comment the above line and uncomment:
-    ' recipientEmails = InputBox("Enter recipient email(s):", "Email Search Results")
-    
-    If Len(recipientEmails) = 0 Then
-        MsgBox "No recipient specified. Please supply an email address in 'Search Email'! (or InputBox).", vbExclamation
+    ' For example, read the recipient from cell A1 (adjust as needed):
+    recipientEmail = ws.Range("A1").Value
+    If Len(recipientEmail) = 0 Then
+        MsgBox "No recipient email found in A1. Please provide it.", vbExclamation
         Exit Sub
     End If
     
-    '-----------------------------------------------------------------------
-    ' 2. DETERMINE HOW MANY ROWS OF SEARCH RESULTS
-    '-----------------------------------------------------------------------
-    lastRow = wsSearch.Cells(wsSearch.Rows.Count, "A").End(xlUp).Row
+    ' Determine last row with data in column A (or whichever column is relevant)
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
     If lastRow < 3 Then
-        MsgBox "No search results found. Please run the search first.", vbInformation
+        MsgBox "No search results found in 'Search Email'.", vbInformation
         Exit Sub
     End If
     
     '-----------------------------------------------------------------------
-    ' 3. ACCESS OUTLOOK
+    ' 2. Connect to Outlook
     '-----------------------------------------------------------------------
     On Error Resume Next
     Set outlookApp = GetObject(Class:="Outlook.Application")
@@ -51,67 +47,74 @@ Sub EmailSearchResults_WithFileNormalization()
         Exit Sub
     End If
     
-    '-----------------------------------------------------------------------
-    ' 4. CREATE A NEW EMAIL
-    '-----------------------------------------------------------------------
-    Set outlookMail = outlookApp.CreateItem(0) ' 0 = olMailItem
+    ' Get a reference to MAPI namespace
+    Set outlookNs = outlookApp.GetNamespace("MAPI")
     
-    With outlookMail
-        .To = recipientEmails
-        .Subject = "Search Results: Emails from Excel"
+    '-----------------------------------------------------------------------
+    ' 3. Create a brand new email to which we'll attach the found items
+    '-----------------------------------------------------------------------
+    Set newMailItem = outlookApp.CreateItem(0) ' 0 = olMailItem
+    
+    With newMailItem
+        .To = recipientEmail
+        .Subject = "Search Results: Outlook Emails"
         .Body = "Dear user," & vbNewLine & vbNewLine & _
-                "Attached are the .msg files that matched your search criteria. " & _
-                "Please review them as needed." & vbNewLine & vbNewLine & _
-                "Best regards," & vbNewLine & _
-                "Your Company Name"
-        
-        '-------------------------------------------------------------------
-        ' 5. LOOP THROUGH SEARCH RESULTS TO ATTACH MSG FILES
-        '    (Assuming Column 4 has a hyperlink to the .msg file)
-        '-------------------------------------------------------------------
-        For rowNum = 3 To lastRow
-            ' Make sure there is actually a hyperlink in column 4 (D)
-            If wsSearch.Cells(rowNum, 4).Hyperlinks.Count > 0 Then
-                rawPath = wsSearch.Cells(rowNum, 4).Hyperlinks(1).Address
-                
-                '--- CLEAN UP THE LINK IF IT HAS file:/// or %20, etc. ---
-                
-                ' If it starts with "file:///" remove that portion
-                If InStr(1, rawPath, "file:///", vbTextCompare) = 1 Then
-                    rawPath = Replace(rawPath, "file:///", "")
-                ElseIf InStr(1, rawPath, "file://", vbTextCompare) = 1 Then
-                    rawPath = Replace(rawPath, "file://", "")
-                End If
-                
-                ' Replace forward slashes with backslashes
-                rawPath = Replace(rawPath, "/", "\")
-                
-                ' Decode %20 -> space (if any)
-                rawPath = Replace(rawPath, "%20", " ")
-                
-                ' Now check if the file actually exists
-                If Dir(rawPath) <> "" Then
-                    .Attachments.Add rawPath
-                Else
-                    ' Optional: For debugging or logging
-                    Debug.Print "Could not find file: " & rawPath
-                End If
-                
-            End If
-        Next rowNum
-        
-        '-------------------------------------------------------------------
-        ' 6. DISPLAY OR SEND THE EMAIL
-        '-------------------------------------------------------------------
-        .Display  ' show the email so the user can review/edit before sending
-        ' .Send   ' or send immediately without displaying
+                "Attached are the Outlook emails that matched your search criteria." & vbNewLine & vbNewLine & _
+                "Best regards," & vbNewLine & "Your Company Name"
     End With
     
     '-----------------------------------------------------------------------
-    ' 7. CLEAN UP
+    ' 4. Loop through the rows in "Search Email" and process "outlook:" links
     '-----------------------------------------------------------------------
-    Set outlookMail = Nothing
+    For rowNum = 3 To lastRow
+        ' If there's a hyperlink in column 4 (the Subject)
+        If ws.Cells(rowNum, 4).Hyperlinks.Count > 0 Then
+            
+            outlookLink = ws.Cells(rowNum, 4).Hyperlinks(1).Address
+            
+            ' Check if it starts with "outlook:"
+            If InStr(1, outlookLink, "outlook:", vbTextCompare) = 1 Then
+                
+                ' Extract everything *after* "outlook:"
+                ' e.g. "outlook:00000000F503C..." => "00000000F503C..."
+                entryID = Mid(outlookLink, Len("outlook:") + 1)
+                
+                On Error Resume Next
+                Set sourceMailItem = outlookNs.GetItemFromID(entryID)
+                On Error GoTo 0
+                
+                If Not sourceMailItem Is Nothing Then
+                    '-------------------------------------------------------------------
+                    ' 5. Save the mail item as a temporary .msg file, then attach
+                    '-------------------------------------------------------------------
+                    tempFilePath = Environ("TEMP") & "\TempEmail_" & rowNum & ".msg"
+                    sourceMailItem.SaveAs tempFilePath, 3 ' 3 = olMSG
+                    
+                    If Dir(tempFilePath) <> "" Then
+                        newMailItem.Attachments.Add tempFilePath
+                    End If
+                Else
+                    Debug.Print "Could not retrieve Outlook item from EntryID: " & entryID
+                End If
+            Else
+                Debug.Print "Not an 'outlook:' hyperlink: " & outlookLink
+            End If
+        End If
+    Next rowNum
+    
+    '-----------------------------------------------------------------------
+    ' 6. Display or send the new email
+    '-----------------------------------------------------------------------
+    newMailItem.Display  ' show to user
+    ' newMailItem.Send   ' to send directly without preview
+    
+    '-----------------------------------------------------------------------
+    ' 7. Clean up
+    '-----------------------------------------------------------------------
+    Set sourceMailItem = Nothing
+    Set newMailItem = Nothing
+    Set outlookNs = Nothing
     Set outlookApp = Nothing
     
-    MsgBox "An Outlook email has been created with the matching .msg attachments, if found.", vbInformation
+    MsgBox "Your Outlook email has been prepared with the actual emails attached.", vbInformation
 End Sub
