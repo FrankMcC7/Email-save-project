@@ -1,4 +1,5 @@
 import os
+import stat
 import datetime
 import pythoncom
 import win32com.client as win32
@@ -11,18 +12,15 @@ import sys
 EMAIL_LOG_FILE = "backup_email_log.xlsm"  # Macro-enabled file to log email details
 METRICS_FILE = "backup_metrics.xlsx"      # File to log backup metrics
 
-
 def separator(char='=', length=50):
     """Returns a simple line separator."""
     return char * length
-
 
 def show_heading(text):
     """Prints a heading with separators for clarity."""
     print(separator())
     print(text)
     print(separator())
-
 
 def show_main_menu():
     """
@@ -43,7 +41,6 @@ def show_main_menu():
         return 'q'
     else:
         return None
-
 
 def show_date_menu():
     """
@@ -101,7 +98,6 @@ def show_date_menu():
     else:
         return None, None
 
-
 def sanitize_filename(filename, max_length=100):
     """
     Remove or replace invalid characters from filenames.
@@ -113,7 +109,6 @@ def sanitize_filename(filename, max_length=100):
     if len(filename) > max_length:
         filename = filename[:max_length]
     return filename
-
 
 def truncate_or_fallback_filename(save_directory, subject, max_path_length=255):
     """
@@ -146,7 +141,6 @@ def truncate_or_fallback_filename(save_directory, subject, max_path_length=255):
             return filename
         counter += 1
 
-
 def save_email(item, save_path):
     """
     Save an email as a .msg file.
@@ -158,7 +152,6 @@ def save_email(item, save_path):
         return False
     except Exception:
         return False
-
 
 def get_sender_email(message):
     """
@@ -181,12 +174,17 @@ def get_sender_email(message):
         print(f"Failed to retrieve sender email: {str(e)}")
         return "Unknown"
 
-
 def log_email_details(backup_date, sender_name, sender_email, subject, file_path):
     """
-    Log email details into the macro-enabled Excel file.
+    Log email details into the macro-enabled Excel file (backup_email_log.xlsm).
+    Sets file as read-only again after writing.
     """
     try:
+        # 1. Remove the read-only flag if file exists
+        if os.path.exists(EMAIL_LOG_FILE):
+            os.chmod(EMAIL_LOG_FILE, stat.S_IWRITE)
+
+        # 2. Open or create the workbook
         if os.path.exists(EMAIL_LOG_FILE):
             wb = openpyxl.load_workbook(EMAIL_LOG_FILE, keep_vba=True)
         else:
@@ -195,31 +193,42 @@ def log_email_details(backup_date, sender_name, sender_email, subject, file_path
             ws.title = "Email Logs"
             ws.append(["Date", "Sender Name", "Sender Email", "Subject"])
 
+        # 3. Ensure the 'Email Logs' sheet exists
         if "Email Logs" in wb.sheetnames:
             ws = wb["Email Logs"]
         else:
             ws = wb.create_sheet(title="Email Logs")
             ws.append(["Date", "Sender Name", "Sender Email", "Subject"])
 
-        ws = wb["Email Logs"]
+        # 4. Append new data
         new_row = ws.max_row + 1
         ws.cell(row=new_row, column=1, value=backup_date)  # Date
         ws.cell(row=new_row, column=2, value=sender_name)  # Sender Name
-        ws.cell(row=new_row, column=3, value=sender_email)  # Sender Email
+        ws.cell(row=new_row, column=3, value=sender_email) # Sender Email
         subject_cell = ws.cell(row=new_row, column=4, value=subject)  # Subject
         subject_cell.hyperlink = file_path
         subject_cell.font = Font(color="0000FF", underline="single")
 
+        # 5. Save changes
         wb.save(EMAIL_LOG_FILE)
+
+        # 6. Re-apply the read-only attribute
+        os.chmod(EMAIL_LOG_FILE, stat.S_IREAD)
+
     except Exception as e:
         print(f"Failed to log email details: {str(e)}")
 
-
 def log_metrics(backup_date, total_emails, saved_emails, fallback_emails, errors):
     """
-    Log backup metrics in a separate Excel file.
+    Log backup metrics in a separate Excel file (backup_metrics.xlsx).
+    Sets file as read-only again after writing.
     """
     try:
+        # 1. Remove the read-only flag if file exists
+        if os.path.exists(METRICS_FILE):
+            os.chmod(METRICS_FILE, stat.S_IWRITE)
+
+        # 2. Open or create the workbook
         if os.path.exists(METRICS_FILE):
             wb = openpyxl.load_workbook(METRICS_FILE)
         else:
@@ -228,18 +237,24 @@ def log_metrics(backup_date, total_emails, saved_emails, fallback_emails, errors
             ws.title = "Backup Metrics"
             ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Errors"])
 
+        # 3. Ensure the 'Backup Metrics' sheet exists
         if "Backup Metrics" in wb.sheetnames:
             ws = wb["Backup Metrics"]
         else:
             ws = wb.create_sheet(title="Backup Metrics")
             ws.append(["Date", "Total Emails", "Saved Emails", "Fallback Emails", "Errors"])
 
-        ws = wb["Backup Metrics"]
+        # 4. Append new metrics row
         ws.append([backup_date, total_emails, saved_emails, fallback_emails, errors])
+
+        # 5. Save changes
         wb.save(METRICS_FILE)
+
+        # 6. Re-apply the read-only attribute
+        os.chmod(METRICS_FILE, stat.S_IREAD)
+
     except Exception as e:
         print(f"Failed to log metrics: {str(e)}")
-
 
 def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
     """
@@ -313,7 +328,7 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
                     print(f"\nFailed to process email: {str(e)}")
                     errors += 1
 
-            print()  # move to a new line after the progress indicator
+            print()  # Move to a new line after the progress indicator
             log_metrics(backup_date.strftime('%Y-%m-%d'), total_messages, saved_emails, fallback_emails, errors)
             print(f"Backup for {backup_date.strftime('%Y-%m-%d')} completed. "
                   f"Saved: {saved_emails}, Errors: {errors}.")
@@ -326,7 +341,6 @@ def backup_shared_mailbox(mailbox_name, backup_root_directory, backup_dates):
         print(f"An error occurred: {str(e)}")
     finally:
         pythoncom.CoUninitialize()
-
 
 if __name__ == "__main__":
     mailbox_name = "GMailbox"
@@ -355,7 +369,7 @@ if __name__ == "__main__":
                     print("Invalid option, please try again.")
                     continue
 
-                # At this point we have a valid date/daterange
+                # At this point we have a valid date or date range
                 backup_shared_mailbox(mailbox_name, backup_root_directory, date_list)
                 break
             break
@@ -363,5 +377,6 @@ if __name__ == "__main__":
         elif main_choice == 'q':
             print("Quitting... Goodbye!")
             break
+
         else:
             print("Invalid choice. Please try again.")
