@@ -1,41 +1,44 @@
-Public Sub EmailSearchResults_FixFilePrefix()
+Public Sub EmailSearchResults_RobustFilePathFix()
     Dim ws As Worksheet
     Dim lastRow As Long, r As Long
     
     Dim outlookApp As Object
     Dim outlookMail As Object
     
-    Dim attachPath As String
+    Dim rawHyperlink As String
+    Dim finalPath As String
     Dim debugMsg As String
     
     Dim userName As String
     Dim defaultEmail As String
     Dim recipientEmails As String
     
-    ' 1) Reference the "Search Email" sheet
+    '------------------------------
+    '1) Reference the "Search Email" sheet
+    '------------------------------
     Set ws = ThisWorkbook.Sheets("Search Email")
-    
-    ' 2) Check rows
     lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    
     If lastRow < 3 Then
         MsgBox "No search results found in 'Search Email'. Please run your search first.", vbInformation
         Exit Sub
     End If
     
-    ' 3) Ask user for an email address (or build from their Windows login)
+    '------------------------------
+    '2) Ask for email address (or build from Windows username)
+    '------------------------------
     userName = Environ("USERNAME") ' e.g. "jsmith"
     defaultEmail = userName & "@mycompany.com"
-    recipientEmails = InputBox( _
-        "Enter or confirm recipient email(s):", _
-        "Email Search Results", _
-        defaultEmail)
-    
+    recipientEmails = InputBox("Enter or confirm recipient email(s):", _
+                               "Email Search Results", defaultEmail)
     If Len(recipientEmails) = 0 Then
         MsgBox "No recipient email provided. Process aborted.", vbExclamation
         Exit Sub
     End If
     
-    ' 4) Get Outlook
+    '------------------------------
+    '3) Initialize Outlook
+    '------------------------------
     On Error Resume Next
     Set outlookApp = GetObject(Class:="Outlook.Application")
     If outlookApp Is Nothing Then
@@ -48,7 +51,9 @@ Public Sub EmailSearchResults_FixFilePrefix()
         Exit Sub
     End If
     
-    ' 5) Create a new mail
+    '------------------------------
+    '4) Create a new mail
+    '------------------------------
     Set outlookMail = outlookApp.CreateItem(0) ' 0 = olMailItem
     
     With outlookMail
@@ -59,53 +64,69 @@ Public Sub EmailSearchResults_FixFilePrefix()
                 "Please review them as needed." & vbNewLine & vbNewLine & _
                 "Best Regards," & vbNewLine & "Your Company Name"
         
-        debugMsg = "Attaching files from rows 3 through " & lastRow & ":" & vbNewLine
+        debugMsg = "File attachments (rows 3 to " & lastRow & "):" & vbNewLine
         
-        ' 6) Loop through each row in "Search Email"
+        '------------------------------
+        '5) Loop rows: fix hyperlink path
+        '------------------------------
         For r = 3 To lastRow
             If ws.Cells(r, 4).Hyperlinks.Count > 0 Then
-                attachPath = ws.Cells(r, 4).Hyperlinks(1).Address
                 
-                ' --- Clean up the path ---
+                ' (A) Get the raw hyperlink
+                rawHyperlink = ws.Cells(r, 4).Hyperlinks(1).Address
                 
-                ' Remove "file:///" or "file://"
-                If InStr(1, attachPath, "file:///", vbTextCompare) = 1 Then
-                    attachPath = Replace(attachPath, "file:///", "")
-                ElseIf InStr(1, attachPath, "file://", vbTextCompare) = 1 Then
-                    attachPath = Replace(attachPath, "file://", "")
+                ' Log the original:
+                debugMsg = debugMsg & vbNewLine & _
+                           "Row " & r & " - Original: " & rawHyperlink
+                
+                ' (B) Find the UNC portion (the first occurrence of "\\" )
+                Dim pos As Long
+                pos = InStr(1, rawHyperlink, "\\") ' find first double backslash
+                
+                If pos > 0 Then
+                    ' Keep everything from the first "\\" onward
+                    finalPath = Mid(rawHyperlink, pos)
+                Else
+                    ' No "\\" found; fallback to original
+                    finalPath = rawHyperlink
                 End If
                 
-                ' Convert any %20 to spaces
-                attachPath = Replace(attachPath, "%20", " ")
+                ' (C) Decode any %20 -> space
+                finalPath = Replace(finalPath, "%20", " ")
                 
-                ' Convert any forward slashes to backslashes
-                attachPath = Replace(attachPath, "/", "\")
+                ' (D) Convert forward slashes to backslashes
+                finalPath = Replace(finalPath, "/", "\")
                 
-                ' Log it in debug
-                debugMsg = debugMsg & vbNewLine & "Row " & r & ": " & attachPath
+                ' Log the final path we will test
+                debugMsg = debugMsg & vbNewLine & _
+                           "        Final: " & finalPath
                 
-                ' Check if file exists
-                If Len(Dir(attachPath)) > 0 Then
-                    .Attachments.Add attachPath
+                ' (E) Check if file exists
+                If Len(Dir(finalPath)) > 0 Then
+                    .Attachments.Add finalPath
                 Else
                     debugMsg = debugMsg & "  -> NOT FOUND!"
                 End If
+                
             Else
-                debugMsg = debugMsg & vbNewLine & "Row " & r & ": No hyperlink in col D"
+                debugMsg = debugMsg & vbNewLine & _
+                           "Row " & r & " - No hyperlink in col D"
             End If
         Next r
         
-        ' Show the email
+        '------------------------------
+        '6) Show the email (or .Send to auto-send)
+        '------------------------------
         .Display
     End With
     
-    ' 7) Print debug info to Immediate Window (Ctrl+G)
+    '------------------------------
+    '7) Print debug info
+    '------------------------------
     Debug.Print debugMsg
     
-    ' Cleanup
     Set outlookMail = Nothing
     Set outlookApp = Nothing
     
-    MsgBox "Email created. Check attachments. " & _
-           "See Immediate Window (Ctrl+G) for any missing paths.", vbInformation
+    MsgBox "Email created. Check attachments and the Immediate Window (Ctrl+G) for details.", vbInformation
 End Sub
