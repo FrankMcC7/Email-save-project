@@ -1,54 +1,53 @@
-Sub EmailSearchResults_AttachUNCFiles_AutoUserEmail()
-    Dim wsSearch As Worksheet
-    Dim lastRow As Long, rowNum As Long
+Public Sub EmailSearchResults()
+    Dim ws As Worksheet
+    Dim lastRow As Long, r As Long
+    Dim outlookApp As Object      ' Late-bound Outlook.Application
+    Dim outlookMail As Object     ' Late-bound Outlook.MailItem
     
-    Dim outlookApp As Object
-    Dim outlookMail As Object
     Dim attachPath As String
+    Dim userName As String
+    Dim defaultEmail As String
     Dim recipientEmails As String
+    
     Dim debugMsg As String
-    Dim userEmail As String
     
-    ' Set the worksheet
-    Set wsSearch = ThisWorkbook.Sheets("Search Email")
+    '----------------------------------------------------
+    ' 1) Reference the "Search Email" sheet
+    '----------------------------------------------------
+    Set ws = ThisWorkbook.Sheets("Search Email")
     
-    '----------------------------------------------------------------------
-    ' 1. Get Active User's Email OR Ask for It
-    '----------------------------------------------------------------------
+    ' Find the last used row in column A
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
     
-    ' Attempt to fetch the active user's system email (Excel UserName or Windows Username)
-    On Error Resume Next
-    userEmail = Application.UserName  ' Sometimes contains full name instead of email
-    If InStr(1, userEmail, "@") = 0 Then
-        ' If no email is found in Application.UserName, try Windows environment variable
-        userEmail = Environ("USERNAME") & "@yourcompany.com" ' Adjust domain if needed
-    End If
-    On Error GoTo 0
-    
-    ' Ask user if email isn't detected automatically
-    recipientEmails = userEmail
-    If Len(recipientEmails) = 0 Or InStr(1, recipientEmails, "@") = 0 Then
-        recipientEmails = InputBox("Enter your email address (or multiple separated by commas):", "Email Search")
-    End If
-    
-    ' If still empty, exit
-    If Len(recipientEmails) = 0 Then
-        MsgBox "No recipient email provided. Please enter an email address.", vbExclamation
-        Exit Sub
-    End If
-    
-    '----------------------------------------------------------------------
-    ' 2. Identify last row with search results
-    '----------------------------------------------------------------------
-    lastRow = wsSearch.Cells(wsSearch.Rows.Count, "A").End(xlUp).Row
+    ' If there are no results below row 2, exit
     If lastRow < 3 Then
-        MsgBox "No search results found. Please run the search first.", vbInformation
+        MsgBox "No search results found in 'Search Email'. Please run your search first.", vbInformation
         Exit Sub
     End If
     
-    '----------------------------------------------------------------------
-    ' 3. Initialize Outlook
-    '----------------------------------------------------------------------
+    '----------------------------------------------------
+    ' 2) Determine the user's email address
+    '    (a) Build a default using the Windows username + domain
+    '    (b) Prompt user to confirm or override
+    '----------------------------------------------------
+    userName = Environ("USERNAME")         ' e.g. "john.doe"
+    defaultEmail = userName & "@mycompany.com"  ' Adjust domain as needed
+    
+    recipientEmails = InputBox( _
+        Prompt:="Enter or confirm recipient email(s):", _
+        Title:="Email Search Results", _
+        Default:=defaultEmail _
+    )
+    
+    ' If user cancels or clears the box, stop
+    If Len(recipientEmails) = 0 Then
+        MsgBox "No recipient email provided. Process aborted.", vbExclamation
+        Exit Sub
+    End If
+    
+    '----------------------------------------------------
+    ' 3) Initialize Outlook
+    '----------------------------------------------------
     On Error Resume Next
     Set outlookApp = GetObject(Class:="Outlook.Application")
     If outlookApp Is Nothing Then
@@ -57,67 +56,68 @@ Sub EmailSearchResults_AttachUNCFiles_AutoUserEmail()
     On Error GoTo 0
     
     If outlookApp Is Nothing Then
-        MsgBox "Could not start Outlook. Please ensure Outlook is installed.", vbCritical
+        MsgBox "Could not start or find Outlook. Please ensure Outlook is installed.", vbCritical
         Exit Sub
     End If
     
-    '----------------------------------------------------------------------
-    ' 4. Create a new email
-    '----------------------------------------------------------------------
-    Set outlookMail = outlookApp.CreateItem(0) ' 0 = olMailItem
+    '----------------------------------------------------
+    ' 4) Create a new mail item
+    '----------------------------------------------------
+    Set outlookMail = outlookApp.CreateItem(0)  ' 0 = olMailItem
     
     With outlookMail
         .To = recipientEmails
         .Subject = "Search Results: Emails from Excel"
         .Body = "Dear user," & vbNewLine & vbNewLine & _
-                "Attached are the .msg files that matched your search criteria. " & _
+                "Attached are the .msg files that matched your search criteria." & vbNewLine & _
                 "Please review them as needed." & vbNewLine & vbNewLine & _
-                "Best regards," & vbNewLine & "Your Company Name"
+                "Best Regards," & vbNewLine & "Your Company Name"
         
-        debugMsg = "Checking files:" & vbNewLine
+        ' We'll track debugging info here:
+        debugMsg = "Attempting to attach files from 'Search Email' (rows 3 through " & lastRow & "):" & vbNewLine
         
-        '----------------------------------------------------------------------
-        ' 5. Loop through search results and attach .msg files
-        '----------------------------------------------------------------------
-        For rowNum = 3 To lastRow
-            ' Check if there's a hyperlink in Column 4 (Subject)
-            If wsSearch.Cells(rowNum, 4).Hyperlinks.Count > 0 Then
-                attachPath = wsSearch.Cells(rowNum, 4).Hyperlinks(1).Address
+        '------------------------------------------------
+        ' 5) Loop through each row of search results
+        '    and attach the file if it exists
+        '------------------------------------------------
+        For r = 3 To lastRow
+            ' Does Column 4 (D) have a hyperlink?
+            If ws.Cells(r, 4).Hyperlinks.Count > 0 Then
+                attachPath = ws.Cells(r, 4).Hyperlinks(1).Address
                 
-                ' Ensure UNC path is properly formatted
-                attachPath = Replace(attachPath, "%20", " ") ' Convert spaces
-                attachPath = Replace(attachPath, "/", "\") ' Ensure backslashes
+                ' Normalize path if needed
+                attachPath = Replace(attachPath, "%20", " ") ' decode spaces
+                attachPath = Replace(attachPath, "/", "\")   ' ensure backslashes if any
                 
-                ' Debug print to check what paths are being read
-                debugMsg = debugMsg & vbNewLine & attachPath
+                debugMsg = debugMsg & vbNewLine & "Row " & r & ": " & attachPath
                 
-                ' Ensure file exists before attaching
-                If Dir(attachPath) <> "" Then
+                ' Check if file actually exists before attaching
+                If Len(Dir(attachPath)) > 0 Then
                     .Attachments.Add attachPath
                 Else
-                    debugMsg = debugMsg & " - NOT FOUND!"
+                    debugMsg = debugMsg & "  -> NOT FOUND!"
                 End If
             Else
-                debugMsg = debugMsg & vbNewLine & "No hyperlink found in row " & rowNum
+                debugMsg = debugMsg & vbNewLine & "Row " & r & ": No hyperlink in column 4"
             End If
-        Next rowNum
+        Next r
         
-        '----------------------------------------------------------------------
-        ' 6. Display or send the email
-        '----------------------------------------------------------------------
-        .Display ' Show to user before sending
-        ' .Send ' Uncomment to send automatically
-        
+        '------------------------------------------------
+        ' 6) Display the email for user review
+        '    (or .Send to send immediately)
+        '------------------------------------------------
+        .Display
     End With
     
-    '----------------------------------------------------------------------
-    ' 7. Debug Output
-    '----------------------------------------------------------------------
-    Debug.Print debugMsg ' Open Immediate Window (Ctrl+G) to check
+    '----------------------------------------------------
+    ' 7) Debugging output
+    '----------------------------------------------------
+    Debug.Print debugMsg  ' Open VBA Immediate Window (Ctrl+G) to see details
     
     ' Cleanup
     Set outlookMail = Nothing
     Set outlookApp = Nothing
     
-    MsgBox "Your email has been created. Check the Immediate Window (Ctrl+G) for missing files.", vbInformation
+    MsgBox "Your email has been created. Open Outlook to review/send. " & vbCrLf & _
+           "Check the VBA Immediate Window (Ctrl+G) for any missing files.", vbInformation
 End Sub
