@@ -1,0 +1,12 @@
+=IF(
+    OR(
+        AND(A1 >= 0.25, A1 < 1),
+        AND(A1 <= -0.25, A1 > -0.50)
+    ),
+    "Outreach to client",
+    IF(
+        OR(A1 >= 1, A1 <= -0.50),
+        "Reach out to SME",
+        "upload to RFAD"
+    )
+)
