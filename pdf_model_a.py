@@ -1,25 +1,70 @@
+#!/usr/bin/env python3
+"""
+Fund Report Extractor - A tool for extracting data from fund risk reports with learning capabilities.
+
+Usage:
+    1. Install dependencies: pip install PyPDF2 pandas tqdm colorama
+    2. Run: python fund_report_extractor.py
+    3. Use the GUI to select and analyze your fund report PDFs
+
+This script contains a complete, self-contained implementation that can be run directly.
+"""
+
 import os
-import json
-import pickle
-import argparse
 import re
+import hashlib
+import pickle
+import json
+import argparse
+import threading
+import queue
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Tuple, Optional, Union
 
-import pandas as pd
-from PyPDF2 import PdfReader
-from tqdm import tqdm
-import logging
-import hashlib
+# Import required libraries
+try:
+    import pandas as pd
+    from PyPDF2 import PdfReader
+    from tqdm import tqdm
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+    
+    # Try to import colorama for colored CLI output
+    try:
+        from colorama import init, Fore, Style
+        init()  # Initialize colorama
+        COLOR_SUPPORT = True
+    except ImportError:
+        # Define dummy color classes
+        class DummyFore:
+            RED = ""
+            GREEN = ""
+            YELLOW = ""
+            CYAN = ""
+            MAGENTA = ""
+        class DummyStyle:
+            RESET_ALL = ""
+        Fore = DummyFore()
+        Style = DummyStyle()
+        COLOR_SUPPORT = False
+        
+except ImportError as e:
+    missing_lib = str(e).split("'")[1]
+    print(f"Error: Missing required library: {missing_lib}")
+    print("Please install required libraries with:")
+    print("pip install PyPDF2 pandas tqdm colorama")
+    exit(1)
 
 # Configure logging
+import logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
-logger = logging.getLogger('adaptive_pdf_extractor')
+logger = logging.getLogger('fund_report_extractor')
 
 class ExtractionRule:
     """Represents a rule for extracting specific data from PDFs."""
@@ -104,7 +149,7 @@ class ExtractionRule:
 class PDFKnowledgeBase:
     """Knowledge base for PDF extraction with learning capabilities."""
     
-    def __init__(self, kb_path: str = "pdf_knowledge_base.pkl"):
+    def __init__(self, kb_path: str = "fund_report_knowledge_base.pkl"):
         """
         Initialize the knowledge base.
         
@@ -138,7 +183,7 @@ class PDFKnowledgeBase:
         if not content_hash:
             # Calculate hash if not provided
             with open(filepath, 'rb') as f:
-                content = f.read()
+                content = f.read(1024 * 1024)  # Read first MB for fingerprinting
                 content_hash = hashlib.md5(content).hexdigest()
                 
         doc_id = f"{filename}_{content_hash[:8]}"
@@ -182,10 +227,10 @@ class PDFKnowledgeBase:
             logger.error(f"Failed to load knowledge base: {e}")
 
 
-class AdaptivePDFExtractor:
-    """PDF extractor that can learn from corrections."""
+class FundReportExtractor:
+    """Interactive extractor for fund reports with learning capabilities and customizable metrics."""
     
-    def __init__(self, knowledge_base_path: str = "pdf_knowledge_base.pkl"):
+    def __init__(self, knowledge_base_path: str = "fund_report_knowledge_base.pkl"):
         """
         Initialize the extractor.
         
@@ -194,12 +239,15 @@ class AdaptivePDFExtractor:
         """
         self.kb = PDFKnowledgeBase(knowledge_base_path)
         self.setup_default_rules()
+        self.current_results = []  # Store current extraction results
         
     def setup_default_rules(self) -> None:
-        """Set up default extraction rules for fund risk reports."""
+        """Set up default extraction rules for fund risk reports.
+        These are just starting points - users can add their own rules.
+        """
         # Only add these rules if no existing KB was loaded
         if not self.kb.rules:
-            # Fund report specific rules
+            # Fund report common rules - these are just suggestions, not exhaustive
             self.kb.add_rule(ExtractionRule(
                 name="fund_name",
                 pattern=r"(?:fund(?:\s+name)?|portfolio)(?:[\s\:]+)([A-Za-z0-9\s\-\&\.]+(?:Fund|Trust|ETF|Index|Portfolio))",
@@ -214,71 +262,136 @@ class AdaptivePDFExtractor:
                 match_group=1,
             ))
             
-            self.kb.add_rule(ExtractionRule(
-                name="nav",
-                pattern=r"(?:NAV|Net\s+Asset\s+Value|AUM|Assets\s+Under\s+Management)(?:[\s\:]+)(?:USD|\$|€|£)?(?:\s*)(\d{1,3}(?:,\d{3})*(?:\.\d{1,9})?(?:\s*(?:million|billion|m|bn|MM|B))?)",
-                description="Extract Net Asset Value",
-                match_group=1,
-            ))
-            
-            self.kb.add_rule(ExtractionRule(
-                name="performance_ytd",
-                pattern=r"(?:YTD|Year[\s\-]to[\s\-]Date)(?:[\s\:]*)(?:Return|Performance|Change)?(?:[\s\:]*)([+-]?\d{1,2}(?:\.\d{1,2})?\s*\%)",
-                description="Extract YTD Performance",
-                match_group=1,
-            ))
-            
-            self.kb.add_rule(ExtractionRule(
-                name="performance_1yr",
-                pattern=r"(?:1[\s\-]?(?:Year|Yr|Y)|Annual)(?:[\s\:]*)(?:Return|Performance|Change)?(?:[\s\:]*)([+-]?\d{1,2}(?:\.\d{1,2})?\s*\%)",
-                description="Extract 1-Year Performance",
-                match_group=1,
-            ))
-            
-            self.kb.add_rule(ExtractionRule(
-                name="sharpe_ratio",
-                pattern=r"(?:Sharpe\s+Ratio)(?:[\s\:]*)([+-]?\d{1,2}(?:\.\d{1,3})?)",
-                description="Extract Sharpe Ratio",
-                match_group=1,
-            ))
-            
-            self.kb.add_rule(ExtractionRule(
-                name="volatility",
-                pattern=r"(?:Volatility|Standard\s+Deviation|Std\.\s+Dev\.)(?:[\s\:]*)(\d{1,2}(?:\.\d{1,2})?\s*\%)",
-                description="Extract Volatility/Standard Deviation",
-                match_group=1,
-            ))
-            
-            self.kb.add_rule(ExtractionRule(
-                name="max_drawdown",
-                pattern=r"(?:Maximum\s+Drawdown|Max\s+Drawdown|Max\.\s+DD)(?:[\s\:]*)(-\d{1,2}(?:\.\d{1,2})?\s*\%)",
-                description="Extract Maximum Drawdown",
-                match_group=1,
-            ))
-            
-            self.kb.add_rule(ExtractionRule(
-                name="var_95",
-                pattern=r"(?:Value[\s\-]at[\s\-]Risk|VaR)(?:[\s\:]*)(?:95%|@95%)?(?:[\s\:]*)(\d{1,2}(?:\.\d{1,2})?\s*\%)",
-                description="Extract Value-at-Risk (95%)",
-                match_group=1,
-            ))
-            
+            # These are just examples - the system will prompt users to add more metrics specific to their reports
             self.kb.save_kb()
             
-    def add_extraction_rule(self, name: str, pattern: str, description: str = None,
-                          match_index: int = 0, match_group: int = 0,
-                          preprocessing: List[str] = None) -> None:
-        """Add a new extraction rule."""
-        rule = ExtractionRule(
-            name=name,
-            pattern=pattern,
-            description=description,
-            match_index=match_index,
-            match_group=match_group,
-            preprocessing=preprocessing
-        )
-        self.kb.add_rule(rule)
-        self.kb.save_kb()
+    def prompt_for_custom_metrics(self, sample_text: str = None) -> List[str]:
+        """
+        Prompt the user to add custom metrics they want to extract.
+        Optionally shows them a sample of text from their document.
+        
+        Args:
+            sample_text: Sample text from a document to help the user identify metrics
+            
+        Returns:
+            List of added metric names
+        """
+        print("\n=== Custom Metrics Configuration ===")
+        print("Let's configure additional metrics to extract from your fund reports.")
+        
+        if sample_text:
+            print("\nHere's a sample from your document to help identify metrics:")
+            print("-" * 80)
+            # Show first 500 chars of sample text
+            print(sample_text[:500] + "..." if len(sample_text) > 500 else sample_text)
+            print("-" * 80)
+        
+        print("\nCommon fund metrics include:")
+        print("- NAV (Net Asset Value)")
+        print("- Performance metrics (YTD, 1Y, 3Y, 5Y returns)")
+        print("- Risk metrics (Sharpe ratio, volatility, max drawdown)")
+        print("- Portfolio statistics (number of holdings, top positions)")
+        print("- Expense ratios and fees")
+        print("- Benchmark comparisons")
+        print("- Portfolio manager information")
+        
+        added_metrics = []
+        
+        print("\nLet's add the metrics you want to extract.")
+        print("For each metric, you'll provide a name, description, and pattern.")
+        print("Enter 'done' when finished adding metrics.")
+        
+        while True:
+            metric_name = input("\nMetric name (or 'done' to finish): ").strip()
+            if metric_name.lower() == 'done':
+                break
+                
+            description = input(f"Description for {metric_name}: ").strip()
+            
+            # Suggest a pattern based on the metric name
+            suggested_pattern = self._suggest_pattern(metric_name)
+            
+            print(f"\nSuggested pattern: {suggested_pattern}")
+            pattern_input = input("Use this pattern? (y/n): ").strip().lower()
+            
+            if pattern_input == 'y':
+                pattern = suggested_pattern
+            else:
+                print("\nEnter a regular expression pattern to extract this metric.")
+                print("Example: 'NAV(?:[\s\:]+)(\d+(?:\.\d+)?(?:\s*(?:million|billion|m|bn)?))' to extract NAV values.")
+                pattern = input("Pattern: ").strip()
+                
+            # Add the rule
+            match_group = int(input("Capture group to use (usually 1): ").strip() or "1")
+            
+            self.kb.add_rule(ExtractionRule(
+                name=metric_name,
+                pattern=pattern,
+                description=description,
+                match_group=match_group
+            ))
+            
+            added_metrics.append(metric_name)
+            print(f"\n{metric_name} added successfully!")
+            
+        if added_metrics:
+            self.kb.save_kb()
+            print(f"\nAdded {len(added_metrics)} custom metrics: {', '.join(added_metrics)}")
+        
+        return added_metrics
+        
+    def _suggest_pattern(self, metric_name: str) -> str:
+        """Suggest a regex pattern based on the metric name."""
+        # Convert to lowercase and remove spaces for comparison
+        metric_lower = metric_name.lower().replace(" ", "")
+        
+        # Performance metrics
+        if any(term in metric_lower for term in ['return', 'performance', 'yield']):
+            if 'ytd' in metric_lower or 'year-to-date' in metric_lower:
+                return r"(?:YTD|Year[\s\-]to[\s\-]Date)(?:[\s\:]*)(?:Return|Performance|Change)?(?:[\s\:]*)([+-]?\d{1,2}(?:\.\d{1,2})?\s*\%)"
+            elif '1y' in metric_lower or '1-year' in metric_lower or 'one-year' in metric_lower:
+                return r"(?:1[\s\-]?(?:Year|Yr|Y)|Annual)(?:[\s\:]*)(?:Return|Performance|Change)?(?:[\s\:]*)([+-]?\d{1,2}(?:\.\d{1,2})?\s*\%)"
+            elif '3y' in metric_lower or '3-year' in metric_lower:
+                return r"(?:3[\s\-]?(?:Year|Yr|Y))(?:[\s\:]*)(?:Return|Performance|Change)?(?:[\s\:]*)([+-]?\d{1,2}(?:\.\d{1,2})?\s*\%)"
+            elif '5y' in metric_lower or '5-year' in metric_lower:
+                return r"(?:5[\s\-]?(?:Year|Yr|Y))(?:[\s\:]*)(?:Return|Performance|Change)?(?:[\s\:]*)([+-]?\d{1,2}(?:\.\d{1,2})?\s*\%)"
+            elif '10y' in metric_lower or '10-year' in metric_lower:
+                return r"(?:10[\s\-]?(?:Year|Yr|Y))(?:[\s\:]*)(?:Return|Performance|Change)?(?:[\s\:]*)([+-]?\d{1,2}(?:\.\d{1,2})?\s*\%)"
+            else:
+                return r"(?:" + metric_name + r")(?:[\s\:]*)([+-]?\d{1,2}(?:\.\d{1,2})?\s*\%)"
+        
+        # NAV / AUM metrics
+        elif 'nav' in metric_lower or 'aum' in metric_lower or 'asset' in metric_lower:
+            return r"(?:" + metric_name + r")(?:[\s\:]+)(?:USD|\$|€|£)?(?:\s*)(\d{1,3}(?:,\d{3})*(?:\.\d{1,9})?(?:\s*(?:million|billion|m|bn|MM|B))?)"
+        
+        # Risk metrics
+        elif 'sharp' in metric_lower or 'ratio' in metric_lower:
+            return r"(?:Sharpe\s+Ratio)(?:[\s\:]*)([+-]?\d{1,2}(?:\.\d{1,3})?)"
+        elif 'volatility' in metric_lower or 'deviation' in metric_lower:
+            return r"(?:" + metric_name + r")(?:[\s\:]*)(\d{1,2}(?:\.\d{1,2})?\s*\%)"
+        elif 'drawdown' in metric_lower:
+            return r"(?:Maximum\s+Drawdown|Max\s+Drawdown|Max\.\s+DD)(?:[\s\:]*)(-\d{1,2}(?:\.\d{1,2})?\s*\%)"
+        elif 'var' in metric_lower or 'value-at-risk' in metric_lower:
+            return r"(?:Value[\s\-]at[\s\-]Risk|VaR)(?:[\s\:]*)(?:95%|@95%)?(?:[\s\:]*)(\d{1,2}(?:\.\d{1,2})?\s*\%)"
+        
+        # Expense metrics
+        elif 'expense' in metric_lower or 'fee' in metric_lower or 'ratio' in metric_lower:
+            return r"(?:" + metric_name + r")(?:[\s\:]*)(\d{1,2}(?:\.\d{1,2})?\s*\%)"
+        
+        # Manager metrics
+        elif 'manager' in metric_lower:
+            return r"(?:Portfolio\s+Manager|Fund\s+Manager|Managed\s+by)(?:[\s\:]+)([A-Za-z\.\s]+)"
+        
+        # Holdings metrics
+        elif 'holding' in metric_lower or 'position' in metric_lower:
+            return r"(?:Number\s+of\s+Holdings|Positions)(?:[\s\:]+)(\d+)"
+        
+        # Benchmark metrics
+        elif 'benchmark' in metric_lower or 'index' in metric_lower:
+            return r"(?:Benchmark|Index|Compared\s+to)(?:[\s\:]+)([A-Za-z0-9\s\&\.\-]+)"
+        
+        # Default pattern - just look for the metric name followed by some text
+        return r"(?:" + metric_name + r")(?:[\s\:]+)([\w\s\.\,\%\$\€\£\-\+]+)"
         
     def extract_from_file(self, filepath: str, rules: List[str] = None) -> Dict[str, Any]:
         """
@@ -291,83 +404,76 @@ class AdaptivePDFExtractor:
         Returns:
             Dictionary of extracted values
         """
-        # Calculate a document fingerprint
-        with open(filepath, 'rb') as f:
-            content = f.read(1024 * 1024)  # Read first MB for fingerprinting
-            content_hash = hashlib.md5(content).hexdigest()
-            
-        doc_id = self.kb.get_document_id(filepath, content_hash)
-        
-        # Extract text from PDF
         try:
+            # Calculate a document fingerprint
+            with open(filepath, 'rb') as f:
+                content = f.read(1024 * 1024)  # Read first MB for fingerprinting
+                content_hash = hashlib.md5(content).hexdigest()
+                
+            doc_id = self.kb.get_document_id(filepath, content_hash)
+            
+            # Extract text from PDF
             with open(filepath, 'rb') as file:
                 pdf = PdfReader(file)
                 text = ""
                 for page in pdf.pages:
                     text += page.extract_text() + "\n"
+                    
+            # If this is the first extraction and there are no custom metrics,
+            # ask the user if they want to add custom metrics
+            if not rules and len(self.kb.rules) <= 2:  # Only basic rules exist
+                print(f"\n{Fore.CYAN if COLOR_SUPPORT else ''}It looks like you haven't configured custom metrics yet.{Style.RESET_ALL if COLOR_SUPPORT else ''}")
+                if input("Would you like to add custom metrics to extract? (y/n): ").lower() == 'y':
+                    self.prompt_for_custom_metrics(text)
+            
+            # Apply extraction rules
+            results = {'filepath': filepath, 'doc_id': doc_id, 'filename': os.path.basename(filepath)}
+            
+            rules_to_apply = rules or list(self.kb.rules.keys())
+            for rule_name in rules_to_apply:
+                rule = self.kb.get_rule(rule_name)
+                if not rule:
+                    results[rule_name] = None
+                    continue
+                    
+                value, is_correction = rule.extract(text, doc_id)
+                results[rule_name] = value
+                
+                # Add a flag to indicate if this came from a correction
+                if is_correction:
+                    results[f"{rule_name}_corrected"] = True
+                    
+            return results
         except Exception as e:
-            logger.error(f"Error extracting text from {filepath}: {e}")
-            return {'error': str(e), 'doc_id': doc_id}
-            
-        # Apply extraction rules
-        results = {'filepath': filepath, 'doc_id': doc_id}
+            logger.error(f"Error extracting from {filepath}: {e}")
+            return {'filepath': filepath, 'error': str(e)}
         
-        rules_to_apply = rules or list(self.kb.rules.keys())
-        for rule_name in rules_to_apply:
-            rule = self.kb.get_rule(rule_name)
-            if not rule:
-                results[rule_name] = None
-                continue
-                
-            value, is_correction = rule.extract(text, doc_id)
-            results[rule_name] = value
-            
-            # Add a flag to indicate if this came from a correction
-            if is_correction:
-                results[f"{rule_name}_corrected"] = True
-                
-        return results
-        
-    def extract_from_directory(self, directory: str, rules: List[str] = None, 
-                              output_format: str = 'csv') -> str:
+    def extract_from_files(self, filepaths: List[str], rules: List[str] = None) -> List[Dict[str, Any]]:
         """
-        Extract data from all PDFs in a directory.
+        Extract data from multiple PDF files.
         
         Args:
-            directory: Directory containing PDFs
+            filepaths: List of PDF file paths
             rules: List of rule names to apply
-            output_format: Format for saving results ('csv' or 'json')
             
         Returns:
-            Path to the saved results file
+            List of dictionaries with extracted values
         """
-        dir_path = Path(directory)
-        pdf_files = list(dir_path.glob('**/*.pdf'))
-        
         results = []
-        for pdf_path in tqdm(pdf_files, desc="Extracting data"):
+        for filepath in filepaths:
             try:
-                result = self.extract_from_file(str(pdf_path), rules)
+                result = self.extract_from_file(filepath, rules)
                 results.append(result)
             except Exception as e:
-                logger.error(f"Error processing {pdf_path}: {e}")
+                logger.error(f"Error processing {filepath}: {e}")
                 results.append({
-                    'filepath': str(pdf_path),
+                    'filepath': filepath,
+                    'filename': os.path.basename(filepath),
                     'error': str(e)
                 })
                 
-        # Save results
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if output_format.lower() == 'csv':
-            output_path = f"extraction_results_{timestamp}.csv"
-            pd.DataFrame(results).to_csv(output_path, index=False)
-        else:
-            output_path = f"extraction_results_{timestamp}.json"
-            with open(output_path, 'w') as f:
-                json.dump(results, f, indent=2)
-                
-        logger.info(f"Results saved to {output_path}")
-        return output_path
+        self.current_results = results
+        return results
         
     def add_correction(self, doc_id: str, rule_name: str, correct_value: str) -> None:
         """
@@ -383,416 +489,217 @@ class AdaptivePDFExtractor:
     def get_available_rules(self) -> List[Dict[str, str]]:
         """Get a list of all available extraction rules."""
         return [
-            {"name": name, "description": rule.description, "pattern": rule.pattern}
-            for name, rule in self.kb.rules.items()
+            {"name": rule_name, "description": rule.description, "pattern": rule.pattern}
+            for rule_name, rule in self.kb.rules.items()
         ]
-
-
-class FundRiskReportAnalysis:
-    """Advanced analysis capabilities for fund risk reports."""
-    
-    def __init__(self, extractor):
-        """Initialize with an extractor instance."""
-        self.extractor = extractor
         
-    def analyze_performance_trends(self, directory: str) -> pd.DataFrame:
+    def add_rule(self, name: str, pattern: str, description: str = None,
+                match_index: int = 0, match_group: int = 0,
+                preprocessing: List[str] = None) -> bool:
         """
-        Analyze performance trends across multiple fund reports.
+        Add a new extraction rule.
         
         Args:
-            directory: Directory containing fund report PDFs
+            name: Rule name
+            pattern: Regex pattern
+            description: Rule description
+            match_index: Match index to use
+            match_group: Match group to use
+            preprocessing: Preprocessing steps
             
         Returns:
-            DataFrame with performance analysis
+            True if rule was added successfully
         """
-        dir_path = Path(directory)
-        pdf_files = list(dir_path.glob('**/*.pdf'))
-        
-        performance_data = []
-        for pdf_path in tqdm(pdf_files, desc="Analyzing performance"):
-            try:
-                result = self.extractor.extract_from_file(str(pdf_path))
-                
-                # Skip if missing essential data
-                if not result.get('fund_name') or not result.get('report_date'):
-                    continue
-                    
-                # Parse date
-                try:
-                    date_str = result.get('report_date')
-                    # Try different date formats
-                    for fmt in ['%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%m-%d-%Y', '%d %b %Y', '%d %B %Y']:
-                        try:
-                            report_date = datetime.strptime(date_str, fmt)
-                            break
-                        except:
-                            continue
-                except:
-                    # If date parsing fails, use file modification date as fallback
-                    report_date = datetime.fromtimestamp(os.path.getmtime(pdf_path))
-                
-                # Clean up performance metrics
-                perf_ytd = self._clean_percentage(result.get('performance_ytd'))
-                perf_1yr = self._clean_percentage(result.get('performance_1yr'))
-                volatility = self._clean_percentage(result.get('volatility'))
-                max_dd = self._clean_percentage(result.get('max_drawdown'))
-                
-                # Create performance record
-                record = {
-                    'fund_name': result.get('fund_name'),
-                    'report_date': report_date,
-                    'nav': self._clean_nav(result.get('nav')),
-                    'performance_ytd': perf_ytd,
-                    'performance_1yr': perf_1yr,
-                    'sharpe_ratio': self._clean_numeric(result.get('sharpe_ratio')),
-                    'volatility': volatility,
-                    'max_drawdown': max_dd,
-                    'var_95': self._clean_percentage(result.get('var_95')),
-                    'filepath': str(pdf_path)
-                }
-                
-                performance_data.append(record)
-            except Exception as e:
-                logger.error(f"Error analyzing {pdf_path}: {e}")
-        
-        # Convert to DataFrame for analysis
-        if not performance_data:
-            return pd.DataFrame()
-            
-        df = pd.DataFrame(performance_data)
-        
-        # Sort by fund name and date
-        if 'report_date' in df.columns:
-            df = df.sort_values(['fund_name', 'report_date'])
-            
-        return df
-    
-    def _clean_percentage(self, value: str) -> float:
-        """Clean percentage values, converting to float."""
-        if not value:
-            return None
         try:
-            # Remove % sign and convert to float
-            return float(value.replace('%', '').replace('+', '').strip())
-        except:
-            return None
-            
-    def _clean_numeric(self, value: str) -> float:
-        """Clean numeric values, converting to float."""
-        if not value:
-            return None
-        try:
-            return float(value.strip())
-        except:
-            return None
-            
-    def _clean_nav(self, value: str) -> float:
-        """Clean NAV values, handling millions/billions notation."""
-        if not value:
-            return None
-        try:
-            value = value.strip().lower()
-            multiplier = 1.0
-            
-            # Handle million/billion notation
-            if any(x in value for x in ['million', 'm', 'mm']):
-                multiplier = 1_000_000
-                value = value.replace('million', '').replace('m', '').replace('mm', '')
-            elif any(x in value for x in ['billion', 'b', 'bn']):
-                multiplier = 1_000_000_000
-                value = value.replace('billion', '').replace('b', '').replace('bn', '')
-                
-            # Remove commas and convert to float
-            value = value.replace(',', '')
-            return float(value) * multiplier
-        except:
-            return None
-    
-    def generate_performance_report(self, df: pd.DataFrame, output_file: str = "fund_performance_report.csv") -> str:
-        """
-        Generate a performance report from analyzed data.
-        
-        Args:
-            df: DataFrame with performance data
-            output_file: Path to save the report
-            
-        Returns:
-            Path to the saved report
-        """
-        if df.empty:
-            logger.warning("No data available for performance report")
-            return None
-            
-        # Calculate additional metrics if possible
-        if 'performance_1yr' in df.columns and 'volatility' in df.columns:
-            df['risk_adjusted_return'] = df.apply(
-                lambda x: x['performance_1yr'] / x['volatility'] if x['volatility'] and x['volatility'] > 0 else None, 
-                axis=1
+            rule = ExtractionRule(
+                name=name,
+                pattern=pattern,
+                description=description,
+                match_index=match_index,
+                match_group=match_group,
+                preprocessing=preprocessing
             )
+            self.kb.add_rule(rule)
+            self.kb.save_kb()
+            return True
+        except Exception as e:
+            logger.error(f"Error adding rule: {e}")
+            return False
             
-        # Save to file
-        df.to_csv(output_file, index=False)
-        logger.info(f"Performance report saved to {output_file}")
-        
-        return output_file
-    
-    def compare_funds(self, fund_names: List[str], df: pd.DataFrame) -> Dict[str, Any]:
+    def save_results_to_csv(self, results: List[Dict[str, Any]], filepath: str) -> bool:
         """
-        Compare metrics for specified funds.
+        Save extraction results to a CSV file.
         
         Args:
-            fund_names: List of fund names to compare
-            df: DataFrame with performance data
+            results: List of extraction results
+            filepath: Output file path
             
         Returns:
-            Dictionary with comparison results
+            True if saved successfully
         """
-        if df.empty:
-            return {'error': 'No data available for comparison'}
+        try:
+            df = pd.DataFrame(results)
+            df.to_csv(filepath, index=False)
+            logger.info(f"Results saved to {filepath}")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving results: {e}")
+            return False
             
-        # Filter for requested funds
-        comparison_df = df[df['fund_name'].isin(fund_names)]
+    def analyze_performance(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Analyze performance data across multiple reports.
         
-        if comparison_df.empty:
-            return {'error': 'None of the specified funds found in data'}
+        Args:
+            results: List of extraction results
             
-        # Group by fund name and get latest report for each
-        latest_reports = comparison_df.sort_values('report_date').groupby('fund_name').last().reset_index()
-        
-        # Create comparison dictionary
-        comparison = {
-            'date': datetime.now().strftime('%Y-%m-%d'),
+        Returns:
+            Dictionary with analysis results
+        """
+        analysis = {
+            'total_reports': len(results),
             'funds': {}
         }
         
-        metrics = ['nav', 'performance_ytd', 'performance_1yr', 'sharpe_ratio', 
-                   'volatility', 'max_drawdown', 'var_95']
-        
-        for _, row in latest_reports.iterrows():
-            fund_data = {metric: row.get(metric) for metric in metrics if metric in row}
-            comparison['funds'][row['fund_name']] = fund_data
+        # Group by fund name
+        for result in results:
+            fund_name = result.get('fund_name')
+            if not fund_name:
+                continue
+                
+            if fund_name not in analysis['funds']:
+                analysis['funds'][fund_name] = []
+                
+            analysis['funds'][fund_name].append(result)
             
-        return comparison
+        # Calculate statistics
+        for fund_name, fund_results in analysis['funds'].items():
+            # Sort by date if possible
+            try:
+                fund_results.sort(key=lambda x: x.get('report_date', ''))
+            except:
+                pass
+                
+            # Get latest report
+            latest_report = fund_results[-1] if fund_results else None
+            
+            # Extract metrics from latest report
+            if latest_report:
+                metrics = {}
+                for field, value in latest_report.items():
+                    if field not in ['filepath', 'doc_id', 'filename', 'error', 'fund_name'] and not field.endswith('_corrected'):
+                        metrics[field] = value
+                
+                analysis['funds'][fund_name] = {
+                    'reports_count': len(fund_results),
+                    'latest_report': latest_report.get('report_date'),
+                    **metrics
+                }
+            
+        return analysis
 
 
-class CommandLineInterface:
-    """Command line interface for the Fund Risk Report Extractor."""
+class InteractiveFundExtractorApp:
+    """Interactive GUI application for fund report extraction with custom metrics support."""
     
-    def __init__(self):
-        self.extractor = AdaptivePDFExtractor()
-        self.analyzer = FundRiskReportAnalysis(self.extractor)
+    def __init__(self, root):
+        """Initialize the application."""
+        self.root = root
+        self.root.title("Interactive Fund Report Extractor")
+        self.root.geometry("1000x700")
+        self.root.minsize(900, 600)
         
-    def run(self):
-        """Run the CLI."""
-        parser = argparse.ArgumentParser(description='Fund Risk Report Extractor')
-        subparsers = parser.add_subparsers(dest='command', help='Command to run')
+        self.extractor = FundReportExtractor()
+        self.selected_files = []
+        self.extraction_results = []
         
-        # Extract command
-        extract_parser = subparsers.add_parser('extract', help='Extract data from PDFs')
-        extract_parser.add_argument('--input', '-i', required=True, help='Input PDF file or directory')
-        extract_parser.add_argument('--rules', '-r', nargs='+', help='Rule names to apply (default: all)')
-        extract_parser.add_argument('--format', '-f', choices=['csv', 'json'], default='csv', 
-                                   help='Output format (default: csv)')
+        self.create_widgets()
+        self.setup_chat_interface()
         
-        # Rules command
-        rules_parser = subparsers.add_parser('rules', help='List available rules')
+        # Message queue for the chat interface
+        self.msg_queue = queue.Queue()
+        self.processing = False
         
-        # Add rule command
-        add_rule_parser = subparsers.add_parser('add-rule', help='Add a new extraction rule')
-        add_rule_parser.add_argument('--name', required=True, help='Rule name')
-        add_rule_parser.add_argument('--pattern', required=True, help='Regex pattern')
-        add_rule_parser.add_argument('--description', help='Rule description')
-        add_rule_parser.add_argument('--match-index', type=int, default=0, help='Match index to use')
-        add_rule_parser.add_argument('--match-group', type=int, default=0, help='Match group to use')
-        add_rule_parser.add_argument('--preprocessing', nargs='+', 
-                                    choices=['lowercase', 'remove_whitespace'],
-                                    help='Preprocessing steps')
+        # Start the message processing thread
+        threading.Thread(target=self.process_messages, daemon=True).start()
         
-        # Correct command
-        correct_parser = subparsers.add_parser('correct', help='Add a correction for a document')
-        correct_parser.add_argument('--doc-id', required=True, help='Document ID')
-        correct_parser.add_argument('--rule', required=True, help='Rule name')
-        correct_parser.add_argument('--value', required=True, help='Correct value')
+        # Welcome message
+        self.add_system_message("Welcome to the Interactive Fund Report Extractor!")
+        self.add_system_message("To get started, click 'Select Files' to choose PDF files to analyze.")
         
-        # Interactive command
-        interactive_parser = subparsers.add_parser('interactive', help='Interactive extraction with learning')
-        interactive_parser.add_argument('--input', '-i', required=True, help='Input PDF file or directory')
+        # Create menus
+        self.create_menus()
         
-        # Fund analysis commands
-        analyze_parser = subparsers.add_parser('analyze', help='Analyze fund performance across reports')
-        analyze_parser.add_argument('--input', '-i', required=True, help='Directory containing fund reports')
-        analyze_parser.add_argument('--output', '-o', default='fund_performance_report.csv', help='Output file for analysis')
+    def create_menus(self):
+        """Create application menus."""
+        menubar = tk.Menu(self.root)
         
-        compare_parser = subparsers.add_parser('compare', help='Compare specified funds')
-        compare_parser.add_argument('--input', '-i', required=True, help='Directory containing fund reports')
-        compare_parser.add_argument('--funds', '-f', required=True, nargs='+', help='Fund names to compare')
-        compare_parser.add_argument('--output', '-o', default='fund_comparison.json', help='Output file for comparison')
+        # File menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Select Files", command=self.select_files)
+        file_menu.add_command(label="Process Files", command=self.process_files)
+        file_menu.add_separator()
+        file_menu.add_command(label="Export Results", command=self.export_results)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.root.quit)
+        menubar.add_cascade(label="File", menu=file_menu)
         
-        args = parser.parse_args()
+        # Metrics menu
+        metrics_menu = tk.Menu(menubar, tearoff=0)
+        metrics_menu.add_command(label="Configure Metrics", command=self.show_metrics_config)
+        metrics_menu.add_command(label="View Available Metrics", command=self.show_available_metrics)
+        metrics_menu.add_command(label="Add New Metric", command=self.add_new_metric)
+        menubar.add_cascade(label="Metrics", menu=metrics_menu)
         
-        if args.command == 'extract':
-            input_path = Path(args.input)
-            if input_path.is_file():
-                results = self.extractor.extract_from_file(str(input_path), args.rules)
-                print(json.dumps(results, indent=2))
-            elif input_path.is_dir():
-                output_path = self.extractor.extract_from_directory(str(input_path), args.rules, args.format)
-                print(f"Results saved to {output_path}")
-            else:
-                print(f"Error: {input_path} is not a valid file or directory")
-                
-        elif args.command == 'rules':
-            rules = self.extractor.get_available_rules()
-            print("Available extraction rules:")
-            for rule in rules:
-                print(f"- {rule['name']}: {rule['description']}")
-                print(f"  Pattern: {rule['pattern']}")
-                print()
-                
-        elif args.command == 'add-rule':
-            self.extractor.add_extraction_rule(
-                name=args.name,
-                pattern=args.pattern,
-                description=args.description,
-                match_index=args.match_index,
-                match_group=args.match_group,
-                preprocessing=args.preprocessing
-            )
-            print(f"Rule '{args.name}' added successfully")
-            
-        elif args.command == 'correct':
-            self.extractor.add_correction(args.doc_id, args.rule, args.value)
-            print(f"Correction added for document {args.doc_id}, rule {args.rule}")
-            
-        elif args.command == 'interactive':
-            self._run_interactive_mode(args.input)
-            
-        elif args.command == 'analyze':
-            print(f"Analyzing fund reports in {args.input}...")
-            performance_df = self.analyzer.analyze_performance_trends(args.input)
-            if performance_df.empty:
-                print("No performance data could be extracted from the reports.")
-            else:
-                output_file = self.analyzer.generate_performance_report(performance_df, args.output)
-                print(f"Analysis complete! Results saved to {output_file}")
-                print(f"Found data for {performance_df['fund_name'].nunique()} funds across {len(performance_df)} reports")
-                
-        elif args.command == 'compare':
-            print(f"Comparing funds: {', '.join(args.funds)}")
-            performance_df = self.analyzer.analyze_performance_trends(args.input)
-            if performance_df.empty:
-                print("No performance data could be extracted from the reports.")
-            else:
-                comparison = self.analyzer.compare_funds(args.funds, performance_df)
-                
-                if 'error' in comparison:
-                    print(f"Error: {comparison['error']}")
-                else:
-                    with open(args.output, 'w') as f:
-                        json.dump(comparison, f, indent=2)
-                    print(f"Comparison saved to {args.output}")
-                    
-                    # Print a simple comparison table
-                    print("\nFund Comparison Summary:")
-                    print("-" * 80)
-                    metrics = ['performance_1yr', 'sharpe_ratio', 'volatility', 'max_drawdown']
-                    metric_names = {
-                        'performance_1yr': '1Y Return (%)', 
-                        'sharpe_ratio': 'Sharpe Ratio',
-                        'volatility': 'Volatility (%)', 
-                        'max_drawdown': 'Max Drawdown (%)'
-                    }
-                    
-                    # Print header
-                    print(f"{'Metric':<20}", end="")
-                    for fund in comparison['funds']:
-                        print(f"{fund:<15}", end="")
-                    print()
-                    print("-" * 80)
-                    
-                    # Print metrics
-                    for metric in metrics:
-                        print(f"{metric_names.get(metric, metric):<20}", end="")
-                        for fund, data in comparison['funds'].items():
-                            value = data.get(metric, "N/A")
-                            if value is not None:
-                                if metric in ['performance_1yr', 'volatility', 'max_drawdown']:
-                                    print(f"{value:>14.2f}%", end="")
-                                else:
-                                    print(f"{value:>14.2f}", end="")
-                            else:
-                                print(f"{'':<14}N/A", end="")
-                        print()
-            
-        else:
-            parser.print_help()
-            
-    def _run_interactive_mode(self, input_path: str) -> None:
-        """
-        Run in interactive mode, extracting data and learning from corrections.
+        # Help menu
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="Help", command=self.show_help)
+        help_menu.add_command(label="About", command=self.show_about)
+        menubar.add_cascade(label="Help", menu=help_menu)
         
-        Args:
-            input_path: PDF file or directory path
-        """
-        input_path = Path(input_path)
+        self.root.config(menu=menubar)
         
-        if input_path.is_file():
-            pdf_files = [input_path]
-        elif input_path.is_dir():
-            pdf_files = list(input_path.glob('**/*.pdf'))
-        else:
-            print(f"Error: {input_path} is not a valid file or directory")
-            return
-            
-        rules = self.extractor.get_available_rules()
-        rule_names = [rule['name'] for rule in rules]
+    def create_widgets(self):
+        """Create the main application widgets."""
+        # Main frame
+        main_frame = ttk.Frame(self.root, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
         
-        print(f"Found {len(pdf_files)} PDF files to process")
-        print(f"Available rules: {', '.join(rule_names)}")
-        print()
+        # Top frame for file selection
+        top_frame = ttk.Frame(main_frame)
+        top_frame.pack(fill=tk.X, pady=(0, 10))
         
-        for pdf_file in pdf_files:
-            print(f"\nProcessing: {pdf_file}")
-            results = self.extractor.extract_from_file(str(pdf_file), rule_names)
-            
-            print("\nExtracted values:")
-            for rule_name in rule_names:
-                value = results.get(rule_name)
-                is_corrected = results.get(f"{rule_name}_corrected", False)
-                
-                if is_corrected:
-                    print(f"  {rule_name}: {value} (from previous correction)")
-                else:
-                    print(f"  {rule_name}: {value}")
-                    
-                    # Ask if the value is correct
-                    while True:
-                        response = input(f"  Is this value correct? (y/n/s) ")
-                        if response.lower() == 'y':
-                            break
-                        elif response.lower() == 'n':
-                            correct_value = input(f"  Enter the correct value for {rule_name}: ")
-                            self.extractor.add_correction(results['doc_id'], rule_name, correct_value)
-                            print(f"  Correction saved for future use")
-                            break
-                        elif response.lower() == 's':
-                            print(f"  Skipping this field")
-                            break
-                        else:
-                            print(f"  Please enter 'y' (yes), 'n' (no), or 's' (skip)")
-                            
-            print("\nContinue to next file? (Enter to continue, q to quit)")
-            if input().lower() == 'q':
-                break
-                
-        print("\nInteractive session completed")
-
-
-def main():
-    """Main entry point for the application."""
-    cli = CommandLineInterface()
-    cli.run()
-
-
-if __name__ == "__main__":
-    main()
+        # File selection button
+        select_btn = ttk.Button(top_frame, text="Select Files", command=self.select_files)
+        select_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Selected files counter
+        self.files_label = ttk.Label(top_frame, text="No files selected")
+        self.files_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Process button
+        self.process_btn = ttk.Button(top_frame, text="Extract Data", command=self.process_files, state=tk.DISABLED)
+        self.process_btn.pack(side=tk.RIGHT)
+        
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+        
+        # Create chat tab
+        self.chat_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.chat_frame, text="Interactive Chat")
+        
+        # Create results tab
+        self.results_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.results_frame, text="Results Table")
+        
+        # Create table in results tab
+        self.create_results_table()
+        
+        # Create export frame
+        export_frame = ttk.Frame(main_frame)
+        export_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        # Export button
+        self.export_btn = ttk.Button(export_frame, text="Export Results", command=self.export_results, state=tk.DISABLED)
+        self.export_btn.pack(side=tk.RIGHT)
