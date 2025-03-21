@@ -1,4 +1,4 @@
-Sub UpdateBetaFromAlpha()
+Sub UpdateBetaFromSource()
     Dim mainWs As Worksheet, updateWs As Worksheet
     Dim mainTable As ListObject, updateTable As ListObject
     Dim updateWb As Workbook
@@ -12,7 +12,7 @@ Sub UpdateBetaFromAlpha()
     ' Prompt the user to select the update file.
     Set fd = Application.FileDialog(msoFileDialogFilePicker)
     With fd
-        .Title = "Select the update file (must contain sheet 'Tracker' with table 'Alpha')"
+        .Title = "Select the update file (must contain sheet 'Tracker' with a table)"
         .Filters.Clear
         .Filters.Add "Excel Files", "*.xlsx; *.xlsm; *.xlsb; *.xls"
         .AllowMultiSelect = False
@@ -26,33 +26,40 @@ Sub UpdateBetaFromAlpha()
     ' Open the update workbook.
     Set updateWb = Workbooks.Open(filePath)
     
-    ' Set reference to the update worksheet and table "Alpha".
+    ' Check if the update workbook contains a sheet named "Tracker".
     On Error Resume Next
     Set updateWs = updateWb.Sheets("Tracker")
-    Set updateTable = updateWs.ListObjects("Alpha")
     On Error GoTo 0
-    
-    If updateTable Is Nothing Then
-        MsgBox "Table 'Alpha' not found in sheet 'Tracker' of the update file."
+    If updateWs Is Nothing Then
+        MsgBox "Sheet 'Tracker' not found in the update file."
         updateWb.Close SaveChanges:=False
         Exit Sub
     End If
     
-    ' Get column indexes for required columns in table Alpha.
-    Dim colFundGCI_Alpha As Long, colECA As Long, colProspectus_Alpha As Long, colStatus_Alpha As Long
+    ' Use the first table available in the "Tracker" sheet.
+    If updateWs.ListObjects.Count = 0 Then
+        MsgBox "No table found in sheet 'Tracker' in the update file."
+        updateWb.Close SaveChanges:=False
+        Exit Sub
+    Else
+        Set updateTable = updateWs.ListObjects(1)
+    End If
+    
+    ' Verify required columns in the update table.
+    Dim colFundGCI_Upd As Long, colECA As Long, colProspectus_Upd As Long, colStatus_Upd As Long
     On Error Resume Next
-    colFundGCI_Alpha = updateTable.ListColumns("Fund GCI").Index
+    colFundGCI_Upd = updateTable.ListColumns("Fund GCI").Index
     colECA = updateTable.ListColumns("ECA").Index
-    colProspectus_Alpha = updateTable.ListColumns("Prospectus").Index
-    colStatus_Alpha = updateTable.ListColumns("Status").Index
+    colProspectus_Upd = updateTable.ListColumns("Prospectus").Index
+    colStatus_Upd = updateTable.ListColumns("Status").Index
     On Error GoTo 0
-    If colFundGCI_Alpha = 0 Or colECA = 0 Or colProspectus_Alpha = 0 Or colStatus_Alpha = 0 Then
-        MsgBox "One or more required columns ('Fund GCI', 'ECA', 'Prospectus', 'Status') not found in table 'Alpha'."
+    If colFundGCI_Upd = 0 Or colECA = 0 Or colProspectus_Upd = 0 Or colStatus_Upd = 0 Then
+        MsgBox "One or more required columns ('Fund GCI', 'ECA', 'Prospectus', 'Status') not found in the update table."
         updateWb.Close SaveChanges:=False
         Exit Sub
     End If
     
-    ' Get column indexes for required columns in table Beta.
+    ' Verify required columns in main table "Beta".
     Dim colFundGCI_Beta As Long, colProspectus_Beta As Long, colStatus_Beta As Long
     On Error Resume Next
     colFundGCI_Beta = mainTable.ListColumns("Fund GCI").Index
@@ -60,39 +67,59 @@ Sub UpdateBetaFromAlpha()
     colStatus_Beta = mainTable.ListColumns("Status").Index
     On Error GoTo 0
     If colFundGCI_Beta = 0 Or colProspectus_Beta = 0 Or colStatus_Beta = 0 Then
-        MsgBox "One or more required columns ('Fund GCI', 'Prospectus', 'Status') not found in table 'Beta'."
+        MsgBox "One or more required columns ('Fund GCI', 'Prospectus', 'Status') not found in the main table 'Beta'."
         updateWb.Close SaveChanges:=False
         Exit Sub
     End If
+    
+    ' Prompt user to input the filter criteria for the ECA column.
+    Dim filterCriteria As String, criteriaArray() As String
+    filterCriteria = InputBox("Enter filter criteria for the ECA column. For multiple values, separate them by commas:", "ECA Filter Criteria")
+    If Trim(filterCriteria) = "" Then
+        MsgBox "No filter criteria provided. Exiting macro."
+        updateWb.Close SaveChanges:=False
+        Exit Sub
+    End If
+    criteriaArray = Split(filterCriteria, ",")
     
     Dim updateRow As ListRow
     Dim keyValue As Variant, ecaValue As String
     Dim prospectusValue As Variant, statusValue As Variant
     Dim foundCell As Range
     Dim rowIndex As Long
+    Dim iCriteria As Long, matchFound As Boolean
     
-    ' Loop through each row in table "Alpha".
+    ' Loop through each row in the update table.
     For Each updateRow In updateTable.ListRows
         ecaValue = CStr(updateRow.Range.Cells(1, colECA).Value)
-        ' Only update rows where ECA is "Amit" or "Revanth".
-        If ecaValue = "Amit" Or ecaValue = "Revanth" Then
-            keyValue = updateRow.Range.Cells(1, colFundGCI_Alpha).Value
-            prospectusValue = updateRow.Range.Cells(1, colProspectus_Alpha).Value
-            statusValue = updateRow.Range.Cells(1, colStatus_Alpha).Value
+        matchFound = False
+        
+        ' Check if the current ECA value matches any of the filter criteria.
+        For iCriteria = LBound(criteriaArray) To UBound(criteriaArray)
+            If Trim(criteriaArray(iCriteria)) = ecaValue Then
+                matchFound = True
+                Exit For
+            End If
+        Next iCriteria
+        
+        If matchFound Then
+            keyValue = updateRow.Range.Cells(1, colFundGCI_Upd).Value
+            prospectusValue = updateRow.Range.Cells(1, colProspectus_Upd).Value
+            statusValue = updateRow.Range.Cells(1, colStatus_Upd).Value
             
-            ' Find matching Fund GCI in table "Beta".
+            ' Find matching Fund GCI in the main table "Beta".
             Set foundCell = mainTable.DataBodyRange.Columns(colFundGCI_Beta).Find(What:=keyValue, LookIn:=xlValues, LookAt:=xlWhole)
             If Not foundCell Is Nothing Then
                 ' Calculate the relative row index within table "Beta".
                 rowIndex = foundCell.Row - mainTable.DataBodyRange.Rows(1).Row + 1
-                ' Update the Prospectus and Status columns in table "Beta".
+                ' Update the Prospectus and Status columns in "Beta".
                 mainTable.DataBodyRange.Cells(rowIndex, colProspectus_Beta).Value = prospectusValue
                 mainTable.DataBodyRange.Cells(rowIndex, colStatus_Beta).Value = statusValue
             End If
         End If
     Next updateRow
     
-    ' Close the update workbook without saving any changes.
+    ' Close the update workbook without saving changes.
     updateWb.Close SaveChanges:=False
     MsgBox "Update completed successfully!"
 End Sub
