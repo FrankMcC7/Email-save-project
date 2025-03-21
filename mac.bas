@@ -47,27 +47,37 @@ Sub UpdateBetaFromSource()
     
     ' Verify required columns in the update table.
     Dim colFundGCI_Upd As Long, colECA As Long, colProspectus_Upd As Long, colStatus_Upd As Long
+    Dim colFileName_Upd As Long, colOutreachDate_Upd As Long, colComments_Upd As Long
     On Error Resume Next
     colFundGCI_Upd = updateTable.ListColumns("Fund GCI").Index
     colECA = updateTable.ListColumns("ECA").Index
     colProspectus_Upd = updateTable.ListColumns("Prospectus").Index
     colStatus_Upd = updateTable.ListColumns("Status").Index
+    colFileName_Upd = updateTable.ListColumns("File Name").Index
+    colOutreachDate_Upd = updateTable.ListColumns("Outreach Date").Index
+    colComments_Upd = updateTable.ListColumns("Comments").Index
     On Error GoTo 0
-    If colFundGCI_Upd = 0 Or colECA = 0 Or colProspectus_Upd = 0 Or colStatus_Upd = 0 Then
-        MsgBox "One or more required columns ('Fund GCI', 'ECA', 'Prospectus', 'Status') not found in the update table."
+    If colFundGCI_Upd = 0 Or colECA = 0 Or colProspectus_Upd = 0 Or colStatus_Upd = 0 _
+       Or colFileName_Upd = 0 Or colOutreachDate_Upd = 0 Or colComments_Upd = 0 Then
+        MsgBox "One or more required columns ('Fund GCI', 'ECA', 'Prospectus', 'Status', 'File Name', 'Outreach Date', 'Comments') not found in the update table."
         updateWb.Close SaveChanges:=False
         Exit Sub
     End If
     
     ' Verify required columns in main table "Beta".
     Dim colFundGCI_Beta As Long, colProspectus_Beta As Long, colStatus_Beta As Long
+    Dim colFileName_Beta As Long, colOutreachDate_Beta As Long, colComments_Beta As Long
     On Error Resume Next
     colFundGCI_Beta = mainTable.ListColumns("Fund GCI").Index
     colProspectus_Beta = mainTable.ListColumns("Prospectus").Index
     colStatus_Beta = mainTable.ListColumns("Status").Index
+    colFileName_Beta = mainTable.ListColumns("File Name").Index
+    colOutreachDate_Beta = mainTable.ListColumns("Outreach Date").Index
+    colComments_Beta = mainTable.ListColumns("Comments").Index
     On Error GoTo 0
-    If colFundGCI_Beta = 0 Or colProspectus_Beta = 0 Or colStatus_Beta = 0 Then
-        MsgBox "One or more required columns ('Fund GCI', 'Prospectus', 'Status') not found in the main table 'Beta'."
+    If colFundGCI_Beta = 0 Or colProspectus_Beta = 0 Or colStatus_Beta = 0 _
+       Or colFileName_Beta = 0 Or colOutreachDate_Beta = 0 Or colComments_Beta = 0 Then
+        MsgBox "One or more required columns ('Fund GCI', 'Prospectus', 'Status', 'File Name', 'Outreach Date', 'Comments') not found in the main table 'Beta'."
         updateWb.Close SaveChanges:=False
         Exit Sub
     End If
@@ -85,6 +95,7 @@ Sub UpdateBetaFromSource()
     Dim updateRow As ListRow
     Dim keyValue As Variant, ecaValue As String
     Dim prospectusValue As Variant, statusValue As Variant
+    Dim fileNameValue As Variant, outreachDateValue As Variant, commentsValue As Variant
     Dim foundCell As Range
     Dim rowIndex As Long
     Dim iCriteria As Long, matchFound As Boolean
@@ -106,15 +117,21 @@ Sub UpdateBetaFromSource()
             keyValue = updateRow.Range.Cells(1, colFundGCI_Upd).Value
             prospectusValue = updateRow.Range.Cells(1, colProspectus_Upd).Value
             statusValue = updateRow.Range.Cells(1, colStatus_Upd).Value
+            fileNameValue = updateRow.Range.Cells(1, colFileName_Upd).Value
+            outreachDateValue = updateRow.Range.Cells(1, colOutreachDate_Upd).Value
+            commentsValue = updateRow.Range.Cells(1, colComments_Upd).Value
             
             ' Find matching Fund GCI in the main table "Beta".
             Set foundCell = mainTable.DataBodyRange.Columns(colFundGCI_Beta).Find(What:=keyValue, LookIn:=xlValues, LookAt:=xlWhole)
             If Not foundCell Is Nothing Then
                 ' Calculate the relative row index within table "Beta".
                 rowIndex = foundCell.Row - mainTable.DataBodyRange.Rows(1).Row + 1
-                ' Update the Prospectus and Status columns in "Beta".
+                ' Update the Prospectus, Status, File Name, Outreach Date, and Comments columns in "Beta".
                 mainTable.DataBodyRange.Cells(rowIndex, colProspectus_Beta).Value = prospectusValue
                 mainTable.DataBodyRange.Cells(rowIndex, colStatus_Beta).Value = statusValue
+                mainTable.DataBodyRange.Cells(rowIndex, colFileName_Beta).Value = fileNameValue
+                mainTable.DataBodyRange.Cells(rowIndex, colOutreachDate_Beta).Value = outreachDateValue
+                mainTable.DataBodyRange.Cells(rowIndex, colComments_Beta).Value = commentsValue
             End If
         End If
     Next updateRow
