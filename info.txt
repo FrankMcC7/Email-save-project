@@ -1,0 +1,18 @@
+Here are all the packages that need to be installed via terminal for the translation script to work:
+
+```
+pip install googletrans==4.0.0-rc1 python-docx PyPDF2 tqdm
+```
+
+Breaking down what each package does:
+
+1. **googletrans==4.0.0-rc1** - The unofficial Google Translate API wrapper that handles language detection and translation
+   - Note: The version number is important, as older versions may not work properly
+
+2. **python-docx** - Used to read and extract text from Microsoft Word (.docx) files
+
+3. **PyPDF2** - Used to read and extract text from PDF files
+
+4. **tqdm** - Adds progress bars to show translation progress for larger documents
+
+You can install all of these at once with the single command above. If you're using a virtual environment (recommended), make sure to activate it first before running the pip install command.
