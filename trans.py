@@ -1,5 +1,7 @@
 import os
 import argparse
+import tkinter as tk
+from tkinter import filedialog
 from googletrans import Translator
 from pathlib import Path
 import docx
@@ -65,28 +67,80 @@ def save_translated_text(translated_text, output_path):
     with open(output_path, 'w', encoding='utf-8') as file:
         file.write(translated_text)
 
-def translate_document(file_path, output_dir=None):
+def select_input_file():
+    """
+    Open a file dialog to select an input file
+    
+    Returns:
+        str: Path to the selected file
+    """
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    file_path = filedialog.askopenfilename(
+        title="Select document to translate",
+        filetypes=(
+            ("Text files", "*.txt"),
+            ("Word documents", "*.docx"),
+            ("PDF files", "*.pdf"),
+            ("All files", "*.*")
+        )
+    )
+    return file_path
+
+def select_output_file(default_filename):
+    """
+    Open a file dialog to select where to save the output file
+    
+    Args:
+        default_filename (str): Default filename to suggest
+        
+    Returns:
+        str: Path where the output file should be saved
+    """
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    file_path = filedialog.asksaveasfilename(
+        title="Save translated document as",
+        defaultextension=Path(default_filename).suffix,
+        initialfile=Path(default_filename).name,
+        filetypes=(
+            ("Text files", "*.txt"),
+            ("Word documents", "*.docx"),
+            ("PDF files", "*.pdf"),
+            ("All files", "*.*")
+        )
+    )
+    return file_path
+
+def translate_document(file_path=None):
     """
     Translate a document from any language to English
     
     Args:
-        file_path (str): Path to the document
-        output_dir (str, optional): Directory to save translated file. Defaults to same directory.
+        file_path (str, optional): Path to the document. If None, will prompt user to select.
     
     Returns:
         tuple: (output_path, source_language)
     """
+    # If no file path provided, ask user to select one
+    if not file_path:
+        file_path = select_input_file()
+        if not file_path:  # User canceled selection
+            print("No file selected. Exiting.")
+            return None, None
+    
     file_path = Path(file_path)
     
-    # Determine the output directory
-    if output_dir:
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        output_dir = file_path.parent
+    # Create default output filename
+    default_output_path = file_path.parent / f"{file_path.stem}_translated_to_en{file_path.suffix}"
     
-    # Create output filename
-    output_path = output_dir / f"{file_path.stem}_translated_to_en{file_path.suffix}"
+    # Ask user where to save the translated file
+    output_path = select_output_file(str(default_output_path))
+    if not output_path:  # User canceled selection
+        print("No output location selected. Exiting.")
+        return None, None
+    
+    output_path = Path(output_path)
     
     # Extract text based on file extension
     file_extension = file_path.suffix.lower()
@@ -116,52 +170,16 @@ def translate_document(file_path, output_dir=None):
         print(f"Error processing {file_path.name}: {str(e)}")
         return None, None
 
-def translate_directory(directory_path, output_dir=None, extensions=None):
-    """
-    Translate all documents in a directory
-    
-    Args:
-        directory_path (str): Path to directory containing documents
-        output_dir (str, optional): Directory to save translated files
-        extensions (list, optional): List of file extensions to process
-    """
-    if extensions is None:
-        extensions = ['.txt', '.docx', '.pdf']
-    
-    directory_path = Path(directory_path)
-    
-    # Process all files with the specified extensions
-    for ext in extensions:
-        for file_path in directory_path.glob(f"*{ext}"):
-            translate_document(file_path, output_dir)
-
 def main():
-    # Set up command line argument parsing
     parser = argparse.ArgumentParser(description='Translate documents from any language to English')
-    parser.add_argument('path', help='Path to document or directory')
-    parser.add_argument('--output', '-o', help='Output directory for translated documents')
-    parser.add_argument('--recursive', '-r', action='store_true', help='Process directories recursively')
-    parser.add_argument('--extensions', '-e', nargs='+', default=['.txt', '.docx', '.pdf'], 
-                        help='File extensions to process (default: .txt .docx .pdf)')
+    parser.add_argument('--file', '-f', help='Path to document (optional, if not provided will open file dialog)')
     
     args = parser.parse_args()
     
-    path = Path(args.path)
+    # If file argument provided, use that, otherwise prompt user
+    translate_document(args.file)
     
-    if path.is_file():
-        # Translate single file
-        translate_document(path, args.output)
-    elif path.is_dir():
-        # Translate all files in directory
-        if args.recursive:
-            # Process recursively
-            for root, _, _ in os.walk(path):
-                translate_directory(root, args.output, args.extensions)
-        else:
-            # Process just the top directory
-            translate_directory(path, args.output, args.extensions)
-    else:
-        print(f"Error: {path} does not exist.")
+    print("Translation completed.")
 
 if __name__ == "__main__":
     main()
