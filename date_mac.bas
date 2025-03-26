@@ -60,10 +60,11 @@ Sub UpdatePortfolioTable_Optimized()
     
     ' Build dictionary for Trigger file data
     Set dictTrigger = CreateObject("Scripting.Dictionary")
-    Dim trgFundGCI_Col As Long, trgLatestNAV_Col As Long, trgRequiredNAV_Col As Long
+    Dim trgFundGCI_Col As Long, trgLatestNAV_Col As Long, trgReqNAV_Col As Long
     trgFundGCI_Col = loTrigger.ListColumns("Fund GCI").Index
     trgLatestNAV_Col = loTrigger.ListColumns("Latest NAV Date").Index
-    trgRequiredNAV_Col = loTrigger.ListColumns("Required NAV Date").Index
+    ' Use the column "Req NAV Date" for updating PortfolioTable's Required NAV Date
+    trgReqNAV_Col = loTrigger.ListColumns("Req NAV Date").Index
     
     Dim trgRow As Range, trgKey As Variant
     For Each trgRow In loTrigger.DataBodyRange.Rows
@@ -71,7 +72,7 @@ Sub UpdatePortfolioTable_Optimized()
         If Not dictTrigger.Exists(trgKey) Then
             dictTrigger.Add trgKey, Array( _
                 trgRow.Cells(1, trgLatestNAV_Col).Value, _
-                trgRow.Cells(1, trgRequiredNAV_Col).Value)
+                trgRow.Cells(1, trgReqNAV_Col).Value)
         End If
     Next trgRow
     
