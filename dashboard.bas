@@ -1,3 +1,6 @@
+Set pt = wsDashboard.PivotTables.Add(PivotCache:=pc, TableDestination:=wsDashboard.Range("A3"), TableName:="Pivot_Main")
+
+
 Sub BuildDashboard()
     Dim fDialog As FileDialog
     Dim sourceFilePath As String
