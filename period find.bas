@@ -1,4 +1,4 @@
-Sub UpdateFrequencyFromSource()
+Sub UpdateFrequencyFromSource_Faster()
     Dim sourceFilePath As String
     Dim sourceWb As Workbook
     Dim sourceWs As Worksheet
@@ -8,12 +8,16 @@ Sub UpdateFrequencyFromSource()
     Dim ws As Worksheet
     Dim i As Long
     
-    ' Let the user select the source file
+    ' Optimize performance
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    
+    ' Prompt user to select the source file
     Set fd = Application.FileDialog(msoFileDialogFilePicker)
     fd.Title = "Select the Source File"
     If fd.Show <> -1 Then
         MsgBox "No file selected. Exiting macro."
-        Exit Sub
+        GoTo CleanUp
     End If
     sourceFilePath = fd.SelectedItems(1)
     
@@ -27,7 +31,7 @@ Sub UpdateFrequencyFromSource()
     If sourceWs Is Nothing Then
         MsgBox "Sheet2 not found in the source file."
         sourceWb.Close SaveChanges:=False
-        Exit Sub
+        GoTo CleanUp
     End If
     
     ' Get the table named "Source" from Sheet2
@@ -37,7 +41,7 @@ Sub UpdateFrequencyFromSource()
     If sourceTbl Is Nothing Then
         MsgBox "Table 'Source' not found in Sheet2 of the source file."
         sourceWb.Close SaveChanges:=False
-        Exit Sub
+        GoTo CleanUp
     End If
     
     ' Find the destination table "newTable" in the current workbook.
@@ -51,7 +55,7 @@ Sub UpdateFrequencyFromSource()
     If destTbl Is Nothing Then
         MsgBox "Destination table 'newTable' not found in the current workbook."
         sourceWb.Close SaveChanges:=False
-        Exit Sub
+        GoTo CleanUp
     End If
     
     ' Determine column positions in the source table based on header names.
@@ -70,7 +74,7 @@ Sub UpdateFrequencyFromSource()
     If srcFundGCI_Col = 0 Or srcPeriod_Col = 0 Or srcTrigger_Col = 0 Then
         MsgBox "One or more required columns (Fund GCI, Period, Trigger Value) not found in the source table."
         sourceWb.Close SaveChanges:=False
-        Exit Sub
+        GoTo CleanUp
     End If
     
     ' Determine column positions in the destination table ("newTable")
@@ -87,56 +91,76 @@ Sub UpdateFrequencyFromSource()
     If destFundGCI_Col = 0 Or destFrequency_Col = 0 Then
         MsgBox "Destination table does not contain required columns (Fund GCI, Frequency)."
         sourceWb.Close SaveChanges:=False
-        Exit Sub
+        GoTo CleanUp
     End If
     
-    ' Loop through each row in the destination table and update the Frequency column.
-    Dim destFundGCI As String
-    Dim candidatePeriod As Variant
-    Dim periodToUse As Variant
-    Dim foundNonBlank As Boolean
-    Dim srcRowIndex As Long
-    Dim srcRowCount As Long
-    Dim triggerVal As String
+    ' Read the source table data into an array
+    Dim srcData As Variant
+    Dim numSrcRows As Long
+    srcData = sourceTbl.DataBodyRange.Value
+    numSrcRows = UBound(srcData, 1)
     
-    Dim destData As Range
-    Set destData = destTbl.DataBodyRange
+    ' Build a dictionary for quick lookup:
+    ' Key: Fund GCI, Value: Array(candidatePeriod, nonBlankPeriod)
+    Dim dict As Object
+    Set dict = CreateObject("Scripting.Dictionary")
     
-    Dim destRowIndex As Long
-    For destRowIndex = 1 To destData.Rows.Count
-        destFundGCI = Trim(destData.Cells(destRowIndex, destFundGCI_Col).Value)
-        If destFundGCI <> "" Then
-            candidatePeriod = ""
-            periodToUse = ""
-            foundNonBlank = False
-            
-            srcRowCount = sourceTbl.DataBodyRange.Rows.Count
-            For srcRowIndex = 1 To srcRowCount
-                If Trim(sourceTbl.DataBodyRange.Cells(srcRowIndex, srcFundGCI_Col).Value) = destFundGCI Then
-                    ' Capture the first period value for this GCI (if not already captured)
-                    If candidatePeriod = "" Then
-                        candidatePeriod = sourceTbl.DataBodyRange.Cells(srcRowIndex, srcPeriod_Col).Value
-                    End If
-                    triggerVal = Trim(sourceTbl.DataBodyRange.Cells(srcRowIndex, srcTrigger_Col).Value)
-                    ' If trigger value is not blank, then use this period and exit loop.
-                    If triggerVal <> "" Then
-                        periodToUse = sourceTbl.DataBodyRange.Cells(srcRowIndex, srcPeriod_Col).Value
-                        foundNonBlank = True
-                        Exit For
-                    End If
+    Dim fundKey As String, candidatePeriod As Variant, nonBlankPeriod As Variant, triggerVal As String
+    For i = 1 To numSrcRows
+        fundKey = Trim(srcData(i, srcFundGCI_Col))
+        If fundKey <> "" Then
+            If Not dict.exists(fundKey) Then
+                candidatePeriod = srcData(i, srcPeriod_Col)
+                triggerVal = Trim(srcData(i, srcTrigger_Col))
+                If triggerVal <> "" Then
+                    nonBlankPeriod = srcData(i, srcPeriod_Col)
+                Else
+                    nonBlankPeriod = ""
                 End If
-            Next srcRowIndex
-            
-            ' If no nonblank trigger was found, then use the candidate period (first matching row)
-            If periodToUse = "" Then periodToUse = candidatePeriod
-            
-            ' Update the Frequency column in the destination table.
-            destData.Cells(destRowIndex, destFrequency_Col).Value = periodToUse
+                dict.Add fundKey, Array(candidatePeriod, nonBlankPeriod)
+            Else
+                ' If nonBlankPeriod is still empty and current row has non-blank trigger, update it.
+                triggerVal = Trim(srcData(i, srcTrigger_Col))
+                If dict(fundKey)(1) = "" And triggerVal <> "" Then
+                    dict(fundKey)(1) = srcData(i, srcPeriod_Col)
+                End If
+            End If
         End If
-    Next destRowIndex
+    Next i
+    
+    ' Process the destination table using an array for speed.
+    Dim destData As Variant
+    Dim numDestRows As Long
+    destData = destTbl.DataBodyRange.Value
+    numDestRows = UBound(destData, 1)
+    
+    Dim currentFund As String, periodToUse As Variant
+    For i = 1 To numDestRows
+        currentFund = Trim(destData(i, destFundGCI_Col))
+        If currentFund <> "" Then
+            If dict.exists(currentFund) Then
+                ' Use non-blank period if available; otherwise, use candidate period.
+                If dict(currentFund)(1) <> "" Then
+                    periodToUse = dict(currentFund)(1)
+                Else
+                    periodToUse = dict(currentFund)(0)
+                End If
+                destData(i, destFrequency_Col) = periodToUse
+            Else
+                destData(i, destFrequency_Col) = "" ' No match found
+            End If
+        End If
+    Next i
+    
+    ' Write the updated data back to the destination table
+    destTbl.DataBodyRange.Value = destData
     
     ' Close the source workbook without saving changes.
     sourceWb.Close SaveChanges:=False
     
-    MsgBox "Frequency values updated successfully."
+    MsgBox "Frequency values updated successfully.", vbInformation
+
+CleanUp:
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
 End Sub
