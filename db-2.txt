@@ -1,0 +1,17 @@
+I'll update the formula to use "Period Freq" instead of "Fund Frequency" in the structured references:
+
+```
+=IF([@[Period Freq]]="Monthly",EOMONTH([@[Latest NAV Date]],1),
+   IF([@[Period Freq]]="Quarterly",
+      DATE(YEAR([@[Latest NAV Date]])+IF(MONTH([@[Latest NAV Date]])>9,1,0),
+           IF(MONTH([@[Latest NAV Date]])<=3,3,IF(MONTH([@[Latest NAV Date]])<=6,6,IF(MONTH([@[Latest NAV Date]])<=9,9,12))),
+           IF(MONTH([@[Latest NAV Date]])<=3,31,IF(MONTH([@[Latest NAV Date]])<=6,30,IF(MONTH([@[Latest NAV Date]])<=9,30,31)))),
+      IF([@[Period Freq]]="Yearly",DATE(YEAR([@[Latest NAV Date]])+1,12,31),"")))
+```
+
+This formula now:
+1. References [@[Latest NAV Date]] for all date calculations
+2. Uses [@[Period Freq]] to check whether the period frequency is Monthly, Quarterly, or Yearly
+3. Calculates the next appropriate date based on the period frequency logic
+
+The formula will work within an Excel table, automatically adjusting as your data changes.
