@@ -1,3 +1,8 @@
+=LEFT([@[Latest 2 NAV per Share Date]],FIND(";",SUBSTITUTE([@[Latest 2 NAV per Share Date]],",",";"))-1)
+
+
+
+
 =SWITCH(
   [@[Period Freq]],
   
