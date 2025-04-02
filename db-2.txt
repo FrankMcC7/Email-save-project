@@ -1,21 +1,29 @@
 =SWITCH(
-    [@[Period Freq]],
-    
-    "Quarter", EOMONTH(
-        DATE(YEAR([@[Latest NAV Date]]), CHOOSE(INT((MONTH([@[Latest NAV Date]]) - 1)/3) + 1, 3, 6, 9, 12), 1),
-        0
+  [@[Period Freq]],
+  
+  "Quarter",
+    LET(
+      d, [@[Latest NAV Date]],
+      yr, YEAR(d),
+      m, MONTH(d),
+      q, INT((m-1)/3) + 1,
+      q_end, EOMONTH(DATE(yr, CHOOSE(q, 3,6,9,12), 1), 0),
+      prev_q_end, IF(q = 1, DATE(yr - 1, 12, 31), EOMONTH(DATE(yr, CHOOSE(q - 1, 3,6,9,12), 1), 0)),
+      IF(d < q_end, prev_q_end, q_end)
     ),
-    
-    "Year", DATE(
-        YEAR([@[Latest NAV Date]]) - IF(TEXT([@[Latest NAV Date]], "MM-DD") <> "12-31", 1, 0),
-        12, 31
+  
+  "Year",
+    DATE(
+      YEAR([@[Latest NAV Date]]) - IF(TEXT([@[Latest NAV Date]], "MM-DD") <> "12-31", 1, 0),
+      12,
+      31
     ),
-    
-    "Month", [@[Latest NAV Date]],
-    
-    [@[Latest NAV Date]]
+  
+  "Month",
+    [@[Latest NAV Date]],
+  
+  [@[Latest NAV Date]]
 )
-
 
 
 I'll update the formula to use "Period Freq" instead of "Fund Frequency" in the structured references:
