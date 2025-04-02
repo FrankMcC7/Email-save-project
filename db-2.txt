@@ -1,3 +1,23 @@
+=SWITCH(
+    [@[Period Freq]],
+    "Month", [@[Latest NAV Date]],
+    "Quarter", DATE(
+        YEAR([@[Latest NAV Date]]),
+        CHOOSE(
+            MIN(4, INT((MONTH([@[Latest NAV Date]])-1)/3)+1),
+            3, 6, 9, 12
+        ) - 2,
+        EOMONTH(DATE(YEAR([@[Latest NAV Date]]), CHOOSE(MIN(4, INT((MONTH([@[Latest NAV Date]])-1)/3)+1), 3, 6, 9, 12) - 2, 1), 0)
+    ),
+    "Year", DATE(YEAR([@[Latest NAV Date]]) - IF(MONTH([@[Latest NAV Date]]) < 12 OR (MONTH([@[Latest NAV Date]]) = 12 AND DAY([@[Latest NAV Date]]) < 31), 1, 0), 12, 31),
+    [@[Latest NAV Date]]
+)
+
+
+
+
+
+
 I'll update the formula to use "Period Freq" instead of "Fund Frequency" in the structured references:
 
 ```
