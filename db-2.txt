@@ -1,3 +1,23 @@
+=IF(
+   ISBLANK([@[Period]]),
+   "Year",
+   IF(
+      OR(ISNUMBER(SEARCH("Month", [@[Period]])), ISNUMBER(SEARCH("Biannual", [@[Period]]))),
+      "Month",
+      IF(
+         ISNUMBER(SEARCH("Quarter", [@[Period]])),
+         "Quarter",
+         IF(
+            ISNUMBER(SEARCH("Year", [@[Period]])),
+            "Year",
+            ""
+         )
+      )
+   )
+)
+
+
+
 =LEFT([@[Latest 2 NAV per Share Date]],FIND(";",SUBSTITUTE([@[Latest 2 NAV per Share Date]],",",";"))-1)
 
 
