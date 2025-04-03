@@ -1,5 +1,5 @@
 =IF(
-   ISBLANK([@[Period]]),
+   OR([@[Period]]="", ISBLANK([@[Period]])),
    "Year",
    IF(
       OR(ISNUMBER(SEARCH("Month", [@[Period]])), ISNUMBER(SEARCH("Biannual", [@[Period]]))),
