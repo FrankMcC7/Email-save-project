@@ -1145,25 +1145,36 @@ def process_pdf_comprehensive(pdf_path):
     
     results = []
     
-    # Step 2.5: Special treatment for Partners Group Key Figures format
-    if pdf_info["is_partners_group"] and pdf_info["has_key_figures_section"]:
-        # Use specialized extraction for Partners Group Key Figures
-        period1_label, period1_nav, period2_label, period2_nav = extract_partners_group_key_figures(pdf_path)
+    # PRIORITY 1: Always try Partners Group Key Figures approach first for ALL funds
+    print("Trying Partners Group Key Figures approach first...")
+    period1_label, period1_nav, period2_label, period2_nav = extract_partners_group_key_figures(pdf_path)
+    if period1_nav is not None and period2_nav is not None:
+        results.append({
+            'period1_label': period1_label,
+            'period1_nav': period1_nav,
+            'period2_label': period2_label,
+            'period2_nav': period2_nav,
+            'confidence': 0.98,  # Highest confidence for specialized extraction
+            'source': 'partners_group_key_figures'
+        })
+    else:
+        # PRIORITY 2: If Partners Group approach fails, try last resort
+        print("Partners Group approach failed, trying last resort...")
+        period1_label, period1_nav, period2_label, period2_nav = last_resort_extraction(pdf_path)
         if period1_nav is not None and period2_nav is not None:
             results.append({
                 'period1_label': period1_label,
                 'period1_nav': period1_nav,
                 'period2_label': period2_label,
                 'period2_nav': period2_nav,
-                'confidence': 0.98,  # Highest confidence for specialized extraction
-                'source': 'partners_group_key_figures'
+                'confidence': 0.95,  # High confidence as fallback
+                'source': 'last_resort'
             })
     
-    # Step 3: Multi-library text extraction
-    text = extract_text_multi_library(pdf_path)
-    
-    # Step 3.5: Try direct text scanning if we have key figures section
-    if pdf_info["has_key_figures_section"] and not results:
+    # If both priority methods failed, try remaining approaches
+    if not results:
+        # Step 3: Try direct text scanning 
+        text = extract_text_multi_library(pdf_path)
         period1_label, period1_nav, period2_label, period2_nav = scan_for_nav_row(text, fund_name)
         if period1_nav is not None and period2_nav is not None:
             results.append({
@@ -1174,56 +1185,44 @@ def process_pdf_comprehensive(pdf_path):
                 'confidence': 0.9,  # High confidence for direct text scan
                 'source': 'direct_text_scan'
             })
-    
-    # Step 4: Extract NAV using enhanced patterns from text
-    pattern_results = extract_nav_with_enhanced_patterns(text)
-    if pattern_results:
-        results.extend(pattern_results)
-    
-    # Step 5: Table-based extraction if the PDF likely has tables
-    if pdf_info["has_tables"]:
-        tables_data = extract_tables_multi_library(pdf_path)
-        table_results = extract_nav_from_tables(tables_data)
-        if table_results:
-            results.extend(table_results)
-    
-    # Step 6: If we have Key Figures section, use specialized approach
-    if pdf_info["has_key_figures_section"]:
-        # Use the original direct_table_extraction function
-        period1_label, period1_nav, period2_label, period2_nav = direct_table_extraction(pdf_path)
-        if period1_nav is not None and period2_nav is not None:
-            results.append({
-                'period1_label': period1_label,
-                'period1_nav': period1_nav,
-                'period2_label': period2_label,
-                'period2_nav': period2_nav,
-                'confidence': 0.85,  # High confidence for key figures
-                'source': 'key_figures'
-            })
-    
-    # Step 7: If all else fails, try the existing fallback methods
-    if not results:
-        # Use existing methods
-        period1_label, period1_nav, period2_label, period2_nav = scan_text_for_nav(pdf_path)
-        if period1_nav is not None and period2_nav is not None:
-            results.append({
-                'period1_label': period1_label,
-                'period1_nav': period1_nav,
-                'period2_label': period2_label,
-                'period2_nav': period2_nav,
-                'confidence': 0.6,
-                'source': 'scan_text'
-            })
-        else:
-            period1_label, period1_nav, period2_label, period2_nav = last_resort_extraction(pdf_path)
+        
+        # Step 4: Extract NAV using enhanced patterns from text
+        pattern_results = extract_nav_with_enhanced_patterns(text)
+        if pattern_results:
+            results.extend(pattern_results)
+        
+        # Step 5: Table-based extraction if the PDF likely has tables
+        if pdf_info["has_tables"]:
+            tables_data = extract_tables_multi_library(pdf_path)
+            table_results = extract_nav_from_tables(tables_data)
+            if table_results:
+                results.extend(table_results)
+        
+        # Step 6: If we have Key Figures section, use specialized approach
+        if pdf_info["has_key_figures_section"]:
+            # Use the original direct_table_extraction function
+            period1_label, period1_nav, period2_label, period2_nav = direct_table_extraction(pdf_path)
             if period1_nav is not None and period2_nav is not None:
                 results.append({
                     'period1_label': period1_label,
                     'period1_nav': period1_nav,
                     'period2_label': period2_label,
                     'period2_nav': period2_nav,
-                    'confidence': 0.5,
-                    'source': 'last_resort'
+                    'confidence': 0.85,  # High confidence for key figures
+                    'source': 'key_figures'
+                })
+        
+        # Step 7: If all else fails, try text scanning as final fallback
+        if not results:
+            period1_label, period1_nav, period2_label, period2_nav = scan_text_for_nav(pdf_path)
+            if period1_nav is not None and period2_nav is not None:
+                results.append({
+                    'period1_label': period1_label,
+                    'period1_nav': period1_nav,
+                    'period2_label': period2_label,
+                    'period2_nav': period2_nav,
+                    'confidence': 0.6,
+                    'source': 'scan_text'
                 })
     
     # Step 8: Select best result based on confidence
