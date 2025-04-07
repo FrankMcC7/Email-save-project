@@ -1002,7 +1002,26 @@ def scan_for_nav_row(page_text, fund_name):
         print("\nTrying direct text scanning for NAV rows...")
         lines = page_text.split('\n')
         
-        # First look for date headers in the text
+        # First log all lines that might contain NAV indicators - this helps with debugging
+        nav_indicators = ["net asset value", "net asset", "nav ", " nav", "asset value"]
+        
+        print("Searching for lines containing NAV indicators...")
+        for i, line in enumerate(lines):
+            for indicator in nav_indicators:
+                if indicator in line.lower():
+                    print(f"Potential NAV line {i}: {line}")
+                    # Try to extract numbers directly from this line
+                    number_matches = re.findall(r"[\d',\.]+", line)
+                    values = []
+                    for num_str in number_matches:
+                        value = clean_number(num_str)
+                        if value is not None:
+                            values.append(value)
+                    
+                    if len(values) >= 2:
+                        print(f"Found values directly from line: {values}")
+        
+        # Look for date headers in the text
         date_lines = []
         for i, line in enumerate(lines):
             if (re.search(r'\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}', line) or
@@ -1023,20 +1042,22 @@ def scan_for_nav_row(page_text, fund_name):
                 if month_matches:
                     dates = month_matches
             
-            # If we found dates, look for NAV rows within the next 15 lines
+            # If we found dates, look for NAV rows within the next 20 lines
             if dates and len(dates) >= 2:
                 print(f"Found date line with dates: {dates}")
                 
                 # Look for NAV rows after the date line
-                for i in range(date_idx + 1, min(date_idx + 15, len(lines))):
-                    line = lines[i]
+                for i in range(date_idx + 1, min(date_idx + 20, len(lines))):
+                    line = lines[i].lower()
                     
-                    # Check if this line might be the NAV row
-                    if "net asset value" in line.lower() or "nav" in line.lower().split():
-                        print(f"Found potential NAV line: {line}")
+                    # Use a more flexible check for NAV indicators
+                    has_nav_indicator = any(indicator in line for indicator in nav_indicators)
+                    
+                    if has_nav_indicator:
+                        print(f"Found potential NAV line after dates: {lines[i]}")
                         
                         # Extract all numbers from this line
-                        number_matches = re.findall(r"[\d',\.]+", line)
+                        number_matches = re.findall(r"[\d',\.]+", lines[i])
                         values = []
                         
                         for num_str in number_matches:
@@ -1049,34 +1070,61 @@ def scan_for_nav_row(page_text, fund_name):
                             print(f"Extracted values from text: {values}")
                             return dates[0], values[0], dates[1], values[1]
         
-        # If we haven't found anything yet, try another approach
-        # Look for "Net asset value" or "NAV" in any line
+        # If we haven't found anything yet, try one more approach: scan for "net asset value" row and extract ALL numbers from it
         for i, line in enumerate(lines):
-            if "net asset value" in line.lower() or "nav" in line.lower().split():
-                # Found a potential NAV line
-                print(f"Found potential NAV line through direct search: {line}")
-                
-                # Extract numbers from this line
+            line_lower = line.lower()
+            
+            # Look for any line that might contain NAV indication
+            is_nav_line = False
+            for indicator in nav_indicators:
+                if indicator in line_lower:
+                    is_nav_line = True
+                    break
+                    
+            if is_nav_line:
+                # Found a potential NAV line - extract ALL numbers from it
                 number_matches = re.findall(r"[\d',\.]+", line)
                 values = []
                 
                 for num_str in number_matches:
                     value = clean_number(num_str)
-                    if value is not None:
+                    if value is not None and value > 1000:  # NAV values are typically large
                         values.append(value)
                 
                 # If we found at least 2 values
                 if len(values) >= 2:
-                    # Look for dates in nearby lines
-                    date_context = "\n".join(lines[max(0, i-5):min(len(lines), i+5)])
+                    print(f"Found numeric values in potential NAV line: {values}")
+                    
+                    # Look for dates in the 10 lines before this one
+                    date_context = "\n".join(lines[max(0, i-10):i])
                     date_matches = re.findall(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b|\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b', date_context, re.IGNORECASE)
+                    
+                    # Also look for dates in header format like "30 September 2024"
+                    if not date_matches:
+                        header_date_patterns = [
+                            r'\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b',
+                            r'\b\d{2}(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{4}\b',
+                            r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b'
+                        ]
+                        
+                        for pattern in header_date_patterns:
+                            matches = re.findall(pattern, date_context, re.IGNORECASE)
+                            if matches:
+                                date_matches.extend(matches)
                     
                     if len(date_matches) >= 2:
                         print(f"Extracted values with dates from context: {values}, {date_matches}")
                         return date_matches[0], values[0], date_matches[1], values[1]
                     else:
-                        print(f"Extracted values but no dates found: {values}")
-                        return "Period 1", values[0], "Period 2", values[1]
+                        # If no dates found in previous lines, look in the entire document
+                        date_matches = re.findall(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b|\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b', page_text, re.IGNORECASE)
+                        
+                        if len(date_matches) >= 2:
+                            print(f"Extracted values with dates from full document: {values}, {date_matches[:2]}")
+                            return date_matches[0], values[0], date_matches[1], values[1]
+                        else:
+                            print(f"Extracted values but no dates found: {values}")
+                            return "Period 1", values[0], "Period 2", values[1]
     except Exception as e:
         print(f"Error in direct text scanning: {str(e)}")
     
