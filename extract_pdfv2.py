@@ -285,13 +285,17 @@ def clean_number(value_str):
             if "%" in value_str:
                 return None
             
-            # Skip non-numeric text
+            # Skip non-numeric text or extremely short text
             if len(value_str.strip()) == 0 or value_str.strip().isalpha():
+                return None
+            
+            # Check if the string contains any digits at all
+            if not any(c.isdigit() for c in value_str):
                 return None
             
             # Special handling for Partners Group format with apostrophes (e.g., 595'446'138)
             # First check if it matches the pattern
-            if re.match(r'\d+(?:\'\d+)+', value_str.strip()):
+            if "'" in value_str and re.search(r'\d+(?:\'\d+)+', value_str.strip()):
                 # Simply remove all apostrophes
                 cleaned = value_str.replace("'", "")
                 try:
@@ -302,10 +306,6 @@ def clean_number(value_str):
             # Standard cleaning for other formats
             cleaned = value_str.replace("'", "").replace(",", "").replace(" ", "").replace("x", "")
             
-            # Handle cases where there's no digits
-            if not any(c.isdigit() for c in cleaned):
-                return None
-                
             # Handle any remaining non-numeric characters (except decimal point)
             final_value = ""
             decimal_found = False
@@ -317,12 +317,10 @@ def clean_number(value_str):
                     decimal_found = True
                     
             if final_value:
-                # Convert to float with additional validation
+                # Convert to float
                 try:
                     value = float(final_value)
-                    
-                    # For NAV values which can be in various ranges, don't be too strict
-                    # Some funds have NAV values in hundreds, others in millions
+                    # Don't filter by size - some NAV values can be small
                     return value
                 except:
                     pass
@@ -800,7 +798,7 @@ def extract_partners_group_key_figures(pdf_path):
     """
     Special extraction function for Partners Group Key Figures tables.
     This function is specifically designed to handle tables with:
-    - Dates as column headers
+    - Dates as column headers (both formats: "30 September 2024" and "30.09.2024")
     - "Net asset value" as a row label
     - NAV values at the intersection
     """
@@ -812,125 +810,105 @@ def extract_partners_group_key_figures(pdf_path):
                 page_text = page.extract_text() or ""
                 
                 if "key figures" in page_text.lower():
-                    # First try with text-based strategy which works well for Partners Group
-                    table_settings = {'vertical_strategy': 'text', 'horizontal_strategy': 'text'}
-                    
-                    try:
-                        tables = page.extract_tables(table_settings)
-                        
-                        for table in tables:
-                            if not table or len(table) < 5:  # Key figures tables usually have several rows
-                                continue
-                            
-                            # First identify the date header row
-                            date_header_row = None
-                            date_header_idx = -1
-                            
-                            for i, row in enumerate(table[:5]):  # Check first 5 rows for header
-                                if not row or len(row) < 3:
-                                    continue
-                                
-                                row_text = " ".join([str(cell).strip() if cell is not None else "" for cell in row])
-                                # Look for month names or date patterns
-                                if ("september" in row_text.lower() or "december" in row_text.lower() or 
-                                    "march" in row_text.lower() or "june" in row_text.lower() or
-                                    re.search(r'\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}', row_text)):
-                                    date_header_row = row
-                                    date_header_idx = i
-                                    break
-                            
-                            # If we found date headers, now look for the NAV row
-                            if date_header_row is not None:
-                                # If date headers are found, collect them
-                                date_headers = []
-                                for cell in date_header_row[1:]:  # Skip first cell (usually empty or label)
-                                    if cell is not None and str(cell).strip():
-                                        date_headers.append(str(cell).strip())
-                                
-                                # Now find the "Net asset value" row
-                                for row_idx, row in enumerate(table[date_header_idx+1:], date_header_idx+1):
-                                    if not row or len(row) < len(date_header_row):
-                                        continue
-                                    
-                                    first_cell = str(row[0]).strip().lower() if row[0] is not None else ""
-                                    
-                                    # Look for the exact "Net asset value" row label
-                                    if "net asset value" in first_cell or first_cell == "nav":
-                                        # Get values from this row (skipping the first cell which is the label)
-                                        values = []
-                                        for i in range(1, min(len(row), len(date_header_row))):
-                                            if row[i] is not None:
-                                                value = clean_number(str(row[i]))
-                                                if value is not None:
-                                                    values.append((i, value))
-                                        
-                                        # Need at least 2 values
-                                        if len(values) >= 2:
-                                            idx1, value1 = values[0]
-                                            idx2, value2 = values[1]
-                                            
-                                            header1 = str(date_header_row[idx1]).strip() if idx1 < len(date_header_row) and date_header_row[idx1] is not None else "Period 1"
-                                            header2 = str(date_header_row[idx2]).strip() if idx2 < len(date_header_row) and date_header_row[idx2] is not None else "Period 2"
-                                            
-                                            print(f"Found NAV: {header1}: {value1}, {header2}: {value2}")
-                                            return header1, value1, header2, value2
-                    except Exception as table_err:
-                        print(f"Error extracting Partners Group table: {str(table_err)}")
-                    
-                    # If text-based extraction failed, try other table extraction settings
-                    for settings in [
+                    # Try different table extraction settings
+                    for table_settings in [
+                        {'vertical_strategy': 'text', 'horizontal_strategy': 'text'},
                         {'vertical_strategy': 'lines', 'horizontal_strategy': 'text'},
                         {'vertical_strategy': 'text', 'horizontal_strategy': 'lines'},
                         {'vertical_strategy': 'lines', 'horizontal_strategy': 'lines'}
                     ]:
                         try:
-                            tables = page.extract_tables(settings)
+                            tables = page.extract_tables(table_settings)
                             
                             for table in tables:
-                                if not table or len(table) < 5:
+                                if not table or len(table) < 5:  # Key figures tables usually have several rows
                                     continue
                                 
-                                # Look for date header row first
+                                # First identify the date header row
                                 date_header_row = None
                                 date_header_idx = -1
                                 
-                                for i, row in enumerate(table[:5]):
+                                # Debug output for headers
+                                print("Checking table headers...")
+                                
+                                for i, row in enumerate(table[:5]):  # Check first 5 rows for header
                                     if not row or len(row) < 3:
                                         continue
                                     
+                                    # Convert row to text for debugging
                                     row_text = " ".join([str(cell).strip() if cell is not None else "" for cell in row])
-                                    if ("september" in row_text.lower() or "december" in row_text.lower() or 
-                                        "march" in row_text.lower() or "june" in row_text.lower() or
-                                        re.search(r'\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}', row_text)):
+                                    print(f"Row {i}: {row_text}")
+                                    
+                                    # Check cells individually for date formats
+                                    has_dates = False
+                                    date_cells = []
+                                    
+                                    for cell in row:
+                                        if cell is not None:
+                                            cell_text = str(cell).strip()
+                                            
+                                            # Check for various date formats
+                                            if (re.search(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b', cell_text) or
+                                                re.search(r'\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b', cell_text, re.IGNORECASE) or
+                                                re.search(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b', cell_text, re.IGNORECASE) or
+                                                re.search(r'\b\d{2}\.\d{2}\.\d{4}\b', cell_text)):
+                                                has_dates = True
+                                                date_cells.append(cell_text)
+                                    
+                                    if has_dates:
+                                        print(f"Found date header row {i} with dates: {date_cells}")
                                         date_header_row = row
                                         date_header_idx = i
                                         break
                                 
+                                # If we found date headers, now look for the NAV row
                                 if date_header_row is not None:
-                                    # Now look for NAV row
-                                    for row in table[date_header_idx+1:]:
-                                        if not row or len(row) < len(date_header_row):
+                                    print("Found date header row, now looking for NAV row...")
+                                    
+                                    # Now look specifically for the "Net asset value" row
+                                    nav_row = None
+                                    
+                                    for row_idx, row in enumerate(table):
+                                        if not row or len(row) < 3:
                                             continue
                                         
+                                        # Check the first cell explicitly
                                         first_cell = str(row[0]).strip().lower() if row[0] is not None else ""
-                                        if "net asset value" in first_cell or first_cell == "nav":
-                                            # Found NAV row, extract values
+                                        print(f"Checking row {row_idx} first cell: '{first_cell}'")
+                                        
+                                        # Very explicit match for Net asset value or NAV
+                                        if (first_cell == "net asset value" or 
+                                            "net asset value" in first_cell or 
+                                            first_cell == "nav" or 
+                                            (len(first_cell) < 20 and "nav" in first_cell.split())):
+                                            
+                                            print(f"Found NAV row at index {row_idx}")
+                                            nav_row = row
+                                            
+                                            # Extract values directly from this row
                                             values = []
-                                            for i in range(1, min(len(row), len(date_header_row))):
+                                            for i in range(1, len(row)):
                                                 if row[i] is not None:
-                                                    value = clean_number(str(row[i]))
+                                                    cell_text = str(row[i]).strip()
+                                                    print(f"Nav row cell {i}: '{cell_text}'")
+                                                    value = clean_number(cell_text)
                                                     if value is not None:
+                                                        print(f"Extracted value: {value}")
                                                         values.append((i, value))
                                             
+                                            # Need at least 2 values
                                             if len(values) >= 2:
                                                 idx1, value1 = values[0]
                                                 idx2, value2 = values[1]
                                                 
+                                                # Get corresponding headers directly
                                                 header1 = str(date_header_row[idx1]).strip() if idx1 < len(date_header_row) and date_header_row[idx1] is not None else "Period 1"
                                                 header2 = str(date_header_row[idx2]).strip() if idx2 < len(date_header_row) and date_header_row[idx2] is not None else "Period 2"
                                                 
+                                                print(f"EXTRACTION SUCCESSFUL - {header1}: {value1}, {header2}: {value2}")
                                                 return header1, value1, header2, value2
-                        except:
+                        except Exception as e:
+                            print(f"Error processing table: {str(e)}")
                             continue
     except Exception as e:
         print(f"Error in Partners Group key figures extraction: {str(e)}")
