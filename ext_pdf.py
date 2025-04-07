@@ -346,76 +346,173 @@ def find_nav_in_tables(tables):
     
     return None, None, None, None
 
-def extract_values_from_rows(header_row, nav_row):
+def extract_nav_format1(tables, page_text):
     """
-    Extract values from the NAV row and corresponding headers.
+    Extract NAV based on format 1: Table with month names in header
+    Like in the first sample image with "30 September 2024" and "31 December 2024"
     """
-    # Clean and prepare the header row
-    header_values = []
-    for item in header_row:
-        if item is not None:
-            header_values.append(str(item).strip())
-        else:
-            header_values.append("")
-    
-    # Clean and prepare the NAV row
-    nav_values = []
-    for item in nav_row:
-        if item is not None:
-            nav_values.append(str(item).strip())
-        else:
-            nav_values.append("")
-    
-    # Find the NAV label column
-    nav_label_idx = None
-    for idx, value in enumerate(nav_values):
-        if 'net asset value' in value.lower() or 'nav' == value.lower():
-            nav_label_idx = idx
-            break
-    
-    if nav_label_idx is None:
-        # Try alternative approach if we didn't find an exact match
-        for idx, value in enumerate(nav_values):
-            if 'net' in value.lower() and 'asset' in value.lower():
-                nav_label_idx = idx
-                break
-    
-    if nav_label_idx is None:
+    # Check if the page contains month names in headers
+    month_pattern = r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\b'
+    if not re.search(month_pattern, page_text, re.IGNORECASE):
         return None, None, None, None
-    
-    # Extract the numeric values from columns to the right of the label
-    numeric_values = []
-    numeric_indices = []
-    
-    for idx in range(nav_label_idx + 1, len(nav_values)):
-        value = nav_values[idx]
-        # Skip empty cells
-        if not value:
+        
+    for table in tables:
+        if not table or len(table) < 4:  # Need enough rows
             continue
             
-        # Try to clean and convert the value
-        try:
-            numeric_value = clean_and_convert_value(value)
-            if numeric_value is not None:
-                numeric_values.append(numeric_value)
-                numeric_indices.append(idx)
-        except:
-            # If conversion fails, it's probably not a numeric value
-            pass
-    
-    # If we found at least two numeric values
-    if len(numeric_values) >= 2:
-        # Extract corresponding headers
-        period1_label = header_values[numeric_indices[0]] if numeric_indices[0] < len(header_values) else "Period 1"
-        period2_label = header_values[numeric_indices[1]] if numeric_indices[1] < len(header_values) else "Period 2"
+        # Look for header row with month names
+        header_row = None
+        header_row_idx = -1
         
-        # Use default labels if headers are empty
-        if not period1_label:
-            period1_label = "Period 1"
-        if not period2_label:
-            period2_label = "Period 2"
+        for row_idx, row in enumerate(table):
+            if len(row) < 3:  # Need at least 3 columns
+                continue
+                
+            row_text = " ".join([str(cell).strip() if cell is not None else "" for cell in row]).lower()
             
-        return period1_label, numeric_values[0], period2_label, numeric_values[1]
+            # Check if this row contains month names
+            if re.search(month_pattern, row_text, re.IGNORECASE):
+                header_row = row
+                header_row_idx = row_idx
+                break
+        
+        if header_row is None:
+            continue
+            
+        # Now look for "Net asset value" row below the header
+        for row_idx in range(header_row_idx + 1, len(table)):
+            row = table[row_idx]
+            if len(row) < 3:  # Need at least 3 columns
+                continue
+                
+            # Check first column for "Net asset value"
+            first_col = str(row[0]).strip().lower() if row[0] is not None else ""
+            
+            if "net asset value" in first_col or "net asset" in first_col:
+                # Found the NAV row - extract values from columns 1 and 2
+                values = []
+                
+                for col_idx in range(1, min(len(row), 5)):  # Check first few columns
+                    if row[col_idx] is not None:
+                        cell_value = str(row[col_idx]).strip()
+                        nav_value = clean_and_convert_value(cell_value)
+                        if nav_value is not None:
+                            values.append((col_idx, nav_value))
+                
+                if len(values) >= 2:
+                    # Get the corresponding headers
+                    idx1, val1 = values[0]
+                    idx2, val2 = values[1]
+                    
+                    header1 = str(header_row[idx1]).strip() if idx1 < len(header_row) and header_row[idx1] is not None else "Period 1"
+                    header2 = str(header_row[idx2]).strip() if idx2 < len(header_row) and header_row[idx2] is not None else "Period 2"
+                    
+                    return header1, val1, header2, val2
+                    
+    return None, None, None, None
+
+def extract_nav_format2(tables, page_text):
+    """
+    Extract NAV based on format 2: Table with numeric dates
+    Like in the second sample image with "30.09.2024" and "31.12.2024"
+    """
+    # Check if the page contains numeric dates
+    numeric_date_pattern = r'\d{2}[\.\/]\d{2}[\.\/]\d{4}'
+    if not re.search(numeric_date_pattern, page_text):
+        return None, None, None, None
+        
+    for table in tables:
+        if not table or len(table) < 4:  # Need enough rows
+            continue
+            
+        # Look for header row with numeric dates
+        header_row = None
+        header_row_idx = -1
+        
+        for row_idx, row in enumerate(table):
+            if len(row) < 3:  # Need at least 3 columns
+                continue
+                
+            row_text = " ".join([str(cell).strip() if cell is not None else "" for cell in row])
+            
+            # Check if this row contains numeric dates (at least 2)
+            date_matches = re.findall(numeric_date_pattern, row_text)
+            if len(date_matches) >= 2:
+                header_row = row
+                header_row_idx = row_idx
+                break
+        
+        if header_row is None:
+            continue
+            
+        # Now look for "Net asset value" row below the header
+        for row_idx in range(header_row_idx + 1, len(table)):
+            row = table[row_idx]
+            if len(row) < 3:  # Need at least 3 columns
+                continue
+                
+            # Check first column for "Net asset value"
+            first_col = str(row[0]).strip().lower() if row[0] is not None else ""
+            
+            if "net asset value" in first_col or "net asset" in first_col:
+                # Found the NAV row - extract values from columns 1 and 2
+                values = []
+                
+                for col_idx in range(1, min(len(row), 5)):  # Check first few columns
+                    if row[col_idx] is not None:
+                        cell_value = str(row[col_idx]).strip()
+                        nav_value = clean_and_convert_value(cell_value)
+                        if nav_value is not None:
+                            values.append((col_idx, nav_value))
+                
+                if len(values) >= 2:
+                    # Get the corresponding headers
+                    idx1, val1 = values[0]
+                    idx2, val2 = values[1]
+                    
+                    header1 = str(header_row[idx1]).strip() if idx1 < len(header_row) and header_row[idx1] is not None else "Period 1"
+                    header2 = str(header_row[idx2]).strip() if idx2 < len(header_row) and header_row[idx2] is not None else "Period 2"
+                    
+                    return header1, val1, header2, val2
+                    
+    return None, None, None, None
+
+def extract_nav_from_text(text):
+    """
+    Fallback method to extract NAV values from text when table approaches fail.
+    """
+    # Find period labels (dates)
+    period_labels = []
+    
+    # Look for different date formats
+    date_patterns = [
+        r"(\d{2}\.\d{2}\.\d{4})",  # DD.MM.YYYY
+        r"(\d{2}/\d{2}/\d{4})",    # DD/MM/YYYY
+        r"(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})" # DD Month YYYY
+    ]
+    
+    for pattern in date_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        period_labels.extend(matches)
+    
+    # Look for "Net asset value" and extract numbers
+    nav_patterns = [
+        r"[Nn]et\s+asset\s+value.*?(\d[\d\s',\.]*)\s+(\d[\d\s',\.]*)",
+        r"[Nn]et\s+asset.*?(\d[\d\s',\.]*)\s+(\d[\d\s',\.]*)",
+        r"NAV.*?(\d[\d\s',\.]*)\s+(\d[\d\s',\.]*)"
+    ]
+    
+    for pattern in nav_patterns:
+        match = re.search(pattern, text)
+        if match:
+            period1_nav = clean_and_convert_value(match.group(1))
+            period2_nav = clean_and_convert_value(match.group(2))
+            
+            # Use period labels if found
+            if len(period_labels) >= 2:
+                return period_labels[0], period1_nav, period_labels[1], period2_nav
+            else:
+                return "Period 1", period1_nav, "Period 2", period2_nav
     
     return None, None, None, None
 
@@ -465,45 +562,35 @@ def clean_and_convert_value(value_str):
 def process_pdf(pdf_path):
     """
     Process a single PDF file to extract fund name and NAV values.
+    Using the two specific format approaches shown in the sample images.
     """
     try:
         # Extract fund name from the third line of the first page
         fund_name = extract_fund_name(pdf_path)
         
-        # Extract tables starting from page 2
+        # Extract tables from PDF starting from page 2
         tables = extract_tables_from_pdf(pdf_path, start_page=1)
         
-        # Find NAV values in the tables
-        period1_label, period1_nav, period2_label, period2_nav = find_nav_in_tables(tables)
+        # Get page text from page 2 for pattern matching
+        page_text = extract_text_from_pdf(pdf_path, start_page=1, max_pages=1)
         
-        # If we couldn't find NAV values in tables, try text-based approach as fallback
+        # Try format 1: Table with month names in header (e.g., "30 September 2024")
+        # As shown in the first sample image
+        period1_label, period1_nav, period2_label, period2_nav = extract_nav_format1(tables, page_text)
+        
+        # If format 1 failed, try format 2: Table with numeric dates (e.g., "30.09.2024")
+        # As shown in the second sample image
         if period1_nav is None or period2_nav is None:
-            # Extract text from page 2 onwards
-            text_from_page2 = extract_text_from_pdf(pdf_path, start_page=1)
+            period1_label, period1_nav, period2_label, period2_nav = extract_nav_format2(tables, page_text)
             
-            # Look for NAV values in the text
-            nav_match = re.search(r"[Nn]et\s+[Aa]sset\s+[Vv]alue.*?(\d[\d\s',\.]*)\s+(\d[\d\s',\.]*)", text_from_page2)
-            if nav_match:
-                period1_nav = clean_and_convert_value(nav_match.group(1))
-                period2_nav = clean_and_convert_value(nav_match.group(2))
-                
-                # Try to find period labels in various formats
-                
-                # Standard numeric date format
-                date_match_numeric = re.findall(r"(\d{2}[\.\/]\d{2}[\.\/]\d{4})", text_from_page2[:1000])
-                
-                # Month name format (30. September 2024 or 30 December 2024)
-                date_match_text = re.findall(r"(\d{1,2}\.?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})", text_from_page2[:1000], re.IGNORECASE)
-                
-                # Combine all found dates
-                all_dates = date_match_numeric + date_match_text
-                
-                if len(all_dates) >= 2:
-                    period1_label = all_dates[0]
-                    period2_label = all_dates[1]
-                else:
-                    period1_label = "Period 1"
-                    period2_label = "Period 2"
+        # If both specific formats failed, fall back to general extraction
+        if period1_nav is None or period2_nav is None:
+            # This will be our fallback for any other format
+            period1_label, period1_nav, period2_label, period2_nav = find_nav_in_tables(tables)
+        
+        # If all table approaches failed, try text-based extraction as final fallback
+        if period1_nav is None or period2_nav is None:
+            period1_label, period1_nav, period2_label, period2_nav = extract_nav_from_text(page_text)
         
         return {
             'Fund Name': fund_name,
