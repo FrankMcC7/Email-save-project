@@ -7,113 +7,163 @@ from openpyxl.styles import Font, Alignment, PatternFill
 import glob
 from datetime import datetime
 
-def extract_fund_name(text):
+def extract_fund_name(pdf_path):
     """
-    Extract the fund name from the PDF text.
-    This function assumes the fund name typically appears early in the document.
-    You may need to adjust the regex pattern based on the actual PDF structure.
+    Extract the fund name from the third line of the first page.
     """
-    # Pattern to match common fund name formats
-    # This is a generic pattern and might need adjustment based on your specific PDFs
-    patterns = [
-        r"(?:Fund|FUND)[\s:]+([A-Za-z0-9\s\-\.&]+(?:Fund|FUND))",
-        r"([A-Za-z0-9\s\-\.&]+(?:Fund|FUND))",
-        r"Report for\s+([A-Za-z0-9\s\-\.&]+)",
-        r"([A-Za-z0-9\s\-\.&]+)\s+Performance Report"
-    ]
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            if len(pdf.pages) > 0:
+                first_page_text = pdf.pages[0].extract_text()
+                if first_page_text:
+                    # Split text by newlines and get the third line if available
+                    lines = first_page_text.split('\n')
+                    if len(lines) >= 3:
+                        return lines[2].strip()
+                    elif len(lines) > 0:
+                        # If third line isn't available, look for line with 'Fund' or 'SICAV' in first 5 lines
+                        for i in range(min(5, len(lines))):
+                            if 'Fund' in lines[i] or 'SICAV' in lines[i] or 'S.C.A' in lines[i]:
+                                return lines[i].strip()
+        
+        # Fallback to extracting text from first few pages and looking for fund name patterns
+        all_text = extract_text_from_pdf(pdf_path, max_pages=3)
+        fund_patterns = [
+            r"([A-Za-z0-9\s\-\.&]+(?:S\.C\.A\.|SICAV|Fund))",
+            r"([A-Za-z]+\s+[A-Za-z]+\s+[A-Za-z]+(?:\s+[IVX]+)?)"
+        ]
+        
+        for pattern in fund_patterns:
+            match = re.search(pattern, all_text)
+            if match:
+                return match.group(1).strip()
+    except Exception as e:
+        print(f"Error extracting fund name: {str(e)}")
     
-    for pattern in patterns:
-        matches = re.search(pattern, text[:1000])  # Look only in first 1000 chars
-        if matches:
-            return matches.group(1).strip()
-    
-    return "Unknown Fund"  # Default if no match found
+    return "Unknown Fund"
+
+def extract_text_from_pdf(pdf_path, max_pages=None):
+    """
+    Extract text from PDF, optionally limiting to max_pages.
+    """
+    try:
+        all_text = ""
+        with pdfplumber.open(pdf_path) as pdf:
+            pages_to_extract = pdf.pages if max_pages is None else pdf.pages[:max_pages]
+            for page in pages_to_extract:
+                page_text = page.extract_text() or ""
+                all_text += page_text + "\n"
+        return all_text
+    except Exception as e:
+        print(f"Error extracting text from PDF: {str(e)}")
+        return ""
 
 def extract_nav_values(text):
     """
-    Extract Net Asset Value figures for both periods from the Key Figure table.
-    This function looks for "Net Asset Value" and extracts the associated values.
+    Find 'Net Asset Value' and extract values from the surrounding table structure.
     """
-    # First find the Key Figure table section
-    table_pattern = r"Key (?:Figure|Figures|FIGURE|FIGURES).*?(?:Table|TABLE)"
-    table_match = re.search(table_pattern, text, re.DOTALL | re.IGNORECASE)
+    # First, try to find the exact "Net Asset Value" term
+    nav_patterns = [
+        r"Net\s+Asset\s+Value",
+        r"Net\s+asset\s+value",
+        r"NAV"
+    ]
     
-    if not table_match:
-        # If we can't find a specific table header, search for Net Asset Value directly
-        nav_pattern = r"Net\s+Asset\s+Value.*?(?:[\d,\.]+)"
-        section_text = text
-    else:
-        # If we found the table section, limit our search to that area plus some context
-        start_pos = max(0, table_match.start() - 100)
-        end_pos = min(len(text), table_match.end() + 1000)  # Look 1000 chars after table header
-        section_text = text[start_pos:end_pos]
+    # Search for the term using different patterns
+    nav_section = None
+    for pattern in nav_patterns:
+        nav_match = re.search(pattern, text, re.IGNORECASE)
+        if nav_match:
+            # Extract a section of text around the match
+            start_pos = max(0, nav_match.start() - 100)
+            end_pos = min(len(text), nav_match.end() + 300)  # Look 300 chars after the term
+            nav_section = text[start_pos:end_pos]
+            break
     
-    # Find the Net Asset Value line
-    nav_pattern = r"Net\s+Asset\s+Value[^\n\d]*([\d,\.]+)[^\n\d]*([\d,\.]+)"
-    nav_match = re.search(nav_pattern, section_text, re.DOTALL | re.IGNORECASE)
+    if not nav_section:
+        return None, None
     
-    if nav_match:
-        # Extract and clean the values
-        period1_value = nav_match.group(1).replace(',', '')
-        period2_value = nav_match.group(2).replace(',', '')
+    # Now extract values from the NAV section
+    # Look for patterns of numbers after the NAV term
+    value_patterns = [
+        # Pattern for values with apostrophes like 566'445'652
+        r"Net\s+[Aa]sset\s+[Vv]alue.*?(\d[\d\s',\.]*)\s+(\d[\d\s',\.]*)",
         
-        # Convert to numeric values
+        # Pattern for values in standard format
+        r"Net\s+[Aa]sset\s+[Vv]alue.*?(\d[\d\s,\.]*)\s+(\d[\d\s,\.]*)",
+        
+        # More generic pattern for any numbers near NAV
+        r"Net\s+[Aa]sset\s+[Vv]alue.*?(\d[\d,\.']+).*?(\d[\d,\.']+)"
+    ]
+    
+    for pattern in value_patterns:
+        values_match = re.search(pattern, nav_section, re.DOTALL)
+        if values_match:
+            try:
+                # Clean the values (remove commas, apostrophes, spaces)
+                period1_value = values_match.group(1).replace(',', '').replace('\'', '').replace(' ', '')
+                period2_value = values_match.group(2).replace(',', '').replace('\'', '').replace(' ', '')
+                
+                # Convert to float
+                period1_float = float(period1_value)
+                period2_float = float(period2_value)
+                
+                return period1_float, period2_float
+            except (ValueError, IndexError):
+                continue
+    
+    # If table-based patterns fail, try to find any numbers near "Net Asset Value"
+    number_pattern = r"\d[\d,\.\'']*"
+    numbers = re.findall(number_pattern, nav_section)
+    
+    if len(numbers) >= 2:
         try:
-            period1_value = float(period1_value)
-            period2_value = float(period2_value)
-            return period1_value, period2_value
+            # Clean the values
+            period1_value = numbers[0].replace(',', '').replace('\'', '').replace(' ', '')
+            period2_value = numbers[1].replace(',', '').replace('\'', '').replace(' ', '')
+            
+            # Convert to float
+            period1_float = float(period1_value)
+            period2_float = float(period2_value)
+            
+            return period1_float, period2_float
         except ValueError:
             pass
     
-    # Alternative approach with more flexible pattern
-    nav_pattern2 = r"Net\s+Asset\s+Value.*?(\d[\d,\.]+).*?(\d[\d,\.]+)"
-    nav_match2 = re.search(nav_pattern2, section_text, re.DOTALL | re.IGNORECASE)
-    
-    if nav_match2:
-        # Extract and clean the values
-        period1_value = nav_match2.group(1).replace(',', '')
-        period2_value = nav_match2.group(2).replace(',', '')
-        
-        # Convert to numeric values
-        try:
-            period1_value = float(period1_value)
-            period2_value = float(period2_value)
-            return period1_value, period2_value
-        except ValueError:
-            pass
-    
-    return None, None  # Return None if we couldn't find the values
+    return None, None
 
 def extract_period_labels(text):
     """
-    Extract the period labels from the document.
-    This function assumes period labels would be near the NAV values or in the header.
+    Extract period labels by identifying dates near the NAV values.
     """
-    # Pattern to match dates in various formats
-    date_pattern = r"(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,.-]+\d{1,2}[\s,.-]+\d{2,4}|\d{1,2}[\s,.-]+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s,.-]+\d{2,4}|\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2})"
+    # Look for date patterns in the text
+    date_patterns = [
+        # DD.MM.YYYY format (e.g., 30.09.2024)
+        r"(\d{2}\.\d{2}\.\d{4})",
+        
+        # MM/DD/YYYY or DD/MM/YYYY format
+        r"(\d{1,2}/\d{1,2}/\d{4})",
+        
+        # Quarter format (e.g., Q4 2024)
+        r"(Q[1-4]\s+\d{4})",
+        
+        # Month and year format
+        r"([A-Za-z]+\s+\d{4})"
+    ]
     
-    # Find dates in the document
-    dates = re.findall(date_pattern, text, re.IGNORECASE)
+    for pattern in date_patterns:
+        dates = re.findall(pattern, text)
+        if len(dates) >= 2:
+            return dates[0], dates[1]
     
-    # If we found at least two dates, use those as period labels
-    if len(dates) >= 2:
-        return dates[0], dates[1]
+    # If no specific dates found, look for a report period
+    period_pattern = r"(?:period|report).*?(\d{4}).*?(?:to|-).*?(\d{4})"
+    period_match = re.search(period_pattern, text, re.IGNORECASE)
     
-    # Fallback to quarters or years if specific dates aren't found
-    quarter_pattern = r"(?:Q[1-4]\s+\d{4}|[1-4](?:st|nd|rd|th)\s+Quarter\s+\d{4})"
-    quarters = re.findall(quarter_pattern, text, re.IGNORECASE)
+    if period_match:
+        return f"Period {period_match.group(1)}", f"Period {period_match.group(2)}"
     
-    if len(quarters) >= 2:
-        return quarters[0], quarters[1]
-    
-    # Last resort: look for years
-    year_pattern = r"\b(20\d{2})\b"
-    years = re.findall(year_pattern, text)
-    
-    if len(years) >= 2:
-        return years[0], years[1]
-    
-    # Default labels if we can't find anything specific
+    # Default labels
     return "Period 1", "Period 2"
 
 def process_pdf(pdf_path):
@@ -121,14 +171,11 @@ def process_pdf(pdf_path):
     Process a single PDF file to extract fund name and NAV values.
     """
     try:
-        # Extract text from PDF
-        all_text = ""
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                all_text += page.extract_text() + "\n"
+        # Extract fund name from the third line of the first page
+        fund_name = extract_fund_name(pdf_path)
         
-        # Extract fund name
-        fund_name = extract_fund_name(all_text)
+        # Extract full text from the PDF
+        all_text = extract_text_from_pdf(pdf_path)
         
         # Extract NAV values
         period1_nav, period2_nav = extract_nav_values(all_text)
@@ -188,11 +235,12 @@ def format_excel(excel_path):
             adjusted_width = (max_length + 2) * 1.2
             ws.column_dimensions[column_letter].width = adjusted_width
         
-        # Center numeric values
+        # Format numeric values
         for row in ws.iter_rows(min_row=2):
             for cell in row[2:]:  # Apply only to NAV columns
                 if isinstance(cell.value, (int, float)):
-                    cell.alignment = Alignment(horizontal='center')
+                    cell.number_format = '#,##0.00'
+                    cell.alignment = Alignment(horizontal='right')
         
         wb.save(excel_path)
         return True
