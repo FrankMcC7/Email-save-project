@@ -382,7 +382,7 @@ def advanced_table_analysis(pdf_path):
                                                 return header1, value1, header2, value2
                         except:
                             continue  # Try next table settings if this one fails
-                            
+                    
                     # Handle the case where "Net asset value" is not a separate row but part of a column
                     # This is specifically for the alternative table format shown in the screenshots
                     try:
