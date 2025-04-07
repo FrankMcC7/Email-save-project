@@ -412,13 +412,6 @@ def advanced_table_analysis(pdf_path):
     except Exception as e:
         print(f"Error in advanced table analysis: {str(e)}")
         
-    return None, None, None, None        
-                                        return header1, value1, header2, value2
-                    except:
-                        continue  # Try next table settings if this one fails
-    except Exception as e:
-        print(f"Error in advanced table analysis: {str(e)}")
-        
     return None, None, None, None
 
 def last_resort_extraction(pdf_path):
