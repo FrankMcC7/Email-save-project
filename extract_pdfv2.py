@@ -1,31 +1,111 @@
-pip install pdfplumber pandas openpyxl PyMuPDF tabula-py
 import os
 import re
 import pandas as pd
 import pdfplumber
-import traceback
+import openpyxl
+from openpyxl.styles import Font, Alignment, PatternFill
+import glob
 from datetime import datetime
+import traceback
 import warnings
 warnings.filterwarnings('ignore')
 
-# Additional libraries
+# Try to import additional libraries
 try:
     import fitz  # PyMuPDF
     PYMUPDF_AVAILABLE = True
 except ImportError:
     PYMUPDF_AVAILABLE = False
+    print("PyMuPDF not available. For better results, install with: pip install PyMuPDF")
 
 try:
     import tabula
     TABULA_AVAILABLE = True
 except ImportError:
     TABULA_AVAILABLE = False
+    print("Tabula not available. For better table extraction, install with: pip install tabula-py")
 
 try:
     import subprocess
     POPPLER_AVAILABLE = True
 except ImportError:
     POPPLER_AVAILABLE = False
+
+
+def extract_fund_name(pdf_path):
+    """
+    Extract the fund name from the third line of the first page.
+    """
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            if len(pdf.pages) > 0:
+                first_page_text = pdf.pages[0].extract_text()
+                if first_page_text:
+                    # Split text by newlines and get the third line if available
+                    lines = first_page_text.split('\n')
+                    
+                    # First try getting the third line if it's not empty
+                    if len(lines) >= 3 and lines[2].strip():
+                        return lines[2].strip()
+                    
+                    # Try looking for fund name patterns in the first 10 lines
+                    for i in range(min(10, len(lines))):
+                        line = lines[i].strip()
+                        # Skip empty lines or very short lines
+                        if len(line) < 3:
+                            continue
+                            
+                        # Check for fund name indicators
+                        if any(indicator in line.lower() for indicator in ['fund', 'sicav', 's.c.a', 'l.p.', 'partners group']):
+                            return line
+        
+        # Fallback to extracting text from first few pages and looking for fund name patterns
+        all_text = extract_text_from_pdf(pdf_path, max_pages=3)
+        
+        # Try to find title lines that might contain fund names
+        lines = all_text.split('\n')
+        for line in lines[:20]:  # Look only in first 20 lines
+            line = line.strip()
+            if len(line) > 10 and any(indicator in line.lower() for indicator in ['fund', 'sicav', 's.c.a', 'l.p.', 'partners group']):
+                return line
+        
+        # If all else fails, try to match common fund name patterns
+        fund_patterns = [
+            r"([A-Za-z0-9\s\-\.&]+(?:S\.C\.A\.|SICAV|Fund|L\.P\.))",
+            r"([A-Za-z]+\s+[A-Za-z]+\s+[A-Za-z]+(?:\s+[IVX]+)?)"
+        ]
+        
+        for pattern in fund_patterns:
+            match = re.search(pattern, all_text)
+            if match:
+                return match.group(1).strip()
+    except Exception as e:
+        print(f"Error extracting fund name: {str(e)}")
+    
+    return "Unknown Fund"
+
+
+def extract_text_from_pdf(pdf_path, max_pages=None, start_page=0):
+    """
+    Extract text from PDF, optionally limiting to max_pages starting from start_page.
+    """
+    try:
+        all_text = ""
+        with pdfplumber.open(pdf_path) as pdf:
+            # Determine which pages to extract
+            if max_pages is None:
+                pages_to_extract = pdf.pages[start_page:]
+            else:
+                end_page = min(start_page + max_pages, len(pdf.pages))
+                pages_to_extract = pdf.pages[start_page:end_page]
+                
+            for page in pages_to_extract:
+                page_text = page.extract_text() or ""
+                all_text += page_text + "\n"
+        return all_text
+    except Exception as e:
+        print(f"Error extracting text from PDF: {str(e)}")
+        return ""
 
 
 def analyze_pdf_structure(pdf_path):
@@ -157,6 +237,62 @@ def extract_tables_multi_library(pdf_path):
             print(f"tabula table extraction failed: {str(e)}")
     
     return all_tables
+
+
+def clean_number(value_str):
+    """
+    Clean and convert a string value to a float.
+    Handles various number formats including apostrophes, commas, spaces.
+    """
+    try:
+        if value_str is None:
+            return None
+            
+        # If it's already a number, return it
+        if isinstance(value_str, (int, float)):
+            return float(value_str)
+            
+        if isinstance(value_str, str):
+            # Handle percentage values - skip these
+            if "%" in value_str:
+                return None
+            
+            # Skip non-numeric text
+            if len(value_str.strip()) == 0 or value_str.strip().isalpha():
+                return None
+                
+            # Remove common separators and non-numeric characters
+            cleaned = value_str.replace("'", "").replace(",", "").replace(" ", "").replace("x", "")
+            
+            # Handle cases where there's no digits
+            if not any(c.isdigit() for c in cleaned):
+                return None
+                
+            # Handle any remaining non-numeric characters (except decimal point)
+            final_value = ""
+            decimal_found = False
+            for char in cleaned:
+                if char.isdigit():
+                    final_value += char
+                elif char == "." and not decimal_found:
+                    final_value += char
+                    decimal_found = True
+                    
+            if final_value:
+                # Convert to float with additional validation
+                try:
+                    value = float(final_value)
+                    
+                    # If we have a non-zero value and it's reasonably large (NAV values are typically large)
+                    # This helps avoid misidentifying small numbers as NAV values
+                    if value > 100:  # NAV is typically in thousands or millions
+                        return value
+                except:
+                    pass
+    except:
+        pass
+        
+    return None
 
 
 def extract_nav_from_tables(tables_data):
@@ -318,6 +454,266 @@ def extract_nav_with_enhanced_patterns(text):
     return results
 
 
+def direct_table_extraction(pdf_path):
+    """
+    Directly target the Key Figures table and extract Net asset value.
+    This approach focuses specifically on the exact table structure seen in examples.
+    """
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            # Check pages 1-5 for the key figures table
+            for page_num in range(min(5, len(pdf.pages))):
+                page = pdf.pages[page_num]
+                
+                # Get the text to check for Key Figures section
+                page_text = page.extract_text() or ""
+                
+                # Only process pages with "Key figures" or "key figures"
+                if "Key figures" in page_text or "key figures" in page_text.lower():
+                    # Extract all tables from this page
+                    tables = page.extract_tables()
+                    
+                    # Process each table
+                    for table in tables:
+                        if not table or len(table) < 3:  # Skip small tables
+                            continue
+                        
+                        # Look for NAV row in this table
+                        for row_idx, row in enumerate(table):
+                            # Skip rows with fewer than 2 columns
+                            if len(row) < 3:
+                                continue
+                                
+                            # Convert to string and check if this is the NAV row
+                            row_str = [str(cell).strip() if cell is not None else "" for cell in row]
+                            first_cell = row_str[0].lower()
+                            
+                            if "net asset value" in first_cell or "net asset" in first_cell:
+                                # Found the NAV row - now get header and values
+                                
+                                # Look for header row (containing dates or periods)
+                                header_row = None
+                                for i in range(row_idx):
+                                    potential_header = table[i]
+                                    if len(potential_header) >= len(row):
+                                        header_text = " ".join([str(cell).strip() if cell is not None else "" for cell in potential_header])
+                                        # Check if it contains dates or period indicators
+                                        if (re.search(r'\b\d{1,2}[\.\/\s]+(?:[A-Za-z]+|\d{1,2})[\.\/\s]+\d{4}\b', header_text) or
+                                            re.search(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b', header_text, re.IGNORECASE) or
+                                            re.search(r'\b(?:Q[1-4]|20\d\d)\b', header_text)):
+                                            header_row = potential_header
+                                            break
+                                
+                                # If no proper header found, use the row above if available
+                                if header_row is None and row_idx > 0:
+                                    header_row = table[row_idx - 1]
+                                
+                                # Get values from NAV row (skip first column which is the label)
+                                values = []
+                                for cell_idx in range(1, len(row)):
+                                    if row[cell_idx] is not None:
+                                        # Clean and convert the value
+                                        try:
+                                            value_str = str(row[cell_idx]).strip()
+                                            value = clean_number(value_str)
+                                            if value is not None:
+                                                values.append((cell_idx, value))
+                                        except:
+                                            pass
+                                
+                                # Need at least two values
+                                if len(values) >= 2:
+                                    # Get corresponding headers
+                                    idx1, value1 = values[0]
+                                    idx2, value2 = values[1]
+                                    
+                                    if header_row:
+                                        header1 = str(header_row[idx1]).strip() if idx1 < len(header_row) and header_row[idx1] is not None else "Period 1"
+                                        header2 = str(header_row[idx2]).strip() if idx2 < len(header_row) and header_row[idx2] is not None else "Period 2"
+                                    else:
+                                        # Extract dates from page text if headers not found
+                                        date_matches = re.findall(r'\b\d{1,2}[\.\/\s]+(?:[A-Za-z]+|\d{1,2})[\.\/\s]+\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b|\b(?:Q[1-4]|20\d\d)\b', page_text)
+                                        if len(date_matches) >= 2:
+                                            header1 = date_matches[0]
+                                            header2 = date_matches[1]
+                                        else:
+                                            header1 = "Period 1"
+                                            header2 = "Period 2"
+                                    
+                                    return header1, value1, header2, value2
+    except Exception as e:
+        print(f"Error in direct table extraction: {str(e)}")
+        
+    return None, None, None, None
+
+
+def scan_text_for_nav(pdf_path):
+    """
+    Scan the PDF text for Net Asset Value mentions and extract data.
+    This is a fallback approach when table extraction fails.
+    """
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            # Extract text from the first few pages
+            all_text = ""
+            for page_num in range(min(5, len(pdf.pages))):
+                page_text = pdf.pages[page_num].extract_text() or ""
+                all_text += page_text + "\n"
+                
+                # Check each page individually first
+                lines = page_text.split('\n')
+                
+                # 1. First, look for "Net asset value" line specifically
+                for i, line in enumerate(lines):
+                    if "net asset value" in line.lower():
+                        # Found NAV line - extract numbers
+                        number_matches = re.findall(r"[\d',\.]+", line)
+                        values = []
+                        
+                        for num in number_matches:
+                            value = clean_number(num)
+                            if value is not None and value > 1000:
+                                values.append(value)
+                        
+                        if len(values) >= 2:
+                            # Look for date headers in previous lines
+                            date_matches = []
+                            for j in range(max(0, i-5), i):
+                                date_match = re.findall(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b', lines[j])
+                                if date_match:
+                                    date_matches.extend(date_match)
+                            
+                            if len(date_matches) >= 2:
+                                return date_matches[0], values[0], date_matches[1], values[1]
+                            else:
+                                # Look for dates in the entire page
+                                date_matches = re.findall(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b', page_text)
+                                if len(date_matches) >= 2:
+                                    return date_matches[0], values[0], date_matches[1], values[1]
+                                else:
+                                    return "Period 1", values[0], "Period 2", values[1]
+            
+            # If page-by-page approach failed, try with whole text
+            nav_matches = re.finditer(r'(?:[Nn]et\s+[Aa]sset\s+[Vv]alue|NAV)', all_text)
+            
+            for match in nav_matches:
+                # Extract text around the match
+                start_pos = max(0, match.start() - 100)
+                end_pos = min(len(all_text), match.end() + 300)
+                context = all_text[start_pos:end_pos]
+                
+                # Find dates in the context
+                dates = re.findall(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b', context)
+                
+                # Find large numbers that could be NAV values
+                number_matches = re.findall(r"[\d',\.]+", context)
+                values = []
+                
+                for num in number_matches:
+                    value = clean_number(num)
+                    if value is not None and value > 10000:  # NAV values are typically large
+                        values.append(value)
+                
+                if len(dates) >= 2 and len(values) >= 2:
+                    return dates[0], values[0], dates[1], values[1]
+    except Exception as e:
+        print(f"Error in text scanning: {str(e)}")
+        
+    return None, None, None, None
+
+
+def last_resort_extraction(pdf_path):
+    """
+    Absolute last resort approach - specifically look for patterns like in the Excel screenshot.
+    This approach focuses on known formats from the examples provided.
+    """
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            # Check first 3 pages
+            for page_num in range(min(3, len(pdf.pages))):
+                page = pdf.pages[page_num]
+                page_text = page.extract_text() or ""
+                
+                # Look specifically for "Net asset value" in a line
+                lines = page_text.split('\n')
+                
+                # First approach: Look for the exact line format with Net asset value
+                for line in lines:
+                    if "net asset value" in line.lower():
+                        # Try to extract exactly two numbers from this line
+                        number_matches = re.findall(r"[\d',\.]+", line)
+                        values = []
+                        
+                        for num in number_matches:
+                            value = clean_number(num)
+                            if value is not None and value > 10000:  # NAV values are typically large
+                                values.append(value)
+                        
+                        if len(values) >= 2:
+                            # Extract dates from the page text
+                            date_matches = re.findall(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b', page_text)
+                            
+                            if len(date_matches) >= 2:
+                                return date_matches[0], values[0], date_matches[1], values[1]
+                            else:
+                                # If no dates found, just use Period 1 and Period 2
+                                return "Period 1", values[0], "Period 2", values[1]
+                
+                # Second approach: Look for numeric patterns in lines with dates
+                date_line_idx = -1
+                for i, line in enumerate(lines):
+                    if re.search(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b', line):
+                        date_line_idx = i
+                        break
+                
+                if date_line_idx >= 0:
+                    # Found a line with dates, now look for "Net asset value" within the next 15 lines
+                    for i in range(date_line_idx + 1, min(date_line_idx + 15, len(lines))):
+                        if "net asset value" in lines[i].lower():
+                            # Found the NAV line
+                            number_matches = re.findall(r"[\d',\.]+", lines[i])
+                            values = []
+                            
+                            for num in number_matches:
+                                value = clean_number(num)
+                                if value is not None and value > 10000:
+                                    values.append(value)
+                            
+                            if len(values) >= 2:
+                                # Extract dates from the date line
+                                date_matches = re.findall(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b', lines[date_line_idx])
+                                
+                                if len(date_matches) >= 2:
+                                    return date_matches[0], values[0], date_matches[1], values[1]
+            
+            # Third approach: Process all lines looking for specific formats like in the Excel
+            for page_num in range(min(5, len(pdf.pages))):
+                page_text = pdf.pages[page_num].extract_text() or ""
+                lines = page_text.split('\n')
+                
+                for line in lines:
+                    # Look for lines that match the format "some text number1 number2"
+                    if "asset" in line.lower() or "value" in line.lower():
+                        number_matches = re.findall(r"[\d',\.]+", line)
+                        values = []
+                        
+                        for num in number_matches:
+                            value = clean_number(num)
+                            if value is not None and value > 10000:
+                                values.append(value)
+                        
+                        if len(values) >= 2:
+                            # Extract dates from the page text
+                            date_matches = re.findall(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b', page_text)
+                            
+                            if len(date_matches) >= 2:
+                                return date_matches[0], values[0], date_matches[1], values[1]
+    except Exception as e:
+        print(f"Error in last resort extraction: {str(e)}")
+        
+    return None, None, None, None
+
+
 def process_pdf_comprehensive(pdf_path):
     """
     Process a PDF using multiple approaches in an intelligent sequence.
@@ -412,8 +808,62 @@ def process_pdf_comprehensive(pdf_path):
         'Extraction Method': 'failed',
         'Confidence': 0.0
     }
-  
-  def main():
+
+
+def format_excel(excel_path):
+    """
+    Apply formatting to the Excel file for better readability.
+    """
+    try:
+        wb = openpyxl.load_workbook(excel_path)
+        ws = wb.active
+        
+        # Apply header formatting
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal='center')
+        
+        # Auto-adjust column widths
+        for column in ws.columns:
+            max_length = 0
+            column_letter = openpyxl.utils.get_column_letter(column[0].column)
+            
+            for cell in column:
+                if cell.value:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+            
+            adjusted_width = (max_length + 2) * 1.2
+            ws.column_dimensions[column_letter].width = adjusted_width
+        
+        # Format numeric values
+        for row in ws.iter_rows(min_row=2):
+            for cell in row[2:]:  # Apply only to NAV columns
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = '#,##0.00'
+                    cell.alignment = Alignment(horizontal='right')
+        
+        wb.save(excel_path)
+        return True
+    except Exception as e:
+        print(f"Error formatting Excel file: {str(e)}")
+        return False
+
+
+def main():
+    """
+    Main function to process a folder of PDF files.
+    """
+    print("=== Comprehensive PDF NAV Extraction Tool ===")
+    print("This tool extracts fund names and NAV values from PDF documents using multiple approaches.")
+    
     # Folder containing PDF files
     pdf_folder = input("Enter the path to the folder containing PDF files: ")
     
@@ -474,3 +924,7 @@ def process_pdf_comprehensive(pdf_path):
     print("\nExtraction Method Statistics:")
     for method, count in method_stats.items():
         print(f"  {method}: {count} ({count/len(pdf_files)*100:.1f}%)")
+
+
+if __name__ == "__main__":
+    main()
