@@ -4,12 +4,13 @@ import datetime
 import sys
 from pathlib import Path
 
-def extract_attachments(inbox_name, sender_email, date_str):
+def extract_attachments(account_name, inbox_name, sender_email, date_str):
     """
-    Extract attachments from Outlook emails in the specified inbox,
+    Extract attachments from Outlook emails in the specified account and inbox,
     from the specified sender, on the specified date.
     
     Parameters:
+    account_name (str): Name of the Outlook account
     inbox_name (str): Name of the Outlook inbox/folder
     sender_email (str): Email address of the sender
     date_str (str): Date in format 'YYYY-MM-DD'
@@ -40,10 +41,26 @@ def extract_attachments(inbox_name, sender_email, date_str):
         print(f"Error connecting to Outlook: {e}")
         return 0
     
-    # Get the specified folder
+    # Find the specified account
+    account_found = False
+    root_folder = None
+    
     try:
-        root_folder = namespace.Folders.Item(1)  # Default mailbox
+        # List all accounts and find the requested one
+        for i in range(1, namespace.Folders.Count + 1):
+            current_account = namespace.Folders.Item(i)
+            if current_account.Name.lower() == account_name.lower():
+                root_folder = current_account
+                account_found = True
+                print(f"Found account: {current_account.Name}")
+                break
         
+        if not account_found:
+            print(f"Error: Account '{account_name}' not found. Available accounts:")
+            for i in range(1, namespace.Folders.Count + 1):
+                print(f"  - {namespace.Folders.Item(i).Name}")
+            return 0
+            
         # Navigate to the specified inbox/folder
         folder = root_folder
         for folder_level in inbox_name.split('/'):
@@ -55,12 +72,15 @@ def extract_attachments(inbox_name, sender_email, date_str):
                     break
             if not found:
                 print(f"Error: Folder '{folder_level}' not found in path '{inbox_name}'")
+                print("Available folders:")
+                for subfolder in folder.Folders:
+                    print(f"  - {subfolder.Name}")
                 return 0
     except Exception as e:
-        print(f"Error accessing folder '{inbox_name}': {e}")
+        print(f"Error accessing folder: {e}")
         return 0
     
-    print(f"Searching for emails in '{inbox_name}' from '{sender_email}' on {date_str}...")
+    print(f"Searching for emails in account '{account_name}', folder '{inbox_name}' from '{sender_email}' on {date_str}...")
     
     # Filter emails
     attachment_count = 0
@@ -99,23 +119,42 @@ def extract_attachments(inbox_name, sender_email, date_str):
     print(f"\nExtraction complete. {attachment_count} attachment(s) saved to {save_location}")
     return attachment_count
 
+def list_outlook_accounts():
+    """List all available Outlook accounts"""
+    try:
+        outlook = win32com.client.Dispatch("Outlook.Application")
+        namespace = outlook.GetNamespace("MAPI")
+        
+        print("\nAvailable Outlook accounts:")
+        for i in range(1, namespace.Folders.Count + 1):
+            print(f"  - {namespace.Folders.Item(i).Name}")
+        print()
+    except Exception as e:
+        print(f"Error listing Outlook accounts: {e}")
+
 def main():
     """Main function to get user input and extract attachments"""
-    if len(sys.argv) == 4:
+    if len(sys.argv) == 5:
         # Get parameters from command line arguments
-        inbox_name = sys.argv[1]
-        sender_email = sys.argv[2]
-        date_str = sys.argv[3]
+        account_name = sys.argv[1]
+        inbox_name = sys.argv[2]
+        sender_email = sys.argv[3]
+        date_str = sys.argv[4]
     else:
         # Get parameters from user input
         print("Outlook Email Attachment Extractor")
         print("==================================")
+        
+        # List available accounts
+        list_outlook_accounts()
+        
+        account_name = input("Enter Outlook account name: ")
         inbox_name = input("Enter inbox/folder path (e.g., 'Inbox' or 'Inbox/Subfolder'): ")
         sender_email = input("Enter sender email address: ")
         date_str = input("Enter date (YYYY-MM-DD): ")
     
     # Extract attachments
-    extract_attachments(inbox_name, sender_email, date_str)
+    extract_attachments(account_name, inbox_name, sender_email, date_str)
 
 if __name__ == "__main__":
     main()
