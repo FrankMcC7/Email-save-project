@@ -805,113 +805,280 @@ def extract_partners_group_key_figures(pdf_path):
     try:
         with pdfplumber.open(pdf_path) as pdf:
             # Check first few pages for "Key figures" section
-            for page_num in range(min(3, len(pdf.pages))):
+            for page_num in range(min(5, len(pdf.pages))):
                 page = pdf.pages[page_num]
                 page_text = page.extract_text() or ""
                 
+                # Debug for page text
+                print(f"\n------ Checking page {page_num+1} ------")
                 if "key figures" in page_text.lower():
-                    # Try different table extraction settings
-                    for table_settings in [
-                        {'vertical_strategy': 'text', 'horizontal_strategy': 'text'},
-                        {'vertical_strategy': 'lines', 'horizontal_strategy': 'text'},
-                        {'vertical_strategy': 'text', 'horizontal_strategy': 'lines'},
-                        {'vertical_strategy': 'lines', 'horizontal_strategy': 'lines'}
-                    ]:
-                        try:
-                            tables = page.extract_tables(table_settings)
+                    print("Found 'Key figures' on this page!")
+                
+                # Try different table extraction settings
+                for table_settings in [
+                    {'vertical_strategy': 'text', 'horizontal_strategy': 'text'},
+                    {'vertical_strategy': 'lines', 'horizontal_strategy': 'text'},
+                    {'vertical_strategy': 'text', 'horizontal_strategy': 'lines'},
+                    {'vertical_strategy': 'lines', 'horizontal_strategy': 'lines'}
+                ]:
+                    try:
+                        tables = page.extract_tables(table_settings)
+                        
+                        for table_idx, table in enumerate(tables):
+                            if not table or len(table) < 3:  # Key figures tables usually have several rows
+                                continue
+                                
+                            print(f"\nExamining Table #{table_idx+1} ({len(table)} rows)")
                             
-                            for table in tables:
-                                if not table or len(table) < 5:  # Key figures tables usually have several rows
+                            # Dump all table rows to debug
+                            for i, row in enumerate(table):
+                                if row:
+                                    row_str = ' | '.join([str(cell).strip() if cell is not None else "None" for cell in row])
+                                    print(f"Row {i}: {row_str}")
+                            
+                            # First identify the date header row
+                            date_header_row = None
+                            date_header_idx = -1
+                            
+                            for i, row in enumerate(table[:8]):  # Check first 8 rows for header (increased from 5)
+                                if not row or len(row) < 2:
                                     continue
                                 
-                                # First identify the date header row
-                                date_header_row = None
-                                date_header_idx = -1
+                                # Convert row to text for checking
+                                row_text = " ".join([str(cell).strip() if cell is not None else "" for cell in row])
                                 
-                                # Debug output for headers
-                                print("Checking table headers...")
+                                # Check cells individually for date formats
+                                date_cells = []
+                                for j, cell in enumerate(row):
+                                    if cell is not None:
+                                        cell_text = str(cell).strip()
+                                        
+                                        # Check for various date formats with more flexible patterns
+                                        if (re.search(r'\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}', cell_text) or
+                                            re.search(r'\d{1,2}\s*(?:January|February|March|April|May|June|July|August|September|October|November|December)\s*\d{4}', cell_text, re.IGNORECASE) or
+                                            re.search(r'\d{1,2}(?:January|February|March|April|May|June|July|August|September|October|November|December)\d{4}', cell_text, re.IGNORECASE) or
+                                            re.search(r'\d{2}\.\d{2}\.\d{4}', cell_text) or
+                                            ("september" in cell_text.lower() and re.search(r'\d{4}', cell_text)) or
+                                            ("december" in cell_text.lower() and re.search(r'\d{4}', cell_text))):
+                                            date_cells.append((j, cell_text))
                                 
-                                for i, row in enumerate(table[:5]):  # Check first 5 rows for header
+                                if len(date_cells) >= 2:  # Need at least two date columns
+                                    print(f"Found date header at row {i}: {date_cells}")
+                                    date_header_row = row
+                                    date_header_idx = i
+                                    break
+                            
+                            # If we found date headers, now look for the NAV row
+                            if date_header_row is not None:
+                                print("Searching for NAV row after date header...")
+                                
+                                # First find NAV using direct string matches
+                                nav_row = None
+                                nav_row_idx = -1
+                                
+                                # Patterns that might indicate a NAV row
+                                nav_patterns = [
+                                    r"net\s*asset\s*value",
+                                    r"\bnav\b",
+                                    r"^net",
+                                    r"asset.*value"
+                                ]
+                                
+                                # Search through ALL rows after the header
+                                for row_idx in range(date_header_idx + 1, len(table)):
+                                    row = table[row_idx]
                                     if not row or len(row) < 3:
                                         continue
                                     
-                                    # Convert row to text for debugging
-                                    row_text = " ".join([str(cell).strip() if cell is not None else "" for cell in row])
-                                    print(f"Row {i}: {row_text}")
+                                    # Check the first cell for various NAV indicators
+                                    first_cell = str(row[0]).strip().lower() if row[0] is not None else ""
                                     
-                                    # Check cells individually for date formats
-                                    has_dates = False
-                                    date_cells = []
+                                    print(f"  Checking row {row_idx}, first cell: '{first_cell}'")
                                     
-                                    for cell in row:
-                                        if cell is not None:
-                                            cell_text = str(cell).strip()
-                                            
-                                            # Check for various date formats
-                                            if (re.search(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b', cell_text) or
-                                                re.search(r'\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b', cell_text, re.IGNORECASE) or
-                                                re.search(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b', cell_text, re.IGNORECASE) or
-                                                re.search(r'\b\d{2}\.\d{2}\.\d{4}\b', cell_text)):
-                                                has_dates = True
-                                                date_cells.append(cell_text)
+                                    # Super flexible matching for NAV indicators
+                                    is_nav_row = False
+                                    for pattern in nav_patterns:
+                                        if re.search(pattern, first_cell, re.IGNORECASE):
+                                            is_nav_row = True
+                                            break
                                     
-                                    if has_dates:
-                                        print(f"Found date header row {i} with dates: {date_cells}")
-                                        date_header_row = row
-                                        date_header_idx = i
+                                    if is_nav_row:
+                                        print(f"  FOUND NAV ROW at index {row_idx}: {first_cell}")
+                                        nav_row = row
+                                        nav_row_idx = row_idx
                                         break
                                 
-                                # If we found date headers, now look for the NAV row
-                                if date_header_row is not None:
-                                    print("Found date header row, now looking for NAV row...")
+                                # If we found the NAV row, extract values
+                                if nav_row is not None:
+                                    # Extract values from this row
+                                    values = []
+                                    for i in range(1, len(nav_row)):
+                                        if nav_row[i] is not None:
+                                            cell_text = str(nav_row[i]).strip()
+                                            print(f"  Nav value cell {i}: '{cell_text}'")
+                                            
+                                            # Try to extract a number
+                                            value = clean_number(cell_text)
+                                            if value is not None:
+                                                print(f"  Extracted value: {value}")
+                                                values.append((i, value))
                                     
-                                    # Now look specifically for the "Net asset value" row
-                                    nav_row = None
+                                    # If we found at least 2 values
+                                    if len(values) >= 2:
+                                        idx1, value1 = values[0]
+                                        idx2, value2 = values[1]
+                                        
+                                        # Get corresponding headers
+                                        header1 = str(date_header_row[idx1]).strip() if idx1 < len(date_header_row) and date_header_row[idx1] is not None else "Period 1"
+                                        header2 = str(date_header_row[idx2]).strip() if idx2 < len(date_header_row) and date_header_row[idx2] is not None else "Period 2"
+                                        
+                                        print(f"EXTRACTION SUCCESSFUL: {header1}: {value1}, {header2}: {value2}")
+                                        return header1, value1, header2, value2
+                                else:
+                                    print("No explicit NAV row found. Trying fallback methods...")
                                     
-                                    for row_idx, row in enumerate(table):
+                                    # Fallback: Scan all rows for anything that might be NAV
+                                    # Look for rows containing numeric values that are different from others
+                                    potential_rows = []
+                                    
+                                    for row_idx in range(date_header_idx + 1, len(table)):
+                                        row = table[row_idx]
                                         if not row or len(row) < 3:
                                             continue
                                         
-                                        # Check the first cell explicitly
+                                        # Skip rows with percentages (%) or "commitments"
                                         first_cell = str(row[0]).strip().lower() if row[0] is not None else ""
-                                        print(f"Checking row {row_idx} first cell: '{first_cell}'")
+                                        if "%" in first_cell or "commitment" in first_cell or "capital" in first_cell:
+                                            continue
                                         
-                                        # Very explicit match for Net asset value or NAV
-                                        if (first_cell == "net asset value" or 
-                                            "net asset value" in first_cell or 
-                                            first_cell == "nav" or 
-                                            (len(first_cell) < 20 and "nav" in first_cell.split())):
-                                            
-                                            print(f"Found NAV row at index {row_idx}")
-                                            nav_row = row
-                                            
-                                            # Extract values directly from this row
-                                            values = []
-                                            for i in range(1, len(row)):
-                                                if row[i] is not None:
-                                                    cell_text = str(row[i]).strip()
-                                                    print(f"Nav row cell {i}: '{cell_text}'")
-                                                    value = clean_number(cell_text)
-                                                    if value is not None:
-                                                        print(f"Extracted value: {value}")
-                                                        values.append((i, value))
-                                            
-                                            # Need at least 2 values
-                                            if len(values) >= 2:
-                                                idx1, value1 = values[0]
-                                                idx2, value2 = values[1]
-                                                
-                                                # Get corresponding headers directly
-                                                header1 = str(date_header_row[idx1]).strip() if idx1 < len(date_header_row) and date_header_row[idx1] is not None else "Period 1"
-                                                header2 = str(date_header_row[idx2]).strip() if idx2 < len(date_header_row) and date_header_row[idx2] is not None else "Period 2"
-                                                
-                                                print(f"EXTRACTION SUCCESSFUL - {header1}: {value1}, {header2}: {value2}")
-                                                return header1, value1, header2, value2
-                        except Exception as e:
-                            print(f"Error processing table: {str(e)}")
-                            continue
+                                        # Extract values from this row
+                                        row_values = []
+                                        for i in range(1, len(row)):
+                                            if row[i] is not None:
+                                                value = clean_number(str(row[i]))
+                                                if value is not None:
+                                                    row_values.append((i, value))
+                                        
+                                        # If this row has at least 2 values, consider it
+                                        if len(row_values) >= 2:
+                                            potential_rows.append((row_idx, row, row_values))
+                                    
+                                    # If we found potential NAV rows, use the one with the largest values
+                                    # (NAV is typically larger than other metrics)
+                                    if potential_rows:
+                                        # Sort by average value in descending order
+                                        potential_rows.sort(key=lambda x: sum(val for _, val in x[2])/len(x[2]), reverse=True)
+                                        
+                                        # Use the row with largest average values
+                                        _, best_row, best_values = potential_rows[0]
+                                        
+                                        print(f"Using potential NAV row with largest values: {best_row[0]}")
+                                        
+                                        idx1, value1 = best_values[0]
+                                        idx2, value2 = best_values[1]
+                                        
+                                        # Get corresponding headers
+                                        header1 = str(date_header_row[idx1]).strip() if idx1 < len(date_header_row) and date_header_row[idx1] is not None else "Period 1"
+                                        header2 = str(date_header_row[idx2]).strip() if idx2 < len(date_header_row) and date_header_row[idx2] is not None else "Period 2"
+                                        
+                                        print(f"FALLBACK EXTRACTION: {header1}: {value1}, {header2}: {value2}")
+                                        return header1, value1, header2, value2
+                    except Exception as e:
+                        print(f"Error processing table: {str(e)}")
+                        continue
     except Exception as e:
         print(f"Error in Partners Group key figures extraction: {str(e)}")
+    
+    print("All extraction attempts failed for this file")
+    return None, None, None, None
+
+
+def scan_for_nav_row(page_text, fund_name):
+    """
+    Fallback method to extract NAV values directly from text.
+    This is a last resort when table extraction fails.
+    """
+    try:
+        print("\nTrying direct text scanning for NAV rows...")
+        lines = page_text.split('\n')
+        
+        # First look for date headers in the text
+        date_lines = []
+        for i, line in enumerate(lines):
+            if (re.search(r'\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}', line) or
+                re.search(r'\d{1,2}\s*(?:January|February|March|April|May|June|July|August|September|October|November|December)\s*\d{4}', line, re.IGNORECASE) or
+                re.search(r'\d{2}(?:September|December|March|June)\d{4}', line, re.IGNORECASE)):
+                date_lines.append((i, line))
+        
+        # If we found date lines, look for NAV rows after them
+        for date_idx, date_line in date_lines:
+            # Extract dates from this line
+            dates = []
+            date_matches = re.findall(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b|\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b|\b\d{2}(?:September|December|March|June)\d{4}\b', date_line, re.IGNORECASE)
+            if date_matches:
+                dates = date_matches
+            else:
+                # If no structured dates found, look for month names with years
+                month_matches = re.findall(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s*\d{4}\b|\b\d{2}(?:Sep|Dec|Mar|Jun)[a-z]*\d{4}\b', date_line, re.IGNORECASE)
+                if month_matches:
+                    dates = month_matches
+            
+            # If we found dates, look for NAV rows within the next 15 lines
+            if dates and len(dates) >= 2:
+                print(f"Found date line with dates: {dates}")
+                
+                # Look for NAV rows after the date line
+                for i in range(date_idx + 1, min(date_idx + 15, len(lines))):
+                    line = lines[i]
+                    
+                    # Check if this line might be the NAV row
+                    if "net asset value" in line.lower() or "nav" in line.lower().split():
+                        print(f"Found potential NAV line: {line}")
+                        
+                        # Extract all numbers from this line
+                        number_matches = re.findall(r"[\d',\.]+", line)
+                        values = []
+                        
+                        for num_str in number_matches:
+                            value = clean_number(num_str)
+                            if value is not None:
+                                values.append(value)
+                        
+                        # If we found at least 2 values, return them
+                        if len(values) >= 2:
+                            print(f"Extracted values from text: {values}")
+                            return dates[0], values[0], dates[1], values[1]
+        
+        # If we haven't found anything yet, try another approach
+        # Look for "Net asset value" or "NAV" in any line
+        for i, line in enumerate(lines):
+            if "net asset value" in line.lower() or "nav" in line.lower().split():
+                # Found a potential NAV line
+                print(f"Found potential NAV line through direct search: {line}")
+                
+                # Extract numbers from this line
+                number_matches = re.findall(r"[\d',\.]+", line)
+                values = []
+                
+                for num_str in number_matches:
+                    value = clean_number(num_str)
+                    if value is not None:
+                        values.append(value)
+                
+                # If we found at least 2 values
+                if len(values) >= 2:
+                    # Look for dates in nearby lines
+                    date_context = "\n".join(lines[max(0, i-5):min(len(lines), i+5)])
+                    date_matches = re.findall(r'\b\d{1,2}[\.\/]\d{1,2}[\.\/]\d{4}\b|\b\d{2}\.\d{2}\.\d{4}\b|\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b', date_context, re.IGNORECASE)
+                    
+                    if len(date_matches) >= 2:
+                        print(f"Extracted values with dates from context: {values}, {date_matches}")
+                        return date_matches[0], values[0], date_matches[1], values[1]
+                    else:
+                        print(f"Extracted values but no dates found: {values}")
+                        return "Period 1", values[0], "Period 2", values[1]
+    except Exception as e:
+        print(f"Error in direct text scanning: {str(e)}")
     
     return None, None, None, None
 
@@ -922,6 +1089,8 @@ def process_pdf_comprehensive(pdf_path):
     """
     # Step 1: Extract fund name
     fund_name = extract_fund_name(pdf_path)
+    print(f"\nProcessing: {os.path.basename(pdf_path)}")
+    print(f"Fund name identified: {fund_name}")
     
     # Step 2: Analyze PDF structure to determine best approach
     pdf_info = analyze_pdf_structure(pdf_path)
@@ -944,6 +1113,19 @@ def process_pdf_comprehensive(pdf_path):
     
     # Step 3: Multi-library text extraction
     text = extract_text_multi_library(pdf_path)
+    
+    # Step 3.5: Try direct text scanning if we have key figures section
+    if pdf_info["has_key_figures_section"] and not results:
+        period1_label, period1_nav, period2_label, period2_nav = scan_for_nav_row(text, fund_name)
+        if period1_nav is not None and period2_nav is not None:
+            results.append({
+                'period1_label': period1_label,
+                'period1_nav': period1_nav,
+                'period2_label': period2_label,
+                'period2_nav': period2_nav,
+                'confidence': 0.9,  # High confidence for direct text scan
+                'source': 'direct_text_scan'
+            })
     
     # Step 4: Extract NAV using enhanced patterns from text
     pattern_results = extract_nav_with_enhanced_patterns(text)
