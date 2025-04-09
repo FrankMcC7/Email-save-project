@@ -1,21 +1,23 @@
-Let me update the script to meet these new requirements:
+It sounds like the issue is that the script is only detecting two accounts, even though the user has multiple inboxes in their Outlook. There could be a distinction between "accounts" and "inboxes" in Outlook that we need to address.
 
-1. Allow selecting multiple accounts from the list
-2. Include subject line in the output
-3. Include the source account for each email
-4. Save the output as an Excel file instead of CSV
+In Outlook, there are several ways inboxes can be organized:
+1. Multiple email accounts (like separate Gmail, Outlook, Yahoo accounts)
+2. Multiple folders within a single account
+3. Shared mailboxes
+4. Additional mailboxes added through Exchange
 
-For this, I'll need to:
-- Modify the account selection to allow multiple selections
-- Add code to extract and store the subject line along with the sender
-- Include the account information for each email
-- Use a library like `openpyxl` or `xlsxwriter` to create Excel files
+Let me rework the script to ensure it can capture all types of inboxes in Outlook, not just the primary accounts. I'll modify the approach to:
 
-Here's how I'll implement these changes:
+1. Get all available mailboxes/folders in Outlook regardless of how they're associated with accounts
+2. Present a complete list to the user
+3. Allow selection of multiple mailboxes/folders from this comprehensive list
+4. Process each selected mailbox/folder
 
-# Enhanced Outlook Email Extractor
+This should ensure we capture all inboxes that the user has access to in their Outlook application.
 
-I'll create an improved script that lets you select multiple accounts, and generates an Excel file containing sender emails, subjects, and the account they came from.
+# Comprehensive Outlook Email Extractor
+
+I've reworked the script to handle multiple inboxes in Outlook, including shared mailboxes and additional mailboxes that might not be appearing as separate accounts. This version should detect all mailboxes you have access to.
 
 ```python
 import win32com.client
@@ -26,48 +28,80 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 def extract_sender_emails_from_outlook():
     """
-    Connects to Outlook, lets user select multiple accounts/folders, 
-    and extracts sender email addresses with subjects from the last 30 days.
+    Connects to Outlook and extracts sender email addresses with subjects from
+    multiple inboxes, including shared mailboxes and additional mailboxes.
     """
     try:
         # Connect to Outlook
         outlook = win32com.client.Dispatch("Outlook.Application")
         namespace = outlook.GetNamespace("MAPI")
         
-        # Get all accounts
-        accounts = namespace.Accounts
-        account_list = []
+        # Get all available mailboxes/folders
+        all_folders = []
         
-        print("\nAvailable accounts:")
-        print("-" * 50)
+        # First add default mailbox folders
+        root_folder = namespace.Folders
         
-        # List all accounts
-        for i, account in enumerate(accounts, 1):
-            print(f"{i}. {account.DisplayName}")
-            account_list.append(account)
+        # Function to recursively get all mail folders
+        def get_mail_folders(parent_folder, path=""):
+            folders_list = []
+            try:
+                # Go through each folder in the parent
+                for folder in parent_folder:
+                    current_path = f"{path}/{folder.Name}" if path else folder.Name
+                    
+                    # Check if this is a mail folder we're interested in
+                    try:
+                        if folder.DefaultItemType == 0:  # 0 = Mail items
+                            folders_list.append((current_path, folder))
+                        
+                        # Check if there are subfolders
+                        if folder.Folders.Count > 0:
+                            subfolders = get_mail_folders(folder.Folders, current_path)
+                            folders_list.extend(subfolders)
+                    except:
+                        # Skip folders that throw errors
+                        pass
+            except:
+                pass
+            
+            return folders_list
         
-        # Let user select multiple accounts
-        print("\nSelect account numbers (comma-separated, e.g., 1,2,3 or 'all' for all accounts):")
-        account_input = input("Account numbers: ").strip()
+        # Get all mail folders
+        all_folders = get_mail_folders(root_folder)
         
-        selected_accounts = []
-        if account_input.lower() == 'all':
-            selected_accounts = account_list
-        else:
-            account_indices = [int(idx.strip()) - 1 for idx in account_input.split(',')]
-            for idx in account_indices:
-                if 0 <= idx < len(account_list):
-                    selected_accounts.append(account_list[idx])
-                else:
-                    print(f"Warning: Account number {idx+1} is invalid and will be skipped.")
-        
-        if not selected_accounts:
-            print("No valid accounts selected.")
+        if not all_folders:
+            print("No mail folders found. Please ensure Outlook is properly configured.")
             return
         
-        print(f"\nSelected {len(selected_accounts)} account(s):")
-        for account in selected_accounts:
-            print(f"- {account.DisplayName}")
+        # Display all available folders
+        print("\nAvailable mailboxes and folders:")
+        print("-" * 70)
+        for i, (folder_path, _) in enumerate(all_folders, 1):
+            print(f"{i}. {folder_path}")
+        
+        # Let user select folders
+        print("\nSelect folder numbers (comma-separated, e.g., 1,2,3 or 'all' for all folders):")
+        folder_input = input("Folder numbers: ").strip()
+        
+        selected_folders = []
+        if folder_input.lower() == 'all':
+            selected_folders = all_folders
+        else:
+            folder_indices = [int(idx.strip()) - 1 for idx in folder_input.split(',')]
+            for idx in folder_indices:
+                if 0 <= idx < len(all_folders):
+                    selected_folders.append(all_folders[idx])
+                else:
+                    print(f"Warning: Folder number {idx+1} is invalid and will be skipped.")
+        
+        if not selected_folders:
+            print("No valid folders selected.")
+            return
+        
+        print(f"\nSelected {len(selected_folders)} folder(s):")
+        for folder_path, _ in selected_folders:
+            print(f"- {folder_path}")
         
         # Calculate date 30 days ago
         thirty_days_ago = datetime.datetime.now() - datetime.timedelta(days=30)
@@ -79,64 +113,20 @@ def extract_sender_emails_from_outlook():
         email_data = []
         total_emails_processed = 0
         
-        # Process each selected account
-        for account in selected_accounts:
-            print(f"\nProcessing account: {account.DisplayName}")
-            
-            # Get inbox for this account
+        # Process each selected folder
+        for folder_path, folder in selected_folders:
             try:
-                # Try to get the inbox for this specific account
-                inbox = account.DeliveryStore.GetDefaultFolder(6)  # 6 represents the inbox folder
-            except:
-                # Fallback method if the above doesn't work
-                inbox = namespace.GetDefaultFolder(6)
-            
-            # Get folders for selection
-            folders = []
-            
-            # Add the main inbox
-            folders.append(("Inbox", inbox))
-            
-            # Add subfolders in inbox
-            for folder in inbox.Folders:
-                folders.append((f"Inbox/{folder.Name}", folder))
-            
-            # List all folders
-            print("\nAvailable folders:")
-            print("-" * 50)
-            for i, (folder_name, _) in enumerate(folders, 1):
-                print(f"{i}. {folder_name}")
-            
-            # Let user select folders
-            print("\nSelect folder numbers (comma-separated, e.g., 1,2,3 or 'all' for all folders):")
-            folder_input = input("Folder numbers: ").strip()
-            
-            selected_folders = []
-            if folder_input.lower() == 'all':
-                selected_folders = folders
-            else:
-                folder_indices = [int(idx.strip()) - 1 for idx in folder_input.split(',')]
-                for idx in folder_indices:
-                    if 0 <= idx < len(folders):
-                        selected_folders.append(folders[idx])
-                    else:
-                        print(f"Warning: Folder number {idx+1} is invalid and will be skipped.")
-            
-            if not selected_folders:
-                print("No valid folders selected for this account. Skipping.")
-                continue
-            
-            print(f"\nSelected {len(selected_folders)} folder(s) for {account.DisplayName}:")
-            for folder_name, _ in selected_folders:
-                print(f"- {folder_name}")
-            
-            # Process each folder
-            for folder_name, folder in selected_folders:
+                print(f"\nProcessing folder: {folder_path}")
+                
+                # Get emails from the last 30 days
                 emails = folder.Items.Restrict(restriction)
                 emails.Sort("[ReceivedTime]", True)  # Sort by received time in descending order
                 
-                print(f"\nProcessing folder: {folder_name}")
                 folder_email_count = 0
+                
+                # Extract the account name from the folder path
+                # The first part of the path is typically the account name
+                account_name = folder_path.split('/')[0]
                 
                 # Process each email
                 for email in emails:
@@ -149,8 +139,8 @@ def extract_sender_emails_from_outlook():
                             
                             # Add to our data list
                             email_data.append({
-                                'account': account.DisplayName,
-                                'folder': folder_name,
+                                'account': account_name,
+                                'folder': folder_path,
                                 'sender': sender_address,
                                 'subject': subject,
                                 'received': received_time
@@ -165,10 +155,13 @@ def extract_sender_emails_from_outlook():
                     except Exception as e:
                         print(f"Error processing an email: {str(e)}")
                 
-                print(f"Processed {folder_email_count} emails in {folder_name}")
+                print(f"Processed {folder_email_count} emails in {folder_path}")
+                
+            except Exception as e:
+                print(f"Error processing folder {folder_path}: {str(e)}")
         
         if not email_data:
-            print("\nNo emails found in the selected accounts and folders from the last 30 days.")
+            print("\nNo emails found in the selected folders from the last 30 days.")
             return
         
         # Ask for output file name
@@ -182,7 +175,7 @@ def extract_sender_emails_from_outlook():
         # Create Excel file
         create_excel_file(email_data, output_file)
         
-        print(f"\nExtracted data from {total_emails_processed} emails across {len(selected_accounts)} account(s)")
+        print(f"\nExtracted data from {total_emails_processed} emails across {len(selected_folders)} folder(s)")
         print(f"Results saved to {os.path.abspath(output_file)}")
         
     except Exception as e:
@@ -297,53 +290,51 @@ def create_excel_file(email_data, output_file):
     wb.save(output_file)
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("Outlook Email Extractor".center(60))
-    print("=" * 60)
+    print("=" * 70)
+    print("Comprehensive Outlook Email Extractor".center(70))
+    print("=" * 70)
+    print("\nThis script will find all mailboxes and folders in your Outlook")
+    print("and extract sender emails from the last 30 days.")
     
     extract_sender_emails_from_outlook()
     
     print("\nDone!")
 ```
 
-## How to Use This Script:
+## Key Improvements:
 
-1. Install the required libraries:
+1. **Comprehensive Folder Discovery**:
+   - The script now recursively scans all folders in Outlook
+   - Detects all mailboxes including shared mailboxes and additional inboxes
+   - Captures the full folder hierarchy
+
+2. **Simplified Selection Process**:
+   - Shows a complete list of all available mailboxes/folders
+   - Allows selecting any combination of folders from the list
+
+3. **Accurate Folder Path Tracking**:
+   - Maintains the full path of each folder for better identification
+   - Preserves the mailbox/account information in the output
+
+## How to Use:
+
+1. Install the required packages:
    ```
    pip install pywin32 openpyxl
    ```
 
-2. Save the script to a file (e.g., `outlook_extractor.py`)
+2. Make sure Outlook is open and running
 
-3. Run the script:
-   ```
-   python outlook_extractor.py
-   ```
-
-4. Follow the prompts to:
-   - Select multiple accounts (comma-separated numbers or "all")
-   - Select multiple folders for each account (comma-separated numbers or "all")
+3. Run the script and follow the prompts to:
+   - Select from the comprehensive list of all available mailboxes and folders
    - Specify the output Excel file name
-
-## Features:
-
-- Select multiple Outlook accounts
-- Select multiple folders within each account
-- Extracts emails from the last 30 days
-- Includes sender email address, subject line, and account information
-- Creates a professionally formatted Excel file with:
-  - Main sheet containing all email details
-  - Summary sheet showing email counts by account and folder
-  - Auto-adjusted column widths
-  - Frozen header rows
-  - Proper formatting with borders
 
 ## Requirements:
 
 - Windows operating system
-- Outlook installed and configured
+- Outlook installed and running
 - Python 3.x
 - pywin32 library
 - openpyxl library
 
-This enhanced script provides a comprehensive solution for extracting email sender information across multiple Outlook accounts and folders, with professional Excel output that includes all the requested information.
+This reworked version should detect all inboxes regardless of how they're configured in your Outlook, giving you access to shared mailboxes, additional mailboxes, and any other inbox folders that might not be appearing as separate accounts.
