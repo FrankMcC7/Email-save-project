@@ -1,18 +1,11 @@
-#!/usr/bin/env python3
-"""
-File Sorter
-
-This script sorts and groups files by their extension type and places them in 
-respective folders. Existing folders within the target directory remain untouched.
-
-Usage:
-    python file_sorter.py /path/to/directory
-"""
 
 import os
 import sys
 import shutil
+import subprocess
 from pathlib import Path
+import tkinter as tk
+from tkinter import filedialog, messagebox
 
 def get_file_type_folder(file_extension):
     """
@@ -194,20 +187,52 @@ def sort_files(directory_path):
         print(f"An error occurred: {e}")
         return False
 
+def open_file_explorer(path):
+    """
+    Open the file explorer at the specified path.
+    """
+    try:
+        if os.name == 'nt':  # Windows
+            os.startfile(path)
+        elif os.name == 'posix':  # macOS, Linux
+            if sys.platform == 'darwin':  # macOS
+                subprocess.call(['open', path])
+            else:  # Linux
+                subprocess.call(['xdg-open', path])
+        print(f"Opened file explorer at: {path}")
+    except Exception as e:
+        print(f"Error opening file explorer: {e}")
+
 def main():
     """
-    Main function to handle command line arguments and execute the sorting.
+    Main function to handle directory selection via GUI and execute the sorting.
     """
-    # Check if a directory path was provided
-    if len(sys.argv) != 2:
-        print("Usage: python file_sorter.py /path/to/directory")
+    # Create a root window but keep it hidden
+    root = tk.Tk()
+    root.withdraw()
+    
+    # Show an info message
+    messagebox.showinfo("File Sorter", "Please select a directory to organize files.")
+    
+    # Open file dialog to select directory
+    directory_path = filedialog.askdirectory(title="Select Directory to Organize")
+    
+    # If user cancels the dialog
+    if not directory_path:
+        print("Operation cancelled by user.")
         return
     
-    # Get the directory path from command line argument
-    directory_path = sys.argv[1]
+    # Sort files in the selected directory
+    success = sort_files(directory_path)
     
-    # Sort files in the directory
-    sort_files(directory_path)
+    if success:
+        # Ask user if they want to open the directory
+        open_explorer = messagebox.askyesno("File Sorter", 
+                                           "Files have been organized successfully! Do you want to open the directory?")
+        if open_explorer:
+            open_file_explorer(directory_path)
+    
+    root.destroy()
     
 if __name__ == "__main__":
     main()
