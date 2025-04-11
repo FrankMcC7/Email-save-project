@@ -295,8 +295,8 @@ Sub ProcessMarkitAndApprovedFunds()
     Set wsRawData = wbMaster.Sheets.Add(After:=wsMarkit)
     wsRawData.Name = "Raw_data"
     
-    ' Define columns for Raw table - clean declaration with proper line continuation
-    Dim rawDataHeaders(14) As String
+    ' Define columns for Raw table - clean assignment without redeclaring
+    ReDim rawDataHeaders(14)
     rawDataHeaders(0) = "Business Unit"
     rawDataHeaders(1) = "IA GCI"
     rawDataHeaders(2) = "RFAD Investment Manager"
