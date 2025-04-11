@@ -590,14 +590,25 @@ Sub ProcessMarkitAndApprovedFunds()
 NextApprovedRow:
     Next i
     
-    ' Resize rawArray to actual data size
+    ' Resize rawArray to actual data size (can't use ReDim Preserve on first dimension of 2D array)
+    ' Instead, we'll create a new array with the exact size we need
     If rawRowCount > 1 Then
-        ReDim Preserve rawArray(1 To rawRowCount, 1 To UBound(rawDataHeaders) + 1)
+        Dim finalRawArray() As Variant
+        ReDim finalRawArray(1 To rawRowCount, 1 To UBound(rawDataHeaders) + 1)
+        
+        ' Copy data from original array to the final array
+        For j = 1 To rawRowCount
+            For k = 1 To UBound(rawDataHeaders) + 1
+                finalRawArray(j, k) = rawArray(j, k)
+            Next k
+        Next j
+        
+        ' Write the correctly sized array to the worksheet
+        wsRawData.Range("A1").Resize(rawRowCount, UBound(rawDataHeaders) + 1).Value = finalRawArray
+    Else
+        ' If no data, just write the header row
+        wsRawData.Range("A1").Resize(1, UBound(rawDataHeaders) + 1).Value = Application.WorksheetFunction.Index(rawArray, 1, 0)
     End If
-    
-    ' Write Raw data to worksheet
-    Application.StatusBar = "Writing Raw data to worksheet..."
-    wsRawData.Range("A1").Resize(rawRowCount, UBound(rawDataHeaders) + 1).Value = rawArray
     
     ' Create Raw table
     On Error Resume Next
@@ -669,8 +680,22 @@ NextApprovedRow:
         If isMoreRecent Then
             uploadRowCount = uploadRowCount + 1
             
-            ' Resize array if needed
-            ReDim Preserve uploadArray(1 To uploadRowCount, 1 To UBound(rawDataHeaders) + 2)
+            ' If we need to resize the array
+            If uploadRowCount > UBound(uploadArray, 1) Then
+                ' Create a new larger array
+                Dim tempUploadArray() As Variant
+                ReDim tempUploadArray(1 To uploadRowCount * 2, 1 To UBound(rawDataHeaders) + 2)
+                
+                ' Copy existing data
+                For j = 1 To UBound(uploadArray, 1)
+                    For k = 1 To UBound(uploadArray, 2)
+                        tempUploadArray(j, k) = uploadArray(j, k)
+                    Next k
+                Next j
+                
+                ' Replace the old array with the new one
+                uploadArray = tempUploadArray
+            End If
             
             ' Copy all columns from Raw to Upload
             For j = 1 To UBound(rawDataHeaders) + 1
@@ -692,9 +717,24 @@ NextApprovedRow:
         End If
     Next i
     
-    ' Write Upload data to worksheet
-    Application.StatusBar = "Writing Upload data to worksheet..."
-    wsUpload.Range("A1").Resize(uploadRowCount, UBound(uploadArray, 2)).Value = uploadArray
+    ' Resize uploadArray to actual data size (can't use ReDim Preserve on first dimension of 2D array)
+    If uploadRowCount > 1 Then
+        Dim finalUploadArray() As Variant
+        ReDim finalUploadArray(1 To uploadRowCount, 1 To UBound(rawDataHeaders) + 2)
+        
+        ' Copy data from original array to the final array
+        For j = 1 To uploadRowCount
+            For k = 1 To UBound(rawDataHeaders) + 2
+                finalUploadArray(j, k) = uploadArray(j, k)
+            Next k
+        Next j
+        
+        ' Write the correctly sized array to the worksheet
+        wsUpload.Range("A1").Resize(uploadRowCount, UBound(rawDataHeaders) + 2).Value = finalUploadArray
+    Else
+        ' If no data, just write the header row
+        wsUpload.Range("A1").Resize(1, UBound(rawDataHeaders) + 2).Value = uploadArray
+    End If
     
     ' Create Upload table
     On Error Resume Next
