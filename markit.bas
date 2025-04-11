@@ -46,7 +46,7 @@ Sub ProcessMarkitAndApprovedFunds()
     Dim fundLEIMap As Object
     
     ' Loop counters and flags
-    Dim i As Long, j As Long
+    Dim i As Long, j As Long, k As Long 
     Dim foundMatch As Boolean
     Dim matchFundCode As Boolean
     Dim matchFundLEI As Boolean
@@ -594,6 +594,7 @@ NextApprovedRow:
     ' Instead, we'll create a new array with the exact size we need
     If rawRowCount > 1 Then
         Dim finalRawArray() As Variant
+        Dim j As Long, k As Long
         ReDim finalRawArray(1 To rawRowCount, 1 To UBound(rawDataHeaders) + 1)
         
         ' Copy data from original array to the final array
@@ -684,6 +685,7 @@ NextApprovedRow:
             If uploadRowCount > UBound(uploadArray, 1) Then
                 ' Create a new larger array
                 Dim tempUploadArray() As Variant
+                Dim k As Long
                 ReDim tempUploadArray(1 To uploadRowCount * 2, 1 To UBound(rawDataHeaders) + 2)
                 
                 ' Copy existing data
@@ -720,6 +722,7 @@ NextApprovedRow:
     ' Resize uploadArray to actual data size (can't use ReDim Preserve on first dimension of 2D array)
     If uploadRowCount > 1 Then
         Dim finalUploadArray() As Variant
+        Dim j As Long, k As Long
         ReDim finalUploadArray(1 To uploadRowCount, 1 To UBound(rawDataHeaders) + 2)
         
         ' Copy data from original array to the final array
