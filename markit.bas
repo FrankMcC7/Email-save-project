@@ -1,5 +1,11 @@
+Option Explicit
+
 Sub ProcessMarkitAndApprovedFunds()
-    ' Declare variables
+    ' Performance-optimized macro for processing Approved funds and Markit files
+    ' Handles large datasets (35,000+ rows) efficiently
+    
+    ' ===== Variable declarations =====
+    ' Workbooks and worksheets
     Dim wbMaster As Workbook
     Dim wbApproved As Workbook
     Dim wbMarkit As Workbook
@@ -7,122 +13,154 @@ Sub ProcessMarkitAndApprovedFunds()
     Dim wsMarkit As Worksheet
     Dim wsRawData As Worksheet
     Dim wsUpload As Worksheet
+    
+    ' File paths
     Dim approvedFilePath As String
     Dim markitFilePath As String
+    
+    ' Tables
     Dim tblApproved As ListObject
     Dim tblMarkit As ListObject
     Dim tblRaw As ListObject
     Dim tblUpload As ListObject
+    
+    ' Range variables
     Dim lastRowApproved As Long
     Dim lastColApproved As Long
     Dim lastRowMarkit As Long
     Dim lastColMarkit As Long
     Dim approvedData As Range
     Dim markitData As Range
-    Dim rawDataHeaders() As String
-    Dim foundMatch As Boolean
+    
+    ' Arrays for data processing
+    Dim approvedArray() As Variant
+    Dim markitArray() As Variant
+    Dim rawArray() As Variant
+    Dim uploadArray() As Variant
+    Dim rawDataHeaders(14) As String
+    
+    ' Dictionary objects for faster lookups
+    Dim approvedColMap As Object
+    Dim markitColMap As Object
+    Dim fundCodeMap As Object
+    Dim fundLEIMap As Object
+    
+    ' Loop counters and flags
     Dim i As Long, j As Long
+    Dim foundMatch As Boolean
     Dim matchFundCode As Boolean
     Dim matchFundLEI As Boolean
-    Dim existingListObj As ListObject
     
-    ' Turn off screen updating and calculations to improve performance
+    ' Timing and status variables
+    Dim startTime As Double
+    Dim endTime As Double
+    Dim executionTime As String
+    
+    ' Record start time
+    startTime = Timer
+    
+    ' ===== Setup and optimization settings =====
+    ' Turn off screen updating, events, and calculations
     Application.ScreenUpdating = False
+    Application.EnableEvents = False
     Application.Calculation = xlCalculationManual
+    Application.DisplayStatusBar = True
+    Application.StatusBar = "Initializing..."
+    
+    ' Initialize dictionary objects
+    Set approvedColMap = CreateObject("Scripting.Dictionary")
+    Set markitColMap = CreateObject("Scripting.Dictionary")
+    Set fundCodeMap = CreateObject("Scripting.Dictionary")
+    Set fundLEIMap = CreateObject("Scripting.Dictionary")
     
     ' Set reference to the master workbook (current workbook)
     Set wbMaster = ThisWorkbook
     
+    ' ===== File selection =====
     ' Ask user to locate the Approved funds file
+    Application.StatusBar = "Please select the Approved funds file..."
     MsgBox "Please select the Approved funds file.", vbInformation, "Select Approved Funds File"
     approvedFilePath = Application.GetOpenFilename("Excel Files (*.xls*), *.xls*", , "Select Approved Funds File")
     
     ' Check if user canceled the file selection
     If approvedFilePath = "False" Then
         MsgBox "Operation canceled by user.", vbExclamation
-        Application.ScreenUpdating = True
-        Application.Calculation = xlCalculationAutomatic
-        Exit Sub
+        GoTo CleanupAndExit
     End If
     
     ' Ask user to locate the Markit file
+    Application.StatusBar = "Please select the Markit file..."
     MsgBox "Please select the Markit file.", vbInformation, "Select Markit File"
     markitFilePath = Application.GetOpenFilename("Excel Files (*.xls*), *.xls*", , "Select Markit File")
     
     ' Check if user canceled the file selection
     If markitFilePath = "False" Then
         MsgBox "Operation canceled by user.", vbExclamation
-        Application.ScreenUpdating = True
-        Application.Calculation = xlCalculationAutomatic
-        Exit Sub
+        GoTo CleanupAndExit
     End If
     
-    ' Open the selected files
-    Set wbApproved = Workbooks.Open(approvedFilePath)
-    Set wbMarkit = Workbooks.Open(markitFilePath)
+    ' ===== Open and process files =====
+    On Error Resume Next
+    Application.StatusBar = "Opening files..."
     
-    ' Process Approved funds file
-    ' Assume data is in the first worksheet
+    ' Open the selected files with optimized settings (read-only, no links)
+    Set wbApproved = Workbooks.Open(approvedFilePath, UpdateLinks:=False, ReadOnly:=True)
+    If wbApproved Is Nothing Then
+        MsgBox "Failed to open Approved funds file. Please check the file.", vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    Set wbMarkit = Workbooks.Open(markitFilePath, UpdateLinks:=False, ReadOnly:=True)
+    If wbMarkit Is Nothing Then
+        MsgBox "Failed to open Markit file. Please check the file.", vbExclamation
+        wbApproved.Close SaveChanges:=False
+        GoTo CleanupAndExit
+    End If
+    On Error GoTo 0
+    
+    ' ===== Process Approved funds file =====
+    Application.StatusBar = "Processing Approved funds file..."
     Set wsApproved = wbApproved.Sheets(1)
     
     ' Delete the first row
     wsApproved.Rows(1).Delete
     
-    ' Check if the file already contains tables (ListObjects)
+    ' Determine data range
+    lastRowApproved = wsApproved.Cells(wsApproved.Rows.Count, "A").End(xlUp).Row
+    lastColApproved = wsApproved.Cells(1, wsApproved.Columns.Count).End(xlToLeft).Column
+    
+    If lastRowApproved < 1 Or lastColApproved < 1 Then
+        MsgBox "No data found in Approved funds file.", vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    Set approvedData = wsApproved.Range(wsApproved.Cells(1, 1), wsApproved.Cells(lastRowApproved, lastColApproved))
+    
+    ' Convert to table if needed
+    On Error Resume Next
     If wsApproved.ListObjects.Count > 0 Then
-        ' The file already has tables - we'll use them instead of creating new ones
-        Set tblApproved = wsApproved.ListObjects(1)  ' Use the first ListObject in the sheet
-        
-        ' If the table already has a name, capture it for reference
-        If tblApproved.Name <> "" Then
-            Debug.Print "Using existing table: " & tblApproved.Name
-        Else
-            ' Try to rename the table to our standard name
-            On Error Resume Next
-            tblApproved.Name = "Approved"
-            On Error GoTo 0
-        End If
+        Set tblApproved = wsApproved.ListObjects(1)
+        tblApproved.Name = "Approved"
     Else
-        ' No existing tables, so create one
-        lastRowApproved = wsApproved.Cells(wsApproved.Rows.Count, "A").End(xlUp).Row
-        lastColApproved = wsApproved.Cells(1, wsApproved.Columns.Count).End(xlToLeft).Column
-        Set approvedData = wsApproved.Range(wsApproved.Cells(1, 1), wsApproved.Cells(lastRowApproved, lastColApproved))
-        
-        ' Create a table with error handling - use specific error handling for table overlap
-        On Error Resume Next
         Set tblApproved = wsApproved.ListObjects.Add(xlSrcRange, approvedData, , xlYes)
-        
-        If Err.Number = 1004 Then  ' Table overlap error
-            ' Try to clear any existing tables that might not be properly detected
+        If Err.Number <> 0 Then
+            ' Try to clear any existing tables first
             Err.Clear
-            
-            ' Convert any existing tables to ranges first
             For i = wsApproved.ListObjects.Count To 1 Step -1
                 wsApproved.ListObjects(i).Unlist
             Next i
             
-            ' Try again with the clean sheet
             Set tblApproved = wsApproved.ListObjects.Add(xlSrcRange, approvedData, , xlYes)
-            
             If Err.Number <> 0 Then
-                MsgBox "Error: The Approved file already contains tables that couldn't be processed. " & _
-                       "Please manually convert tables to ranges in the file before running this macro.", vbExclamation
-                On Error GoTo 0
+                MsgBox "Error creating Approved table: " & Err.Description, vbExclamation
                 GoTo CleanupAndExit
             End If
-        ElseIf Err.Number <> 0 Then
-            MsgBox "Error creating Approved table: " & Err.Description, vbExclamation
-            On Error GoTo 0
-            GoTo CleanupAndExit
         End If
-        On Error GoTo 0
-        
-        ' Ensure the table is named correctly
         tblApproved.Name = "Approved"
     End If
+    On Error GoTo 0
     
     ' Filter to keep only 'FI-EMEA', 'FI-US', and 'FI-GMC-ASIA' in 'Business Unit' column
-    ' Find the index of "Business Unit" column
     Dim buColIndex As Long
     buColIndex = 0
     
@@ -133,79 +171,163 @@ Sub ProcessMarkitAndApprovedFunds()
         End If
     Next i
     
-    ' Apply filter if Business Unit column exists
     If buColIndex > 0 Then
+        Application.StatusBar = "Filtering Approved funds by Business Unit..."
         tblApproved.Range.AutoFilter Field:=buColIndex, Criteria1:=Array("FI-EMEA", "FI-US", "FI-GMC-ASIA"), Operator:=xlFilterValues
     Else
         MsgBox "Warning: 'Business Unit' column not found in Approved funds file.", vbExclamation
     End If
     
-    ' Process Markit file
-    ' Assume data is in the first worksheet
-    Set wsMarkit = wbMarkit.Sheets(1)
+    ' Load data into memory
+    Application.StatusBar = "Loading Approved data into memory..."
     
-    ' Check if the file already contains tables (ListObjects)
-    If wsMarkit.ListObjects.Count > 0 Then
-        ' The file already has tables - we'll use them instead of creating new ones
-        Set tblMarkit = wsMarkit.ListObjects(1)  ' Use the first ListObject in the sheet
+    ' Create column mapping
+    For i = 1 To tblApproved.ListColumns.Count
+        If Not approvedColMap.Exists(tblApproved.ListColumns(i).Name) Then
+            approvedColMap.Add tblApproved.ListColumns(i).Name, i
+        End If
+    Next i
+    
+    ' If filtered, get only visible cells
+    If tblApproved.ShowAutoFilter Then
+        ' Count visible rows for array allocation
+        Dim visibleRowCount As Long
+        Dim visibleCells As Range
+        On Error Resume Next
+        Set visibleCells = tblApproved.DataBodyRange.SpecialCells(xlCellTypeVisible)
+        On Error GoTo 0
         
-        ' If the table already has a name, capture it for reference
-        If tblMarkit.Name <> "" Then
-            Debug.Print "Using existing table: " & tblMarkit.Name
+        If Not visibleCells Is Nothing Then
+            ' Determine visible row count
+            visibleRowCount = WorksheetFunction.CountA(tblApproved.ListColumns(1).Range.SpecialCells(xlCellTypeVisible)) - 1
+            If visibleRowCount <= 0 Then visibleRowCount = 1 ' Ensure at least one row
+            
+            ' Create array with header row
+            ReDim approvedArray(1 To visibleRowCount + 1, 1 To tblApproved.ListColumns.Count)
+            
+            ' Add header row
+            For i = 1 To tblApproved.ListColumns.Count
+                approvedArray(1, i) = tblApproved.ListColumns(i).Name
+            Next i
+            
+            ' Copy visible rows data
+            If visibleRowCount > 0 Then
+                Dim dataRow As Long
+                dataRow = 2 ' Start after header
+                
+                Dim visibleRow As Range
+                Dim visibleArea As Range
+                
+                ' Loop through each visible cell area (might be non-contiguous due to filter)
+                For Each visibleArea In visibleCells.Areas
+                    For Each visibleRow In visibleArea.Rows
+                        If dataRow <= UBound(approvedArray, 1) Then
+                            For i = 1 To tblApproved.ListColumns.Count
+                                approvedArray(dataRow, i) = visibleRow.Cells(1, i).Value
+                            Next i
+                            dataRow = dataRow + 1
+                        End If
+                    Next visibleRow
+                Next visibleArea
+            End If
         Else
-            ' Try to rename the table to our standard name
-            On Error Resume Next
-            tblMarkit.Name = "Markit"
-            On Error GoTo 0
+            ' If no visible cells (all filtered out), create minimal array
+            ReDim approvedArray(1 To 1, 1 To tblApproved.ListColumns.Count)
+            For i = 1 To tblApproved.ListColumns.Count
+                approvedArray(1, i) = tblApproved.ListColumns(i).Name
+            Next i
         End If
     Else
-        ' No existing tables, so create one
-        lastRowMarkit = wsMarkit.Cells(wsMarkit.Rows.Count, "A").End(xlUp).Row
-        lastColMarkit = wsMarkit.Cells(1, wsMarkit.Columns.Count).End(xlToLeft).Column
-        
-        ' Make sure range is valid
-        If lastRowMarkit < 1 Or lastColMarkit < 1 Then
-            MsgBox "Warning: Could not determine data range in Markit file", vbExclamation
-            GoTo CleanupAndExit
-        End If
-        
-        Set markitData = wsMarkit.Range(wsMarkit.Cells(1, 1), wsMarkit.Cells(lastRowMarkit, lastColMarkit))
-        
-        ' Create a table with error handling - use specific error handling for table overlap
-        On Error Resume Next
+        ' No filter, get all data
+        approvedArray = tblApproved.Range.Value
+    End If
+    
+    ' ===== Process Markit file =====
+    Application.StatusBar = "Processing Markit file..."
+    Set wsMarkit = wbMarkit.Sheets(1)
+    
+    ' Determine data range
+    lastRowMarkit = wsMarkit.Cells(wsMarkit.Rows.Count, "A").End(xlUp).Row
+    lastColMarkit = wsMarkit.Cells(1, wsMarkit.Columns.Count).End(xlToLeft).Column
+    
+    If lastRowMarkit < 1 Or lastColMarkit < 1 Then
+        MsgBox "No data found in Markit file.", vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    Set markitData = wsMarkit.Range(wsMarkit.Cells(1, 1), wsMarkit.Cells(lastRowMarkit, lastColMarkit))
+    
+    ' Convert to table if needed
+    On Error Resume Next
+    If wsMarkit.ListObjects.Count > 0 Then
+        Set tblMarkit = wsMarkit.ListObjects(1)
+        tblMarkit.Name = "Markit"
+    Else
         Set tblMarkit = wsMarkit.ListObjects.Add(xlSrcRange, markitData, , xlYes)
-        
-        If Err.Number = 1004 Then  ' Table overlap error
-            ' Try to clear any existing tables that might not be properly detected
+        If Err.Number <> 0 Then
+            ' Try to clear any existing tables first
             Err.Clear
-            
-            ' Convert any existing tables to ranges first
             For i = wsMarkit.ListObjects.Count To 1 Step -1
                 wsMarkit.ListObjects(i).Unlist
             Next i
             
-            ' Try again with the clean sheet
             Set tblMarkit = wsMarkit.ListObjects.Add(xlSrcRange, markitData, , xlYes)
-            
             If Err.Number <> 0 Then
-                MsgBox "Error: The Markit file already contains tables that couldn't be processed. " & _
-                       "Please manually convert tables to ranges in the file before running this macro.", vbExclamation
-                On Error GoTo 0
+                MsgBox "Error creating Markit table: " & Err.Description, vbExclamation
                 GoTo CleanupAndExit
             End If
-        ElseIf Err.Number <> 0 Then
-            MsgBox "Error creating Markit table: " & Err.Description, vbExclamation
-            On Error GoTo 0
-            GoTo CleanupAndExit
         End If
-        On Error GoTo 0
-        
-        ' Ensure the table is named correctly
         tblMarkit.Name = "Markit"
     End If
-    tblMarkit.Name = "Markit"
+    On Error GoTo 0
     
-    ' Create new sheets in master workbook for the tables
+    ' Load data into memory
+    Application.StatusBar = "Loading Markit data into memory..."
+    markitArray = tblMarkit.Range.Value
+    
+    ' Create column mapping
+    For i = 1 To tblMarkit.ListColumns.Count
+        If Not markitColMap.Exists(tblMarkit.ListColumns(i).Name) Then
+            markitColMap.Add tblMarkit.ListColumns(i).Name, i
+        End If
+    Next i
+    
+    ' Build lookup dictionaries for faster matching
+    Application.StatusBar = "Building lookup tables for faster matching..."
+    Dim codeColIndex As Long, leiColIndex As Long
+    
+    If markitColMap.Exists("Client Identifier") Then
+        codeColIndex = markitColMap("Client Identifier")
+        
+        ' Build Fund Code lookup map
+        For i = 2 To UBound(markitArray, 1) ' Skip header row
+            If Not IsEmpty(markitArray(i, codeColIndex)) Then
+                ' If fund code already exists, keep the first occurrence
+                If Not fundCodeMap.Exists(CStr(markitArray(i, codeColIndex))) Then
+                    fundCodeMap.Add CStr(markitArray(i, codeColIndex)), i
+                End If
+            End If
+        Next i
+    End If
+    
+    If markitColMap.Exists("LEI") Then
+        leiColIndex = markitColMap("LEI")
+        
+        ' Build Fund LEI lookup map
+        For i = 2 To UBound(markitArray, 1) ' Skip header row
+            If Not IsEmpty(markitArray(i, leiColIndex)) Then
+                ' If LEI already exists, keep the first occurrence
+                If Not fundLEIMap.Exists(CStr(markitArray(i, leiColIndex))) Then
+                    fundLEIMap.Add CStr(markitArray(i, leiColIndex)), i
+                End If
+            End If
+        Next i
+    End If
+    
+    ' ===== Prepare master workbook =====
+    Application.StatusBar = "Preparing master workbook..."
+    
+    ' Delete existing sheets if they exist
     On Error Resume Next
     Application.DisplayAlerts = False
     wbMaster.Sheets("Approved").Delete
@@ -215,88 +337,70 @@ Sub ProcessMarkitAndApprovedFunds()
     Application.DisplayAlerts = True
     On Error GoTo 0
     
-    ' Add new clean sheets
+    ' Create new sheets
     Set wsApproved = wbMaster.Sheets.Add(After:=wbMaster.Sheets(wbMaster.Sheets.Count))
     wsApproved.Name = "Approved"
     
     Set wsMarkit = wbMaster.Sheets.Add(After:=wsApproved)
     wsMarkit.Name = "Markit"
     
-    ' Copy the data from the source workbooks to the master workbook
-    ' Important: Copy only the visible cells from the filtered Approved table
-    If tblApproved.ShowAutoFilter Then
-        tblApproved.Range.SpecialCells(xlCellTypeVisible).Copy wsApproved.Range("A1")
-    Else
-        tblApproved.Range.Copy wsApproved.Range("A1")
+    ' ===== Copy data to master workbook =====
+    Application.StatusBar = "Copying Approved data to master workbook..."
+    If Not IsEmpty(approvedArray) Then
+        ' Find dimensions of the approved array
+        If IsArray(approvedArray) Then
+            lastRowApproved = UBound(approvedArray, 1)
+            lastColApproved = UBound(approvedArray, 2)
+            wsApproved.Range("A1").Resize(lastRowApproved, lastColApproved).Value = approvedArray
+        End If
     End If
     
-    tblMarkit.Range.Copy wsMarkit.Range("A1")
+    Application.StatusBar = "Copying Markit data to master workbook..."
+    If Not IsEmpty(markitArray) Then
+        ' Find dimensions of the markit array
+        If IsArray(markitArray) Then
+            lastRowMarkit = UBound(markitArray, 1)
+            lastColMarkit = UBound(markitArray, 2)
+            wsMarkit.Range("A1").Resize(lastRowMarkit, lastColMarkit).Value = markitArray
+        End If
+    End If
     
-    ' Get the dimensions of the copied data
+    ' Convert copied data to tables in master workbook
+    Application.StatusBar = "Creating tables in master workbook..."
+    
+    ' For Approved table
     lastRowApproved = wsApproved.Cells(wsApproved.Rows.Count, "A").End(xlUp).Row
     lastColApproved = wsApproved.Cells(1, wsApproved.Columns.Count).End(xlToLeft).Column
     
+    If lastRowApproved > 0 And lastColApproved > 0 Then
+        On Error Resume Next
+        Set tblApproved = wsApproved.ListObjects.Add(xlSrcRange, wsApproved.Range("A1").Resize(lastRowApproved, lastColApproved), , xlYes)
+        tblApproved.Name = "Approved"
+        On Error GoTo 0
+    End If
+    
+    ' For Markit table
     lastRowMarkit = wsMarkit.Cells(wsMarkit.Rows.Count, "A").End(xlUp).Row
     lastColMarkit = wsMarkit.Cells(1, wsMarkit.Columns.Count).End(xlToLeft).Column
     
-    ' Create ranges for the copied data
-    If lastRowApproved > 0 And lastColApproved > 0 Then
-        Set approvedData = wsApproved.Range(wsApproved.Cells(1, 1), wsApproved.Cells(lastRowApproved, lastColApproved))
-    Else
-        MsgBox "No data found in Approved sheet", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
     If lastRowMarkit > 0 And lastColMarkit > 0 Then
-        Set markitData = wsMarkit.Range(wsMarkit.Cells(1, 1), wsMarkit.Cells(lastRowMarkit, lastColMarkit))
-    Else
-        MsgBox "No data found in Markit sheet", vbExclamation
-        GoTo CleanupAndExit
-    End If
-    
-    ' Make sure there are no existing tables before creating new ones
-    ' This is critical for preventing the "table can't overlap" error
-    For Each existingListObj In wsApproved.ListObjects
-        existingListObj.Unlist
-    Next existingListObj
-    
-    For Each existingListObj In wsMarkit.ListObjects
-        existingListObj.Unlist
-    Next existingListObj
-    
-    ' Now create the tables safely
-    On Error Resume Next
-    Set tblApproved = wsApproved.ListObjects.Add(xlSrcRange, approvedData, , xlYes)
-    If Err.Number <> 0 Then
-        Err.Clear
-        ' Alternative approach - create table directly with worksheet data
-        wsApproved.ListObjects.Add(xlSrcRange, approvedData, , xlYes).Name = "Approved"
-        Set tblApproved = wsApproved.ListObjects("Approved")
-    Else
-        tblApproved.Name = "Approved"
-    End If
-    
-    Set tblMarkit = wsMarkit.ListObjects.Add(xlSrcRange, markitData, , xlYes)
-    If Err.Number <> 0 Then
-        Err.Clear
-        ' Alternative approach - create table directly with worksheet data
-        wsMarkit.ListObjects.Add(xlSrcRange, markitData, , xlYes).Name = "Markit"
-        Set tblMarkit = wsMarkit.ListObjects("Markit")
-    Else
+        On Error Resume Next
+        Set tblMarkit = wsMarkit.ListObjects.Add(xlSrcRange, wsMarkit.Range("A1").Resize(lastRowMarkit, lastColMarkit), , xlYes)
         tblMarkit.Name = "Markit"
+        On Error GoTo 0
     End If
-    On Error GoTo 0
     
-    ' Close the original files
+    ' Close source files to free up memory
+    Application.StatusBar = "Closing source files..."
     wbApproved.Close SaveChanges:=False
     wbMarkit.Close SaveChanges:=False
     
-    ' Create Raw_data sheet with Raw table
+    ' ===== Create Raw_data sheet =====
+    Application.StatusBar = "Creating Raw_data sheet..."
     Set wsRawData = wbMaster.Sheets.Add(After:=wsMarkit)
     wsRawData.Name = "Raw_data"
     
-    ' Define columns for Raw table - clean assignment without redeclaring
-    ReDim rawDataHeaders(14)
+    ' Define columns for Raw table
     rawDataHeaders(0) = "Business Unit"
     rawDataHeaders(1) = "IA GCI"
     rawDataHeaders(2) = "RFAD Investment Manager"
@@ -318,43 +422,58 @@ Sub ProcessMarkitAndApprovedFunds()
         wsRawData.Cells(1, i + 1).Value = rawDataHeaders(i)
     Next i
     
-    ' Create Raw table (initially empty except for headers)
-    Set tblRaw = wsRawData.ListObjects.Add(xlSrcRange, wsRawData.Range("A1").Resize(1, UBound(rawDataHeaders) - LBound(rawDataHeaders) + 1), , xlYes)
-    tblRaw.Name = "Raw"
+    ' ===== Process data for Raw table =====
+    Application.StatusBar = "Processing data for Raw table..."
     
-    ' Create mapping of column names to indexes for both tables
-    Dim approvedColMap As Object, markitColMap As Object
-    Set approvedColMap = CreateObject("Scripting.Dictionary")
-    Set markitColMap = CreateObject("Scripting.Dictionary")
+    ' Determine dimensions for approved data (excluding header)
+    Dim approvedRowCount As Long
+    approvedRowCount = UBound(approvedArray, 1) - 1 ' Subtract header row
     
-    ' Populate dictionaries with column names and indexes
-    For i = 1 To tblApproved.ListColumns.Count
-        approvedColMap.Add tblApproved.ListColumns(i).Name, i
+    ' Pre-allocate Raw array (max size = approved count + header)
+    Dim maxRawRows As Long
+    maxRawRows = approvedRowCount + 1 ' +1 for header
+    ReDim rawArray(1 To maxRawRows, 1 To UBound(rawDataHeaders) + 1)
+    
+    ' Add header row to rawArray
+    For i = LBound(rawDataHeaders) To UBound(rawDataHeaders)
+        rawArray(1, i + 1) = rawDataHeaders(i)
     Next i
     
-    For i = 1 To tblMarkit.ListColumns.Count
-        markitColMap.Add tblMarkit.ListColumns(i).Name, i
-    Next i
+    ' Row counter for rawArray
+    Dim rawRowCount As Long
+    rawRowCount = 1 ' Start at 1 (header row)
     
-    ' Loop through each row in the Approved table
-    For i = 1 To tblApproved.ListRows.Count
-        foundMatch = False
+    ' Process matching
+    Application.StatusBar = "Matching Approved and Markit data (this may take time)..."
+    
+    ' Loop through Approved data (skip header row)
+    For i = 2 To UBound(approvedArray, 1)
+        ' Update status every 100 rows
+        If i Mod 100 = 0 Then
+            Application.StatusBar = "Processing row " & i & " of " & UBound(approvedArray, 1) & "..."
+            DoEvents ' Allow UI to update
+        End If
         
-        ' Get fund code and LEI from Approved table
+        ' Get fund code and LEI from Approved array
         Dim approvedFundCode As String, approvedFundLEI As String, fundGCI As String
         
-        ' Safely get values with error handling
+        ' Initialize variables
+        approvedFundCode = ""
+        approvedFundLEI = ""
+        fundGCI = ""
+        
+        ' Get values safely
         On Error Resume Next
         If approvedColMap.Exists("Fund Code") Then
-            approvedFundCode = tblApproved.ListRows(i).Range.Cells(1, approvedColMap("Fund Code")).Value
+            approvedFundCode = CStr(approvedArray(i, approvedColMap("Fund Code")))
         End If
         
         If approvedColMap.Exists("Fund LEI") Then
-            approvedFundLEI = tblApproved.ListRows(i).Range.Cells(1, approvedColMap("Fund LEI")).Value
+            approvedFundLEI = CStr(approvedArray(i, approvedColMap("Fund LEI")))
         End If
         
         If approvedColMap.Exists("Fund GCI") Then
-            fundGCI = tblApproved.ListRows(i).Range.Cells(1, approvedColMap("Fund GCI")).Value
+            fundGCI = CStr(approvedArray(i, approvedColMap("Fund GCI")))
         Else
             ' Skip this row if Fund GCI doesn't exist
             GoTo NextApprovedRow
@@ -362,163 +481,172 @@ Sub ProcessMarkitAndApprovedFunds()
         On Error GoTo 0
         
         ' Skip if both Fund Code and Fund LEI are empty
-        If Len(Trim(CStr(approvedFundCode))) = 0 And Len(Trim(CStr(approvedFundLEI))) = 0 Then
+        If Len(Trim(approvedFundCode)) = 0 And Len(Trim(approvedFundLEI)) = 0 Then
             GoTo NextApprovedRow
         End If
         
-        ' Look for matching row in Markit table
-        For j = 1 To tblMarkit.ListRows.Count
-            matchFundCode = False
-            matchFundLEI = False
+        ' Initialize match variables
+        foundMatch = False
+        matchFundCode = False
+        matchFundLEI = False
+        Dim matchedMarkitRow As Long
+        matchedMarkitRow = 0
+        
+        ' Try to match by Fund Code first (using dictionary lookup)
+        If Len(Trim(approvedFundCode)) > 0 Then
+            If fundCodeMap.Exists(approvedFundCode) Then
+                matchFundCode = True
+                matchedMarkitRow = fundCodeMap(approvedFundCode)
+            End If
+        End If
+        
+        ' If Fund Code didn't match, try Fund LEI
+        If Not matchFundCode And Len(Trim(approvedFundLEI)) > 0 Then
+            If fundLEIMap.Exists(approvedFundLEI) Then
+                matchFundLEI = True
+                matchedMarkitRow = fundLEIMap(approvedFundLEI)
+            End If
+        End If
+        
+        ' If either Fund Code or Fund LEI matches, populate Raw array
+        If matchFundCode Or matchFundLEI Then
+            foundMatch = True
+            rawRowCount = rawRowCount + 1
             
-            ' Check if Fund Code matches
-            If Len(Trim(CStr(approvedFundCode))) > 0 And markitColMap.Exists("Client Identifier") Then
-                If CStr(tblMarkit.ListRows(j).Range.Cells(1, markitColMap("Client Identifier")).Value) = CStr(approvedFundCode) Then
-                    matchFundCode = True
-                End If
+            ' Add data to rawArray
+            ' 1. Business Unit from Approved
+            If approvedColMap.Exists("Business Unit") Then
+                rawArray(rawRowCount, 1) = approvedArray(i, approvedColMap("Business Unit"))
             End If
             
-            ' If Fund Code doesn't match, check Fund LEI
-            If Not matchFundCode And Len(Trim(CStr(approvedFundLEI))) > 0 And markitColMap.Exists("LEI") Then
-                If CStr(tblMarkit.ListRows(j).Range.Cells(1, markitColMap("LEI")).Value) = CStr(approvedFundLEI) Then
-                    matchFundLEI = True
-                End If
+            ' 2. IA GCI from Approved
+            If approvedColMap.Exists("IA GCI") Then
+                rawArray(rawRowCount, 2) = approvedArray(i, approvedColMap("IA GCI"))
             End If
             
-            ' If either Fund Code or Fund LEI matches, populate Raw table
-            If matchFundCode Or matchFundLEI Then
-                foundMatch = True
-                
-                ' Add new row to Raw table
-                tblRaw.ListRows.Add
-                
-                ' Populate all columns in Raw table based on mapping
-                ' Business Unit from Approved
-                If approvedColMap.Exists("Business Unit") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 1).Value = _
-                        tblApproved.ListRows(i).Range.Cells(1, approvedColMap("Business Unit")).Value
-                End If
-                
-                ' IA GCI from Approved
-                If approvedColMap.Exists("IA GCI") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 2).Value = _
-                        tblApproved.ListRows(i).Range.Cells(1, approvedColMap("IA GCI")).Value
-                End If
-                
-                ' RFAD Investment Manager from Approved (Investment Manager column)
-                If approvedColMap.Exists("Investment Manager") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 3).Value = _
-                        tblApproved.ListRows(i).Range.Cells(1, approvedColMap("Investment Manager")).Value
-                End If
-                
-                ' Markit Investment Manager from Markit
-                If markitColMap.Exists("Investment Manager") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 4).Value = _
-                        tblMarkit.ListRows(j).Range.Cells(1, markitColMap("Investment Manager")).Value
-                End If
-                
-                ' Fund GCI from Approved
-                tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 5).Value = fundGCI
-                
-                ' RFAD Fund Name from Approved (Fund Name column)
-                If approvedColMap.Exists("Fund Name") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 6).Value = _
-                        tblApproved.ListRows(i).Range.Cells(1, approvedColMap("Fund Name")).Value
-                End If
-                
-                ' Markit Fund Name from Markit (Full Legal Fund Name column)
-                If markitColMap.Exists("Full Legal Fund Name") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 7).Value = _
-                        tblMarkit.ListRows(j).Range.Cells(1, markitColMap("Full Legal Fund Name")).Value
-                End If
-                
-                ' Fund LEI from Approved
-                If approvedColMap.Exists("Fund LEI") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 8).Value = _
-                        tblApproved.ListRows(i).Range.Cells(1, approvedColMap("Fund LEI")).Value
-                End If
-                
-                ' Fund Code from Approved
-                If approvedColMap.Exists("Fund Code") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 9).Value = _
-                        tblApproved.ListRows(i).Range.Cells(1, approvedColMap("Fund Code")).Value
-                End If
-                
-                ' RFAD Currency from Approved (Currency column)
-                If approvedColMap.Exists("Currency") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 10).Value = _
-                        tblApproved.ListRows(i).Range.Cells(1, approvedColMap("Currency")).Value
-                End If
-                
-                ' Markit Currency from Markit
-                If markitColMap.Exists("Currency") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 11).Value = _
-                        tblMarkit.ListRows(j).Range.Cells(1, markitColMap("Currency")).Value
-                End If
-                
-                ' RFAD Latest NAV Date from Approved
-                If approvedColMap.Exists("Latest NAV Date") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 12).Value = _
-                        tblApproved.ListRows(i).Range.Cells(1, approvedColMap("Latest NAV Date")).Value
-                End If
-                
-                ' RFAD Latest NAV from Approved
-                If approvedColMap.Exists("Latest NAV") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 13).Value = _
-                        tblApproved.ListRows(i).Range.Cells(1, approvedColMap("Latest NAV")).Value
-                End If
-                
-                ' Markit Latest NAV Date from Markit (As of Date column)
-                If markitColMap.Exists("As of Date") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 14).Value = _
-                        tblMarkit.ListRows(j).Range.Cells(1, markitColMap("As of Date")).Value
-                End If
-                
-                ' Markit Latest NAV from Markit (AUM Value column)
-                If markitColMap.Exists("AUM Value") Then
-                    tblRaw.ListRows(tblRaw.ListRows.Count).Range.Cells(1, 15).Value = _
-                        tblMarkit.ListRows(j).Range.Cells(1, markitColMap("AUM Value")).Value
-                End If
-                
-                ' Only use the first match (either by Fund Code or Fund LEI)
-                Exit For
+            ' 3. RFAD Investment Manager from Approved
+            If approvedColMap.Exists("Investment Manager") Then
+                rawArray(rawRowCount, 3) = approvedArray(i, approvedColMap("Investment Manager"))
             End If
-        Next j
+            
+            ' 4. Markit Investment Manager from Markit
+            If markitColMap.Exists("Investment Manager") Then
+                rawArray(rawRowCount, 4) = markitArray(matchedMarkitRow, markitColMap("Investment Manager"))
+            End If
+            
+            ' 5. Fund GCI from Approved
+            rawArray(rawRowCount, 5) = fundGCI
+            
+            ' 6. RFAD Fund Name from Approved
+            If approvedColMap.Exists("Fund Name") Then
+                rawArray(rawRowCount, 6) = approvedArray(i, approvedColMap("Fund Name"))
+            End If
+            
+            ' 7. Markit Fund Name from Markit
+            If markitColMap.Exists("Full Legal Fund Name") Then
+                rawArray(rawRowCount, 7) = markitArray(matchedMarkitRow, markitColMap("Full Legal Fund Name"))
+            End If
+            
+            ' 8. Fund LEI from Approved
+            If approvedColMap.Exists("Fund LEI") Then
+                rawArray(rawRowCount, 8) = approvedArray(i, approvedColMap("Fund LEI"))
+            End If
+            
+            ' 9. Fund Code from Approved
+            If approvedColMap.Exists("Fund Code") Then
+                rawArray(rawRowCount, 9) = approvedArray(i, approvedColMap("Fund Code"))
+            End If
+            
+            ' 10. RFAD Currency from Approved
+            If approvedColMap.Exists("Currency") Then
+                rawArray(rawRowCount, 10) = approvedArray(i, approvedColMap("Currency"))
+            End If
+            
+            ' 11. Markit Currency from Markit
+            If markitColMap.Exists("Currency") Then
+                rawArray(rawRowCount, 11) = markitArray(matchedMarkitRow, markitColMap("Currency"))
+            End If
+            
+            ' 12. RFAD Latest NAV Date from Approved
+            If approvedColMap.Exists("Latest NAV Date") Then
+                rawArray(rawRowCount, 12) = approvedArray(i, approvedColMap("Latest NAV Date"))
+            End If
+            
+            ' 13. RFAD Latest NAV from Approved
+            If approvedColMap.Exists("Latest NAV") Then
+                rawArray(rawRowCount, 13) = approvedArray(i, approvedColMap("Latest NAV"))
+            End If
+            
+            ' 14. Markit Latest NAV Date from Markit
+            If markitColMap.Exists("As of Date") Then
+                rawArray(rawRowCount, 14) = markitArray(matchedMarkitRow, markitColMap("As of Date"))
+            End If
+            
+            ' 15. Markit Latest NAV from Markit
+            If markitColMap.Exists("AUM Value") Then
+                rawArray(rawRowCount, 15) = markitArray(matchedMarkitRow, markitColMap("AUM Value"))
+            End If
+        End If
 NextApprovedRow:
     Next i
     
-    ' Create "Markit NAV today date" sheet with upload table
+    ' Resize rawArray to actual data size
+    If rawRowCount > 1 Then
+        ReDim Preserve rawArray(1 To rawRowCount, 1 To UBound(rawDataHeaders) + 1)
+    End If
+    
+    ' Write Raw data to worksheet
+    Application.StatusBar = "Writing Raw data to worksheet..."
+    wsRawData.Range("A1").Resize(rawRowCount, UBound(rawDataHeaders) + 1).Value = rawArray
+    
+    ' Create Raw table
+    On Error Resume Next
+    Set tblRaw = wsRawData.ListObjects.Add(xlSrcRange, wsRawData.Range("A1").Resize(rawRowCount, UBound(rawDataHeaders) + 1), , xlYes)
+    tblRaw.Name = "Raw"
+    On Error GoTo 0
+    
+    ' ===== Create Upload sheet =====
+    Application.StatusBar = "Creating Upload sheet..."
     Set wsUpload = wbMaster.Sheets.Add(After:=wsRawData)
     wsUpload.Name = "Markit NAV today date"
     
-    ' Create upload table with same columns as Raw table + Delta column
+    ' Create Upload table headers (same as Raw + Delta)
     For i = LBound(rawDataHeaders) To UBound(rawDataHeaders)
         wsUpload.Cells(1, i + 1).Value = rawDataHeaders(i)
     Next i
     wsUpload.Cells(1, UBound(rawDataHeaders) + 2).Value = "Delta"
     
-    Set tblUpload = wsUpload.ListObjects.Add(xlSrcRange, wsUpload.Range("A1").Resize(1, UBound(rawDataHeaders) - LBound(rawDataHeaders) + 2), , xlYes)
-    tblUpload.Name = "Upload"
+    ' Create Upload array with headers
+    ReDim uploadArray(1 To 1, 1 To UBound(rawDataHeaders) + 2)
     
-    ' Populate upload table with rows from Raw where Markit Latest NAV Date > RFAD Latest NAV Date
-    Dim uploadRow As Long
-    uploadRow = 2 ' Start populating from row 2 (after headers)
+    ' Add header row
+    For i = LBound(rawDataHeaders) To UBound(rawDataHeaders)
+        uploadArray(1, i + 1) = rawDataHeaders(i)
+    Next i
+    uploadArray(1, UBound(rawDataHeaders) + 2) = "Delta"
     
-    ' Loop through each row in Raw table
-    For i = 1 To tblRaw.ListRows.Count
+    ' Prepare for Upload data processing
+    Dim uploadRowCount As Long
+    uploadRowCount = 1 ' Start at 1 (header row)
+    
+    ' Process data for Upload table
+    Application.StatusBar = "Analyzing NAV dates for Upload table..."
+    
+    ' Loop through Raw data (skip header row)
+    For i = 2 To UBound(rawArray, 1)
+        ' Get dates
         Dim rfadNAVDate As Variant, markitNAVDate As Variant
         Dim isMoreRecent As Boolean
         
-        ' Get dates from Raw table
-        rfadNAVDate = tblRaw.ListRows(i).Range.Cells(1, 12).Value
-        markitNAVDate = tblRaw.ListRows(i).Range.Cells(1, 14).Value
+        rfadNAVDate = rawArray(i, 12)
+        markitNAVDate = rawArray(i, 14)
         
-        ' Check if both dates are valid
+        ' Check if Markit date is more recent
         isMoreRecent = False
         
-        ' Only compare if both dates are not empty
+        ' Compare dates if both exist
         If Not IsEmpty(rfadNAVDate) And Not IsEmpty(markitNAVDate) Then
-            ' Try to convert to dates if they're not already
+            ' Convert to dates if needed
             If Not IsDate(rfadNAVDate) Then
                 On Error Resume Next
                 rfadNAVDate = CDate(rfadNAVDate)
@@ -531,78 +659,117 @@ NextApprovedRow:
                 On Error GoTo 0
             End If
             
-            ' Compare dates if both are valid dates
+            ' Compare dates if both are valid
             If IsDate(rfadNAVDate) And IsDate(markitNAVDate) Then
                 isMoreRecent = (CDate(markitNAVDate) > CDate(rfadNAVDate))
             End If
         End If
         
-        ' If Markit date is more recent, add to Upload table
+        ' If Markit date is more recent, add to Upload
         If isMoreRecent Then
-            ' Add new row to Upload table
-            tblUpload.ListRows.Add
+            uploadRowCount = uploadRowCount + 1
+            
+            ' Resize array if needed
+            ReDim Preserve uploadArray(1 To uploadRowCount, 1 To UBound(rawDataHeaders) + 2)
             
             ' Copy all columns from Raw to Upload
             For j = 1 To UBound(rawDataHeaders) + 1
-                tblUpload.ListRows(tblUpload.ListRows.Count).Range.Cells(1, j).Value = _
-                    tblRaw.ListRows(i).Range.Cells(1, j).Value
+                uploadArray(uploadRowCount, j) = rawArray(i, j)
             Next j
             
-            ' Add Delta column calculation
+            ' Calculate Delta
             Dim rfadNAV As Variant, markitNAV As Variant
             Dim deltaValue As Double
             
-            rfadNAV = tblRaw.ListRows(i).Range.Cells(1, 13).Value
-            markitNAV = tblRaw.ListRows(i).Range.Cells(1, 15).Value
+            rfadNAV = rawArray(i, 13)
+            markitNAV = rawArray(i, 15)
             
-            ' Calculate Delta only if both NAVs are valid numbers
+            ' Calculate Delta if both NAVs are valid numbers
             If IsNumeric(rfadNAV) And IsNumeric(markitNAV) And CDbl(rfadNAV) <> 0 Then
-                ' Calculate Delta and format as percentage
                 deltaValue = (CDbl(markitNAV) / CDbl(rfadNAV)) - 1
-                
-                tblUpload.ListRows(tblUpload.ListRows.Count).Range.Cells(1, UBound(rawDataHeaders) + 2).Value = deltaValue
-                tblUpload.ListRows(tblUpload.ListRows.Count).Range.Cells(1, UBound(rawDataHeaders) + 2).NumberFormat = "0.00%"
-                
-                ' Highlight cell if value >= 100% or <= -50%
-                If deltaValue >= 1 Or deltaValue <= -0.5 Then
-                    tblUpload.ListRows(tblUpload.ListRows.Count).Range.Cells(1, UBound(rawDataHeaders) + 2).Interior.Color = RGB(255, 0, 0) ' Red for highlighting
-                End If
+                uploadArray(uploadRowCount, UBound(rawDataHeaders) + 2) = deltaValue
             End If
         End If
     Next i
     
-    ' Apply proper formatting to date columns
-    On Error Resume Next
-    tblRaw.ListColumns("RFAD Latest NAV Date").DataBodyRange.NumberFormat = "yyyy-mm-dd"
-    tblRaw.ListColumns("Markit Latest NAV Date").DataBodyRange.NumberFormat = "yyyy-mm-dd"
-    tblUpload.ListColumns("RFAD Latest NAV Date").DataBodyRange.NumberFormat = "yyyy-mm-dd"
-    tblUpload.ListColumns("Markit Latest NAV Date").DataBodyRange.NumberFormat = "yyyy-mm-dd"
+    ' Write Upload data to worksheet
+    Application.StatusBar = "Writing Upload data to worksheet..."
+    wsUpload.Range("A1").Resize(uploadRowCount, UBound(uploadArray, 2)).Value = uploadArray
     
-    ' Format NAV columns as currency
-    tblRaw.ListColumns("RFAD Latest NAV").DataBodyRange.NumberFormat = "#,##0.00"
-    tblRaw.ListColumns("Markit Latest NAV").DataBodyRange.NumberFormat = "#,##0.00"
-    tblUpload.ListColumns("RFAD Latest NAV").DataBodyRange.NumberFormat = "#,##0.00"
-    tblUpload.ListColumns("Markit Latest NAV").DataBodyRange.NumberFormat = "#,##0.00"
+    ' Create Upload table
+    On Error Resume Next
+    Set tblUpload = wsUpload.ListObjects.Add(xlSrcRange, wsUpload.Range("A1").Resize(uploadRowCount, UBound(uploadArray, 2)), , xlYes)
+    tblUpload.Name = "Upload"
     On Error GoTo 0
     
-    ' Auto-fit columns for better readability
+    ' ===== Apply formatting =====
+    Application.StatusBar = "Applying formatting..."
+    
+    ' Format date columns
+    On Error Resume Next
+    If Not tblRaw Is Nothing Then
+        With tblRaw
+            If .ListColumns.Count >= 12 Then .ListColumns(12).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' RFAD Latest NAV Date
+            If .ListColumns.Count >= 14 Then .ListColumns(14).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' Markit Latest NAV Date
+            If .ListColumns.Count >= 13 Then .ListColumns(13).DataBodyRange.NumberFormat = "#,##0.00" ' RFAD Latest NAV
+            If .ListColumns.Count >= 15 Then .ListColumns(15).DataBodyRange.NumberFormat = "#,##0.00" ' Markit Latest NAV
+        End With
+    End If
+    
+    If Not tblUpload Is Nothing Then
+        With tblUpload
+            If .ListColumns.Count >= 12 Then .ListColumns(12).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' RFAD Latest NAV Date
+            If .ListColumns.Count >= 14 Then .ListColumns(14).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' Markit Latest NAV Date
+            If .ListColumns.Count >= 13 Then .ListColumns(13).DataBodyRange.NumberFormat = "#,##0.00" ' RFAD Latest NAV
+            If .ListColumns.Count >= 15 Then .ListColumns(15).DataBodyRange.NumberFormat = "#,##0.00" ' Markit Latest NAV
+            If .ListColumns.Count >= 16 Then .ListColumns(16).DataBodyRange.NumberFormat = "0.00%" ' Delta
+        End With
+        
+        ' Highlight cells in Delta column if value >= 100% or <= -50%
+        If Not tblUpload.DataBodyRange Is Nothing Then
+            For i = 1 To tblUpload.ListRows.Count
+                Dim cellValue As Variant
+                cellValue = tblUpload.ListRows(i).Range.Cells(1, tblUpload.ListColumns.Count).Value
+                
+                If IsNumeric(cellValue) Then
+                    If cellValue >= 1 Or cellValue <= -0.5 Then
+                        tblUpload.ListRows(i).Range.Cells(1, tblUpload.ListColumns.Count).Interior.Color = RGB(255, 0, 0)
+                    End If
+                End If
+            Next i
+        End If
+    End If
+    On Error GoTo 0
+    
+    ' Auto-fit columns
     wsRawData.Columns.AutoFit
     wsUpload.Columns.AutoFit
     
-    ' Activate the first sheet for a clean finish
+    ' ===== Finish up =====
+    ' Activate first sheet
     wbMaster.Sheets(1).Activate
     
-    ' Turn screen updating and calculations back on
-    Application.ScreenUpdating = True
-    Application.Calculation = xlCalculationAutomatic
+    ' Calculate execution time
+    endTime = Timer
+    executionTime = Format((endTime - startTime) / 86400, "hh:mm:ss")
     
-    MsgBox "Processing completed successfully!", vbInformation
-    Exit Sub
+    ' Success message
+    Application.StatusBar = False
+    MsgBox "Processing completed successfully!" & vbCrLf & _
+           "Total rows processed: " & (UBound(approvedArray, 1) - 1) & vbCrLf & _
+           "Total matches found: " & (rawRowCount - 1) & vbCrLf & _
+           "NAV updates found: " & (uploadRowCount - 1) & vbCrLf & _
+           "Execution time: " & executionTime, vbInformation
     
+    GoTo NormalExit
+
 CleanupAndExit:
-    ' Turn screen updating and calculations back on
+    ' Error handling cleanup
+    Application.StatusBar = False
     Application.ScreenUpdating = True
+    Application.EnableEvents = True
     Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
 
     ' Close files if they're still open
     On Error Resume Next
@@ -616,5 +783,13 @@ CleanupAndExit:
     On Error GoTo 0
     
     MsgBox "An error occurred during processing. Please check your files and try again.", vbExclamation
+    Exit Sub
     
+NormalExit:
+    ' Normal exit cleanup
+    Application.StatusBar = False
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
 End Sub
