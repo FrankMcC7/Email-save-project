@@ -999,7 +999,7 @@ End Sub
 
 ' Helper function to process raw data arrays for upload table
 Sub ProcessRawDataForUpload(rawArray As Variant, rawRowCount As Long, uploadArray As Variant, ByRef uploadRowCount As Long)
-    Dim i As Long
+    Dim i As Long, j As Long, k As Long
     Dim tempUploadArray() As Variant
     Dim rfadNAVDate As Variant
     Dim markitNAVDate As Variant
@@ -1083,6 +1083,10 @@ End Sub
 
 ' Helper function to format Raw tables
 Sub FormatRawTable(tbl As ListObject)
+    Dim i As Long
+    Dim rfadCurrency As String
+    Dim markitCurrency As String
+    
     On Error Resume Next
     If Not tbl Is Nothing Then
         With tbl
@@ -1095,8 +1099,6 @@ Sub FormatRawTable(tbl As ListObject)
             If .ListColumns.Count >= 10 And .ListColumns.Count >= 11 Then
                 ' Highlight Markit Currency if it doesn't match RFAD Currency
                 For i = 1 To .ListRows.Count
-                    Dim rfadCurrency As String
-                    Dim markitCurrency As String
                     
                     rfadCurrency = Trim(CStr(.ListRows(i).Range.Cells(1, 10).Value))
                     markitCurrency = Trim(CStr(.ListRows(i).Range.Cells(1, 11).Value))
@@ -1113,6 +1115,11 @@ End Sub
 
 ' Helper function to format Upload table
 Sub FormatUploadTable(tbl As ListObject)
+    Dim i As Long
+    Dim rfadCurrency As String
+    Dim markitCurrency As String
+    Dim cellValue As Variant
+    
     On Error Resume Next
     If Not tbl Is Nothing Then
         With tbl
