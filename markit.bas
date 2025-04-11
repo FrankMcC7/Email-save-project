@@ -24,6 +24,7 @@ Sub ProcessMarkitAndApprovedFunds()
     Dim i As Long, j As Long
     Dim matchFundCode As Boolean
     Dim matchFundLEI As Boolean
+    Dim existingListObj As ListObject
     
     ' Turn off screen updating and calculations to improve performance
     Application.ScreenUpdating = False
@@ -67,14 +68,58 @@ Sub ProcessMarkitAndApprovedFunds()
     ' Delete the first row
     wsApproved.Rows(1).Delete
     
-    ' Convert data to table named 'Approved'
-    lastRowApproved = wsApproved.Cells(wsApproved.Rows.Count, "A").End(xlUp).Row
-    lastColApproved = wsApproved.Cells(1, wsApproved.Columns.Count).End(xlToLeft).Column
-    Set approvedData = wsApproved.Range(wsApproved.Cells(1, 1), wsApproved.Cells(lastRowApproved, lastColApproved))
-    
-    ' Create a table
-    Set tblApproved = wsApproved.ListObjects.Add(xlSrcRange, approvedData, , xlYes)
-    tblApproved.Name = "Approved"
+    ' Check if the file already contains tables (ListObjects)
+    If wsApproved.ListObjects.Count > 0 Then
+        ' The file already has tables - we'll use them instead of creating new ones
+        Set tblApproved = wsApproved.ListObjects(1)  ' Use the first ListObject in the sheet
+        
+        ' If the table already has a name, capture it for reference
+        If tblApproved.Name <> "" Then
+            Debug.Print "Using existing table: " & tblApproved.Name
+        Else
+            ' Try to rename the table to our standard name
+            On Error Resume Next
+            tblApproved.Name = "Approved"
+            On Error GoTo 0
+        End If
+    Else
+        ' No existing tables, so create one
+        lastRowApproved = wsApproved.Cells(wsApproved.Rows.Count, "A").End(xlUp).Row
+        lastColApproved = wsApproved.Cells(1, wsApproved.Columns.Count).End(xlToLeft).Column
+        Set approvedData = wsApproved.Range(wsApproved.Cells(1, 1), wsApproved.Cells(lastRowApproved, lastColApproved))
+        
+        ' Create a table with error handling - use specific error handling for table overlap
+        On Error Resume Next
+        Set tblApproved = wsApproved.ListObjects.Add(xlSrcRange, approvedData, , xlYes)
+        
+        If Err.Number = 1004 Then  ' Table overlap error
+            ' Try to clear any existing tables that might not be properly detected
+            Err.Clear
+            
+            ' Convert any existing tables to ranges first
+            For i = wsApproved.ListObjects.Count To 1 Step -1
+                wsApproved.ListObjects(i).Unlist
+            Next i
+            
+            ' Try again with the clean sheet
+            Set tblApproved = wsApproved.ListObjects.Add(xlSrcRange, approvedData, , xlYes)
+            
+            If Err.Number <> 0 Then
+                MsgBox "Error: The Approved file already contains tables that couldn't be processed. " & _
+                       "Please manually convert tables to ranges in the file before running this macro.", vbExclamation
+                On Error GoTo 0
+                GoTo CleanupAndExit
+            End If
+        ElseIf Err.Number <> 0 Then
+            MsgBox "Error creating Approved table: " & Err.Description, vbExclamation
+            On Error GoTo 0
+            GoTo CleanupAndExit
+        End If
+        On Error GoTo 0
+        
+        ' Ensure the table is named correctly
+        tblApproved.Name = "Approved"
+    End If
     
     ' Filter to keep only 'FI-EMEA', 'FI-US', and 'FI-GMC-ASIA' in 'Business Unit' column
     ' Find the index of "Business Unit" column
@@ -99,13 +144,65 @@ Sub ProcessMarkitAndApprovedFunds()
     ' Assume data is in the first worksheet
     Set wsMarkit = wbMarkit.Sheets(1)
     
-    ' Convert data to table named 'Markit'
-    lastRowMarkit = wsMarkit.Cells(wsMarkit.Rows.Count, "A").End(xlUp).Row
-    lastColMarkit = wsMarkit.Cells(1, wsMarkit.Columns.Count).End(xlToLeft).Column
-    Set markitData = wsMarkit.Range(wsMarkit.Cells(1, 1), wsMarkit.Cells(lastRowMarkit, lastColMarkit))
-    
-    ' Create a table
-    Set tblMarkit = wsMarkit.ListObjects.Add(xlSrcRange, markitData, , xlYes)
+    ' Check if the file already contains tables (ListObjects)
+    If wsMarkit.ListObjects.Count > 0 Then
+        ' The file already has tables - we'll use them instead of creating new ones
+        Set tblMarkit = wsMarkit.ListObjects(1)  ' Use the first ListObject in the sheet
+        
+        ' If the table already has a name, capture it for reference
+        If tblMarkit.Name <> "" Then
+            Debug.Print "Using existing table: " & tblMarkit.Name
+        Else
+            ' Try to rename the table to our standard name
+            On Error Resume Next
+            tblMarkit.Name = "Markit"
+            On Error GoTo 0
+        End If
+    Else
+        ' No existing tables, so create one
+        lastRowMarkit = wsMarkit.Cells(wsMarkit.Rows.Count, "A").End(xlUp).Row
+        lastColMarkit = wsMarkit.Cells(1, wsMarkit.Columns.Count).End(xlToLeft).Column
+        
+        ' Make sure range is valid
+        If lastRowMarkit < 1 Or lastColMarkit < 1 Then
+            MsgBox "Warning: Could not determine data range in Markit file", vbExclamation
+            GoTo CleanupAndExit
+        End If
+        
+        Set markitData = wsMarkit.Range(wsMarkit.Cells(1, 1), wsMarkit.Cells(lastRowMarkit, lastColMarkit))
+        
+        ' Create a table with error handling - use specific error handling for table overlap
+        On Error Resume Next
+        Set tblMarkit = wsMarkit.ListObjects.Add(xlSrcRange, markitData, , xlYes)
+        
+        If Err.Number = 1004 Then  ' Table overlap error
+            ' Try to clear any existing tables that might not be properly detected
+            Err.Clear
+            
+            ' Convert any existing tables to ranges first
+            For i = wsMarkit.ListObjects.Count To 1 Step -1
+                wsMarkit.ListObjects(i).Unlist
+            Next i
+            
+            ' Try again with the clean sheet
+            Set tblMarkit = wsMarkit.ListObjects.Add(xlSrcRange, markitData, , xlYes)
+            
+            If Err.Number <> 0 Then
+                MsgBox "Error: The Markit file already contains tables that couldn't be processed. " & _
+                       "Please manually convert tables to ranges in the file before running this macro.", vbExclamation
+                On Error GoTo 0
+                GoTo CleanupAndExit
+            End If
+        ElseIf Err.Number <> 0 Then
+            MsgBox "Error creating Markit table: " & Err.Description, vbExclamation
+            On Error GoTo 0
+            GoTo CleanupAndExit
+        End If
+        On Error GoTo 0
+        
+        ' Ensure the table is named correctly
+        tblMarkit.Name = "Markit"
+    End If
     tblMarkit.Name = "Markit"
     
     ' Create new sheets in master workbook for the tables
@@ -439,5 +536,24 @@ NextApprovedRow:
     Application.Calculation = xlCalculationAutomatic
     
     MsgBox "Processing completed successfully!", vbInformation
+    Exit Sub
+    
+CleanupAndExit:
+    ' Turn screen updating and calculations back on
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+
+    ' Close files if they're still open
+    On Error Resume Next
+    If Not wbApproved Is Nothing Then
+        If wbApproved.Name <> "" Then wbApproved.Close SaveChanges:=False
+    End If
+
+    If Not wbMarkit Is Nothing Then
+        If wbMarkit.Name <> "" Then wbMarkit.Close SaveChanges:=False
+    End If
+    On Error GoTo 0
+    
+    MsgBox "An error occurred during processing. Please check your files and try again.", vbExclamation
     
 End Sub
