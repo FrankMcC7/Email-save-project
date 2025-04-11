@@ -3,6 +3,7 @@ Option Explicit
 Sub ProcessMarkitAndApprovedFunds()
     ' Performance-optimized macro for processing Approved funds and Markit files
     ' Handles large datasets (35,000+ rows) efficiently
+    ' Modified to create three separate matching tables and update upload criteria
     
     ' ===== Variable declarations =====
     ' Workbooks and worksheets
@@ -11,7 +12,9 @@ Sub ProcessMarkitAndApprovedFunds()
     Dim wbMarkit As Workbook
     Dim wsApproved As Worksheet
     Dim wsMarkit As Worksheet
-    Dim wsRawData As Worksheet
+    Dim wsRawDataCode As Worksheet
+    Dim wsRawDataLEI As Worksheet
+    Dim wsRawDataName As Worksheet
     Dim wsUpload As Worksheet
     
     ' File paths
@@ -21,7 +24,9 @@ Sub ProcessMarkitAndApprovedFunds()
     ' Tables
     Dim tblApproved As ListObject
     Dim tblMarkit As ListObject
-    Dim tblRaw As ListObject
+    Dim tblRawCode As ListObject
+    Dim tblRawLEI As ListObject
+    Dim tblRawName As ListObject
     Dim tblUpload As ListObject
     
     ' Range variables
@@ -35,9 +40,13 @@ Sub ProcessMarkitAndApprovedFunds()
     ' Arrays for data processing
     Dim approvedArray() As Variant
     Dim markitArray() As Variant
-    Dim rawArray() As Variant
+    Dim rawCodeArray() As Variant
+    Dim rawLEIArray() As Variant
+    Dim rawNameArray() As Variant
     Dim uploadArray() As Variant
-    Dim finalRawArray() As Variant
+    Dim finalRawCodeArray() As Variant
+    Dim finalRawLEIArray() As Variant
+    Dim finalRawNameArray() As Variant
     Dim finalUploadArray() As Variant
     Dim tempUploadArray() As Variant
     Dim rawDataHeaders(14) As String
@@ -47,19 +56,26 @@ Sub ProcessMarkitAndApprovedFunds()
     Dim markitColMap As Object
     Dim fundCodeMap As Object
     Dim fundLEIMap As Object
+    Dim fundNameMap As Object
+    Dim matchedFundMap As Object   ' To track which funds have been matched already
     
     ' Loop counters and flags
     Dim i As Long, j As Long, k As Long
     Dim foundMatch As Boolean
     Dim matchFundCode As Boolean
     Dim matchFundLEI As Boolean
+    Dim matchFundName As Boolean
     
     ' Column indexes and values
     Dim buColIndex As Long
     Dim codeColIndex As Long
     Dim leiColIndex As Long
+    Dim nameColIndex As Long
+    Dim markitNameColIndex As Long
     Dim approvedFundCode As String
     Dim approvedFundLEI As String
+    Dim approvedFundName As String
+    Dim markitFundName As String
     Dim fundGCI As String
     Dim matchedMarkitRow As Long
     
@@ -68,13 +84,18 @@ Sub ProcessMarkitAndApprovedFunds()
     Dim markitNAVDate As Variant
     Dim rfadNAV As Variant
     Dim markitNAV As Variant
-    Dim isMoreRecent As Boolean
+    Dim isMoreRecentBy15Days As Boolean
+    Dim daysDifference As Long
     Dim deltaValue As Double
     Dim cellValue As Variant
+    Dim rfadCurrency As String
+    Dim markitCurrency As String
     
     ' Row counters
     Dim approvedRowCount As Long
-    Dim rawRowCount As Long
+    Dim rawCodeRowCount As Long
+    Dim rawLEIRowCount As Long
+    Dim rawNameRowCount As Long
     Dim uploadRowCount As Long
     Dim maxRawRows As Long
     Dim visibleRowCount As Long
@@ -109,6 +130,8 @@ Sub ProcessMarkitAndApprovedFunds()
     Set markitColMap = CreateObject("Scripting.Dictionary")
     Set fundCodeMap = CreateObject("Scripting.Dictionary")
     Set fundLEIMap = CreateObject("Scripting.Dictionary")
+    Set fundNameMap = CreateObject("Scripting.Dictionary")
+    Set matchedFundMap = CreateObject("Scripting.Dictionary")  ' New: track already matched funds
     
     ' Set reference to the master workbook (current workbook)
     Set wbMaster = ThisWorkbook
@@ -326,7 +349,10 @@ Sub ProcessMarkitAndApprovedFunds()
     Application.StatusBar = "Building lookup tables for faster matching..."
     codeColIndex = 0
     leiColIndex = 0
+    nameColIndex = 0
+    markitNameColIndex = 0
     
+    ' Find column indexes
     If markitColMap.Exists("Client Identifier") Then
         codeColIndex = markitColMap("Client Identifier")
         
@@ -355,6 +381,21 @@ Sub ProcessMarkitAndApprovedFunds()
         Next i
     End If
     
+    ' Add Fund Name lookup for name matching
+    If markitColMap.Exists("Full Legal Fund Name") Then
+        markitNameColIndex = markitColMap("Full Legal Fund Name")
+        
+        ' Build Fund Name lookup map
+        For i = 2 To UBound(markitArray, 1) ' Skip header row
+            If Not IsEmpty(markitArray(i, markitNameColIndex)) Then
+                ' If fund name already exists, keep the first occurrence
+                If Not fundNameMap.Exists(UCase(CStr(markitArray(i, markitNameColIndex)))) Then
+                    fundNameMap.Add UCase(CStr(markitArray(i, markitNameColIndex))), i
+                End If
+            End If
+        Next i
+    End If
+    
     ' ===== Prepare master workbook =====
     Application.StatusBar = "Preparing master workbook..."
     
@@ -363,8 +404,10 @@ Sub ProcessMarkitAndApprovedFunds()
     Application.DisplayAlerts = False
     wbMaster.Sheets("Approved").Delete
     wbMaster.Sheets("Markit").Delete
-    wbMaster.Sheets("Raw_data").Delete
-    wbMaster.Sheets("Markit NAV today date").Delete
+    wbMaster.Sheets("Raw_data_Code").Delete
+    wbMaster.Sheets("Raw_data_LEI").Delete
+    wbMaster.Sheets("Raw_data_Name").Delete
+    wbMaster.Sheets("Markit NAV Upload").Delete
     Application.DisplayAlerts = True
     On Error GoTo 0
     
@@ -426,12 +469,23 @@ Sub ProcessMarkitAndApprovedFunds()
     wbApproved.Close SaveChanges:=False
     wbMarkit.Close SaveChanges:=False
     
-    ' ===== Create Raw_data sheet =====
-    Application.StatusBar = "Creating Raw_data sheet..."
-    Set wsRawData = wbMaster.Sheets.Add(After:=wsMarkit)
-    wsRawData.Name = "Raw_data"
+    ' ===== Create three Raw_data sheets =====
+    ' 1. First sheet for Fund Code matches
+    Application.StatusBar = "Creating Raw_data_Code sheet..."
+    Set wsRawDataCode = wbMaster.Sheets.Add(After:=wsMarkit)
+    wsRawDataCode.Name = "Raw_data_Code"
     
-    ' Define columns for Raw table
+    ' 2. Second sheet for Fund LEI matches
+    Application.StatusBar = "Creating Raw_data_LEI sheet..."
+    Set wsRawDataLEI = wbMaster.Sheets.Add(After:=wsRawDataCode)
+    wsRawDataLEI.Name = "Raw_data_LEI"
+    
+    ' 3. Third sheet for Fund Name matches
+    Application.StatusBar = "Creating Raw_data_Name sheet..."
+    Set wsRawDataName = wbMaster.Sheets.Add(After:=wsRawDataLEI)
+    wsRawDataName.Name = "Raw_data_Name"
+    
+    ' Define columns for Raw tables (same for all three)
     rawDataHeaders(0) = "Business Unit"
     rawDataHeaders(1) = "IA GCI"
     rawDataHeaders(2) = "RFAD Investment Manager"
@@ -448,47 +502,60 @@ Sub ProcessMarkitAndApprovedFunds()
     rawDataHeaders(13) = "Markit Latest NAV Date"
     rawDataHeaders(14) = "Markit Latest NAV"
     
-    ' Create headers for Raw table
+    ' Create headers for all Raw tables
     For i = LBound(rawDataHeaders) To UBound(rawDataHeaders)
-        wsRawData.Cells(1, i + 1).Value = rawDataHeaders(i)
+        wsRawDataCode.Cells(1, i + 1).Value = rawDataHeaders(i)
+        wsRawDataLEI.Cells(1, i + 1).Value = rawDataHeaders(i)
+        wsRawDataName.Cells(1, i + 1).Value = rawDataHeaders(i)
     Next i
     
-    ' ===== Process data for Raw table =====
-    Application.StatusBar = "Processing data for Raw table..."
+    ' ===== Process data for Raw tables =====
+    Application.StatusBar = "Processing data for Raw tables..."
     
     ' Determine dimensions for approved data (excluding header)
     approvedRowCount = UBound(approvedArray, 1) - 1 ' Subtract header row
     
-    ' Pre-allocate Raw array (max size = approved count + header)
+    ' Pre-allocate Raw arrays (max size = approved count + header)
     maxRawRows = approvedRowCount + 1 ' +1 for header
-    ReDim rawArray(1 To maxRawRows, 1 To UBound(rawDataHeaders) + 1)
+    ReDim rawCodeArray(1 To maxRawRows, 1 To UBound(rawDataHeaders) + 1)
+    ReDim rawLEIArray(1 To maxRawRows, 1 To UBound(rawDataHeaders) + 1)
+    ReDim rawNameArray(1 To maxRawRows, 1 To UBound(rawDataHeaders) + 1)
     
-    ' Add header row to rawArray
+    ' Add header rows to all rawArrays
     For i = LBound(rawDataHeaders) To UBound(rawDataHeaders)
-        rawArray(1, i + 1) = rawDataHeaders(i)
+        rawCodeArray(1, i + 1) = rawDataHeaders(i)
+        rawLEIArray(1, i + 1) = rawDataHeaders(i)
+        rawNameArray(1, i + 1) = rawDataHeaders(i)
     Next i
     
-    ' Row counter for rawArray
-    rawRowCount = 1 ' Start at 1 (header row)
+    ' Row counters for rawArrays
+    rawCodeRowCount = 1 ' Start at 1 (header row)
+    rawLEIRowCount = 1 ' Start at 1 (header row)
+    rawNameRowCount = 1 ' Start at 1 (header row)
     
-    ' Process matching
-    Application.StatusBar = "Matching Approved and Markit data (this may take time)..."
+    ' Process matching - First by Fund Code
+    Application.StatusBar = "Matching by Fund Code..."
+    
+    ' Get Fund Name column index in Approved data
+    If approvedColMap.Exists("Fund Name") Then
+        nameColIndex = approvedColMap("Fund Name")
+    End If
     
     ' Loop through Approved data (skip header row)
     For i = 2 To UBound(approvedArray, 1)
         ' Update status every 100 rows
         If i Mod 100 = 0 Then
-            Application.StatusBar = "Processing row " & i & " of " & UBound(approvedArray, 1) & "..."
+            Application.StatusBar = "Processing Fund Code matching: row " & i & " of " & UBound(approvedArray, 1) & "..."
             DoEvents ' Allow UI to update
         End If
         
         ' Initialize variables for this row
         approvedFundCode = ""
         approvedFundLEI = ""
+        approvedFundName = ""
         fundGCI = ""
         foundMatch = False
         matchFundCode = False
-        matchFundLEI = False
         matchedMarkitRow = 0
         
         ' Get values safely
@@ -497,6 +564,61 @@ Sub ProcessMarkitAndApprovedFunds()
             approvedFundCode = CStr(approvedArray(i, approvedColMap("Fund Code")))
         End If
         
+        If approvedColMap.Exists("Fund GCI") Then
+            fundGCI = CStr(approvedArray(i, approvedColMap("Fund GCI")))
+        Else
+            ' Skip this row if Fund GCI doesn't exist
+            GoTo NextApprovedRowCode
+        End If
+        
+        If nameColIndex > 0 Then
+            approvedFundName = CStr(approvedArray(i, nameColIndex))
+        End If
+        On Error GoTo 0
+        
+        ' Skip if Fund Code is empty
+        If Len(Trim(approvedFundCode)) = 0 Then
+            GoTo NextApprovedRowCode
+        End If
+        
+        ' Try to match by Fund Code (using dictionary lookup)
+        If fundCodeMap.Exists(approvedFundCode) Then
+            matchFundCode = True
+            matchedMarkitRow = fundCodeMap(approvedFundCode)
+            
+            ' Add to matched fund map to avoid duplicate matches
+            If Not matchedFundMap.Exists(fundGCI) Then
+                matchedFundMap.Add fundGCI, "Code"
+                
+                ' Populate Raw Code array
+                rawCodeRowCount = rawCodeRowCount + 1
+                PopulateRawArray rawCodeArray, rawCodeRowCount, approvedArray, markitArray, i, matchedMarkitRow, approvedColMap, markitColMap
+            End If
+        End If
+NextApprovedRowCode:
+    Next i
+    
+    ' Process matching - Next by Fund LEI
+    Application.StatusBar = "Matching by Fund LEI..."
+    
+    ' Loop through Approved data again (skip header row)
+    For i = 2 To UBound(approvedArray, 1)
+        ' Update status every 100 rows
+        If i Mod 100 = 0 Then
+            Application.StatusBar = "Processing Fund LEI matching: row " & i & " of " & UBound(approvedArray, 1) & "..."
+            DoEvents ' Allow UI to update
+        End If
+        
+        ' Initialize variables for this row
+        approvedFundCode = ""
+        approvedFundLEI = ""
+        fundGCI = ""
+        foundMatch = False
+        matchFundLEI = False
+        matchedMarkitRow = 0
+        
+        ' Get values safely
+        On Error Resume Next
         If approvedColMap.Exists("Fund LEI") Then
             approvedFundLEI = CStr(approvedArray(i, approvedColMap("Fund LEI")))
         End If
@@ -505,143 +627,168 @@ Sub ProcessMarkitAndApprovedFunds()
             fundGCI = CStr(approvedArray(i, approvedColMap("Fund GCI")))
         Else
             ' Skip this row if Fund GCI doesn't exist
-            GoTo NextApprovedRow
+            GoTo NextApprovedRowLEI
         End If
         On Error GoTo 0
         
-        ' Skip if both Fund Code and Fund LEI are empty
-        If Len(Trim(approvedFundCode)) = 0 And Len(Trim(approvedFundLEI)) = 0 Then
-            GoTo NextApprovedRow
+        ' Skip if Fund LEI is empty
+        If Len(Trim(approvedFundLEI)) = 0 Then
+            GoTo NextApprovedRowLEI
         End If
         
-        ' Try to match by Fund Code first (using dictionary lookup)
-        If Len(Trim(approvedFundCode)) > 0 Then
-            If fundCodeMap.Exists(approvedFundCode) Then
-                matchFundCode = True
-                matchedMarkitRow = fundCodeMap(approvedFundCode)
-            End If
+        ' Skip if already matched by Fund Code
+        If matchedFundMap.Exists(fundGCI) Then
+            GoTo NextApprovedRowLEI
         End If
         
-        ' If Fund Code didn't match, try Fund LEI
-        If Not matchFundCode And Len(Trim(approvedFundLEI)) > 0 Then
-            If fundLEIMap.Exists(approvedFundLEI) Then
-                matchFundLEI = True
-                matchedMarkitRow = fundLEIMap(approvedFundLEI)
+        ' Try to match by Fund LEI
+        If fundLEIMap.Exists(approvedFundLEI) Then
+            matchFundLEI = True
+            matchedMarkitRow = fundLEIMap(approvedFundLEI)
+            
+            ' Add to matched fund map to avoid duplicate matches
+            If Not matchedFundMap.Exists(fundGCI) Then
+                matchedFundMap.Add fundGCI, "LEI"
+                
+                ' Populate Raw LEI array
+                rawLEIRowCount = rawLEIRowCount + 1
+                PopulateRawArray rawLEIArray, rawLEIRowCount, approvedArray, markitArray, i, matchedMarkitRow, approvedColMap, markitColMap
             End If
         End If
-        
-        ' If either Fund Code or Fund LEI matches, populate Raw array
-        If matchFundCode Or matchFundLEI Then
-            foundMatch = True
-            rawRowCount = rawRowCount + 1
-            
-            ' Add data to rawArray
-            ' 1. Business Unit from Approved
-            If approvedColMap.Exists("Business Unit") Then
-                rawArray(rawRowCount, 1) = approvedArray(i, approvedColMap("Business Unit"))
-            End If
-            
-            ' 2. IA GCI from Approved
-            If approvedColMap.Exists("IA GCI") Then
-                rawArray(rawRowCount, 2) = approvedArray(i, approvedColMap("IA GCI"))
-            End If
-            
-            ' 3. RFAD Investment Manager from Approved
-            If approvedColMap.Exists("Investment Manager") Then
-                rawArray(rawRowCount, 3) = approvedArray(i, approvedColMap("Investment Manager"))
-            End If
-            
-            ' 4. Markit Investment Manager from Markit
-            If markitColMap.Exists("Investment Manager") Then
-                rawArray(rawRowCount, 4) = markitArray(matchedMarkitRow, markitColMap("Investment Manager"))
-            End If
-            
-            ' 5. Fund GCI from Approved
-            rawArray(rawRowCount, 5) = fundGCI
-            
-            ' 6. RFAD Fund Name from Approved
-            If approvedColMap.Exists("Fund Name") Then
-                rawArray(rawRowCount, 6) = approvedArray(i, approvedColMap("Fund Name"))
-            End If
-            
-            ' 7. Markit Fund Name from Markit
-            If markitColMap.Exists("Full Legal Fund Name") Then
-                rawArray(rawRowCount, 7) = markitArray(matchedMarkitRow, markitColMap("Full Legal Fund Name"))
-            End If
-            
-            ' 8. Fund LEI from Approved
-            If approvedColMap.Exists("Fund LEI") Then
-                rawArray(rawRowCount, 8) = approvedArray(i, approvedColMap("Fund LEI"))
-            End If
-            
-            ' 9. Fund Code from Approved
-            If approvedColMap.Exists("Fund Code") Then
-                rawArray(rawRowCount, 9) = approvedArray(i, approvedColMap("Fund Code"))
-            End If
-            
-            ' 10. RFAD Currency from Approved
-            If approvedColMap.Exists("Currency") Then
-                rawArray(rawRowCount, 10) = approvedArray(i, approvedColMap("Currency"))
-            End If
-            
-            ' 11. Markit Currency from Markit
-            If markitColMap.Exists("Currency") Then
-                rawArray(rawRowCount, 11) = markitArray(matchedMarkitRow, markitColMap("Currency"))
-            End If
-            
-            ' 12. RFAD Latest NAV Date from Approved
-            If approvedColMap.Exists("Latest NAV Date") Then
-                rawArray(rawRowCount, 12) = approvedArray(i, approvedColMap("Latest NAV Date"))
-            End If
-            
-            ' 13. RFAD Latest NAV from Approved
-            If approvedColMap.Exists("Latest NAV") Then
-                rawArray(rawRowCount, 13) = approvedArray(i, approvedColMap("Latest NAV"))
-            End If
-            
-            ' 14. Markit Latest NAV Date from Markit
-            If markitColMap.Exists("As of Date") Then
-                rawArray(rawRowCount, 14) = markitArray(matchedMarkitRow, markitColMap("As of Date"))
-            End If
-            
-            ' 15. Markit Latest NAV from Markit
-            If markitColMap.Exists("AUM Value") Then
-                rawArray(rawRowCount, 15) = markitArray(matchedMarkitRow, markitColMap("AUM Value"))
-            End If
-        End If
-NextApprovedRow:
+NextApprovedRowLEI:
     Next i
     
-    ' Resize rawArray to actual data size (can't use ReDim Preserve on first dimension of 2D array)
-    ' Instead, we'll create a new array with the exact size we need
-    If rawRowCount > 1 Then
-        ReDim finalRawArray(1 To rawRowCount, 1 To UBound(rawDataHeaders) + 1)
+    ' Process matching - Finally by Fund Name
+    Application.StatusBar = "Matching by Fund Name..."
+    
+    ' Loop through Approved data one more time (skip header row)
+    For i = 2 To UBound(approvedArray, 1)
+        ' Update status every 100 rows
+        If i Mod 100 = 0 Then
+            Application.StatusBar = "Processing Fund Name matching: row " & i & " of " & UBound(approvedArray, 1) & "..."
+            DoEvents ' Allow UI to update
+        End If
+        
+        ' Initialize variables for this row
+        approvedFundName = ""
+        fundGCI = ""
+        matchFundName = False
+        matchedMarkitRow = 0
+        
+        ' Get values safely
+        On Error Resume Next
+        If nameColIndex > 0 Then
+            approvedFundName = CStr(approvedArray(i, nameColIndex))
+        End If
+        
+        If approvedColMap.Exists("Fund GCI") Then
+            fundGCI = CStr(approvedArray(i, approvedColMap("Fund GCI")))
+        Else
+            ' Skip this row if Fund GCI doesn't exist
+            GoTo NextApprovedRowName
+        End If
+        On Error GoTo 0
+        
+        ' Skip if Fund Name is empty
+        If Len(Trim(approvedFundName)) = 0 Then
+            GoTo NextApprovedRowName
+        End If
+        
+        ' Skip if already matched by Fund Code or LEI
+        If matchedFundMap.Exists(fundGCI) Then
+            GoTo NextApprovedRowName
+        End If
+        
+        ' Try to match by Fund Name (using exact match)
+        If fundNameMap.Exists(UCase(approvedFundName)) Then
+            matchFundName = True
+            matchedMarkitRow = fundNameMap(UCase(approvedFundName))
+            
+            ' Add to matched fund map to avoid duplicate matches
+            If Not matchedFundMap.Exists(fundGCI) Then
+                matchedFundMap.Add fundGCI, "Name"
+                
+                ' Populate Raw Name array
+                rawNameRowCount = rawNameRowCount + 1
+                PopulateRawArray rawNameArray, rawNameRowCount, approvedArray, markitArray, i, matchedMarkitRow, approvedColMap, markitColMap
+            End If
+        End If
+NextApprovedRowName:
+    Next i
+    
+    ' Resize and write rawCodeArray
+    If rawCodeRowCount > 1 Then
+        ReDim finalRawCodeArray(1 To rawCodeRowCount, 1 To UBound(rawDataHeaders) + 1)
         
         ' Copy data from original array to the final array
-        For j = 1 To rawRowCount
+        For j = 1 To rawCodeRowCount
             For k = 1 To UBound(rawDataHeaders) + 1
-                finalRawArray(j, k) = rawArray(j, k)
+                finalRawCodeArray(j, k) = rawCodeArray(j, k)
             Next k
         Next j
         
         ' Write the correctly sized array to the worksheet
-        Application.StatusBar = "Writing Raw data to worksheet..."
-        wsRawData.Range("A1").Resize(rawRowCount, UBound(rawDataHeaders) + 1).Value = finalRawArray
+        Application.StatusBar = "Writing Raw_data_Code to worksheet..."
+        wsRawDataCode.Range("A1").Resize(rawCodeRowCount, UBound(rawDataHeaders) + 1).Value = finalRawCodeArray
     Else
         ' If no data, just write the header row
-        wsRawData.Range("A1").Resize(1, UBound(rawDataHeaders) + 1).Value = Application.WorksheetFunction.Index(rawArray, 1, 0)
+        wsRawDataCode.Range("A1").Resize(1, UBound(rawDataHeaders) + 1).Value = Application.WorksheetFunction.Index(rawCodeArray, 1, 0)
     End If
     
-    ' Create Raw table
+    ' Resize and write rawLEIArray
+    If rawLEIRowCount > 1 Then
+        ReDim finalRawLEIArray(1 To rawLEIRowCount, 1 To UBound(rawDataHeaders) + 1)
+        
+        ' Copy data from original array to the final array
+        For j = 1 To rawLEIRowCount
+            For k = 1 To UBound(rawDataHeaders) + 1
+                finalRawLEIArray(j, k) = rawLEIArray(j, k)
+            Next k
+        Next j
+        
+        ' Write the correctly sized array to the worksheet
+        Application.StatusBar = "Writing Raw_data_LEI to worksheet..."
+        wsRawDataLEI.Range("A1").Resize(rawLEIRowCount, UBound(rawDataHeaders) + 1).Value = finalRawLEIArray
+    Else
+        ' If no data, just write the header row
+        wsRawDataLEI.Range("A1").Resize(1, UBound(rawDataHeaders) + 1).Value = Application.WorksheetFunction.Index(rawLEIArray, 1, 0)
+    End If
+    
+    ' Resize and write rawNameArray
+    If rawNameRowCount > 1 Then
+        ReDim finalRawNameArray(1 To rawNameRowCount, 1 To UBound(rawDataHeaders) + 1)
+        
+        ' Copy data from original array to the final array
+        For j = 1 To rawNameRowCount
+            For k = 1 To UBound(rawDataHeaders) + 1
+                finalRawNameArray(j, k) = rawNameArray(j, k)
+            Next k
+        Next j
+        
+        ' Write the correctly sized array to the worksheet
+        Application.StatusBar = "Writing Raw_data_Name to worksheet..."
+        wsRawDataName.Range("A1").Resize(rawNameRowCount, UBound(rawDataHeaders) + 1).Value = finalRawNameArray
+    Else
+        ' If no data, just write the header row
+        wsRawDataName.Range("A1").Resize(1, UBound(rawDataHeaders) + 1).Value = Application.WorksheetFunction.Index(rawNameArray, 1, 0)
+    End If
+    
+    ' Create Raw tables
     On Error Resume Next
-    Set tblRaw = wsRawData.ListObjects.Add(xlSrcRange, wsRawData.Range("A1").Resize(rawRowCount, UBound(rawDataHeaders) + 1), , xlYes)
-    tblRaw.Name = "Raw"
+    Set tblRawCode = wsRawDataCode.ListObjects.Add(xlSrcRange, wsRawDataCode.Range("A1").Resize(rawCodeRowCount, UBound(rawDataHeaders) + 1), , xlYes)
+    tblRawCode.Name = "RawCode"
+    
+    Set tblRawLEI = wsRawDataLEI.ListObjects.Add(xlSrcRange, wsRawDataLEI.Range("A1").Resize(rawLEIRowCount, UBound(rawDataHeaders) + 1), , xlYes)
+    tblRawLEI.Name = "RawLEI"
+    
+    Set tblRawName = wsRawDataName.ListObjects.Add(xlSrcRange, wsRawDataName.Range("A1").Resize(rawNameRowCount, UBound(rawDataHeaders) + 1), , xlYes)
+    tblRawName.Name = "RawName"
     On Error GoTo 0
     
     ' ===== Create Upload sheet =====
-    Application.StatusBar = "Creating Upload sheet..."
-    Set wsUpload = wbMaster.Sheets.Add(After:=wsRawData)
-    wsUpload.Name = "Markit NAV today date"
+    Application.StatusBar = "Creating Markit NAV Upload sheet..."
+    Set wsUpload = wbMaster.Sheets.Add(After:=wsRawDataName)
+    wsUpload.Name = "Markit NAV Upload"
     
     ' Create Upload table headers (same as Raw + Delta)
     For i = LBound(rawDataHeaders) To UBound(rawDataHeaders)
@@ -661,77 +808,19 @@ NextApprovedRow:
     ' Prepare for Upload data processing
     uploadRowCount = 1 ' Start at 1 (header row)
     
-    ' Process data for Upload table
+    ' Process data for Upload table from all three Raw tables
     Application.StatusBar = "Analyzing NAV dates for Upload table..."
     
-    ' Loop through Raw data (skip header row)
-    For i = 2 To rawRowCount
-        ' Get dates
-        rfadNAVDate = rawArray(i, 12)
-        markitNAVDate = rawArray(i, 14)
-        
-        ' Check if Markit date is more recent
-        isMoreRecent = False
-        
-        ' Compare dates if both exist
-        If Not IsEmpty(rfadNAVDate) And Not IsEmpty(markitNAVDate) Then
-            ' Convert to dates if needed
-            If Not IsDate(rfadNAVDate) Then
-                On Error Resume Next
-                rfadNAVDate = CDate(rfadNAVDate)
-                On Error GoTo 0
-            End If
-            
-            If Not IsDate(markitNAVDate) Then
-                On Error Resume Next
-                markitNAVDate = CDate(markitNAVDate)
-                On Error GoTo 0
-            End If
-            
-            ' Compare dates if both are valid
-            If IsDate(rfadNAVDate) And IsDate(markitNAVDate) Then
-                isMoreRecent = (CDate(markitNAVDate) > CDate(rfadNAVDate))
-            End If
-        End If
-        
-        ' If Markit date is more recent, add to Upload
-        If isMoreRecent Then
-            uploadRowCount = uploadRowCount + 1
-            
-            ' If we need to resize the array
-            If uploadRowCount > UBound(uploadArray, 1) Then
-                ' Create a new larger array
-                ReDim tempUploadArray(1 To uploadRowCount * 2, 1 To UBound(rawDataHeaders) + 2)
-                
-                ' Copy existing data
-                For j = 1 To UBound(uploadArray, 1)
-                    For k = 1 To UBound(uploadArray, 2)
-                        tempUploadArray(j, k) = uploadArray(j, k)
-                    Next k
-                Next j
-                
-                ' Replace the old array with the new one
-                uploadArray = tempUploadArray
-            End If
-            
-            ' Copy all columns from Raw to Upload
-            For j = 1 To UBound(rawDataHeaders) + 1
-                uploadArray(uploadRowCount, j) = rawArray(i, j)
-            Next j
-            
-            ' Calculate Delta
-            rfadNAV = rawArray(i, 13)
-            markitNAV = rawArray(i, 15)
-            
-            ' Calculate Delta if both NAVs are valid numbers
-            If IsNumeric(rfadNAV) And IsNumeric(markitNAV) And CDbl(rfadNAV) <> 0 Then
-                deltaValue = (CDbl(markitNAV) / CDbl(rfadNAV)) - 1
-                uploadArray(uploadRowCount, UBound(rawDataHeaders) + 2) = deltaValue
-            End If
-        End If
-    Next i
+    ' Process Raw Code data
+    ProcessRawDataForUpload rawCodeArray, rawCodeRowCount, uploadArray, uploadRowCount
     
-    ' Resize uploadArray to actual data size (can't use ReDim Preserve on first dimension of 2D array)
+    ' Process Raw LEI data
+    ProcessRawDataForUpload rawLEIArray, rawLEIRowCount, uploadArray, uploadRowCount
+    
+    ' Process Raw Name data
+    ProcessRawDataForUpload rawNameArray, rawNameRowCount, uploadArray, uploadRowCount
+    
+    ' Resize uploadArray to actual data size
     If uploadRowCount > 1 Then
         ReDim finalUploadArray(1 To uploadRowCount, 1 To UBound(rawDataHeaders) + 2)
         
@@ -759,43 +848,22 @@ NextApprovedRow:
     ' ===== Apply formatting =====
     Application.StatusBar = "Applying formatting..."
     
-    ' Format date columns
-    On Error Resume Next
-    If Not tblRaw Is Nothing Then
-        With tblRaw
-            If .ListColumns.Count >= 12 Then .ListColumns(12).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' RFAD Latest NAV Date
-            If .ListColumns.Count >= 14 Then .ListColumns(14).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' Markit Latest NAV Date
-            If .ListColumns.Count >= 13 Then .ListColumns(13).DataBodyRange.NumberFormat = "#,##0.00" ' RFAD Latest NAV
-            If .ListColumns.Count >= 15 Then .ListColumns(15).DataBodyRange.NumberFormat = "#,##0.00" ' Markit Latest NAV
-        End With
-    End If
+    ' Format Raw Code table
+    FormatRawTable tblRawCode
     
-    If Not tblUpload Is Nothing Then
-        With tblUpload
-            If .ListColumns.Count >= 12 Then .ListColumns(12).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' RFAD Latest NAV Date
-            If .ListColumns.Count >= 14 Then .ListColumns(14).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' Markit Latest NAV Date
-            If .ListColumns.Count >= 13 Then .ListColumns(13).DataBodyRange.NumberFormat = "#,##0.00" ' RFAD Latest NAV
-            If .ListColumns.Count >= 15 Then .ListColumns(15).DataBodyRange.NumberFormat = "#,##0.00" ' Markit Latest NAV
-            If .ListColumns.Count >= 16 Then .ListColumns(16).DataBodyRange.NumberFormat = "0.00%" ' Delta
-        End With
-        
-        ' Highlight cells in Delta column if value >= 100% or <= -50%
-        If Not tblUpload.DataBodyRange Is Nothing Then
-            For i = 1 To tblUpload.ListRows.Count
-                cellValue = tblUpload.ListRows(i).Range.Cells(1, tblUpload.ListColumns.Count).Value
-                
-                If IsNumeric(cellValue) Then
-                    If cellValue >= 1 Or cellValue <= -0.5 Then
-                        tblUpload.ListRows(i).Range.Cells(1, tblUpload.ListColumns.Count).Interior.Color = RGB(255, 0, 0)
-                    End If
-                End If
-            Next i
-        End If
-    End If
-    On Error GoTo 0
+    ' Format Raw LEI table
+    FormatRawTable tblRawLEI
+    
+    ' Format Raw Name table
+    FormatRawTable tblRawName
+    
+    ' Format Upload table
+    FormatUploadTable tblUpload
     
     ' Auto-fit columns
-    wsRawData.Columns.AutoFit
+    wsRawDataCode.Columns.AutoFit
+    wsRawDataLEI.Columns.AutoFit
+    wsRawDataName.Columns.AutoFit
     wsUpload.Columns.AutoFit
     
     ' ===== Finish up =====
@@ -810,7 +878,9 @@ NextApprovedRow:
     Application.StatusBar = False
     MsgBox "Processing completed successfully!" & vbCrLf & _
            "Total rows processed: " & (UBound(approvedArray, 1) - 1) & vbCrLf & _
-           "Total matches found: " & (rawRowCount - 1) & vbCrLf & _
+           "Fund Code matches found: " & (rawCodeRowCount - 1) & vbCrLf & _
+           "Fund LEI matches found: " & (rawLEIRowCount - 1) & vbCrLf & _
+           "Fund Name matches found: " & (rawNameRowCount - 1) & vbCrLf & _
            "NAV updates found: " & (uploadRowCount - 1) & vbCrLf & _
            "Execution time: " & executionTime, vbInformation
     
@@ -845,4 +915,243 @@ NormalExit:
     Application.EnableEvents = True
     Application.Calculation = xlCalculationAutomatic
     Application.DisplayAlerts = True
+End Sub
+
+' Helper function to populate a raw array with data from approved and markit arrays
+Sub PopulateRawArray(rawArray As Variant, rawRowCount As Long, approvedArray As Variant, markitArray As Variant, _
+                    approvedRow As Long, markitRow As Long, approvedColMap As Object, markitColMap As Object)
+    
+    ' 1. Business Unit from Approved
+    If approvedColMap.Exists("Business Unit") Then
+        rawArray(rawRowCount, 1) = approvedArray(approvedRow, approvedColMap("Business Unit"))
+    End If
+    
+    ' 2. IA GCI from Approved
+    If approvedColMap.Exists("IA GCI") Then
+        rawArray(rawRowCount, 2) = approvedArray(approvedRow, approvedColMap("IA GCI"))
+    End If
+    
+    ' 3. RFAD Investment Manager from Approved
+    If approvedColMap.Exists("Investment Manager") Then
+        rawArray(rawRowCount, 3) = approvedArray(approvedRow, approvedColMap("Investment Manager"))
+    End If
+    
+    ' 4. Markit Investment Manager from Markit
+    If markitColMap.Exists("Investment Manager") Then
+        rawArray(rawRowCount, 4) = markitArray(markitRow, markitColMap("Investment Manager"))
+    End If
+    
+    ' 5. Fund GCI from Approved
+    If approvedColMap.Exists("Fund GCI") Then
+        rawArray(rawRowCount, 5) = approvedArray(approvedRow, approvedColMap("Fund GCI"))
+    End If
+    
+    ' 6. RFAD Fund Name from Approved
+    If approvedColMap.Exists("Fund Name") Then
+        rawArray(rawRowCount, 6) = approvedArray(approvedRow, approvedColMap("Fund Name"))
+    End If
+    
+    ' 7. Markit Fund Name from Markit
+    If markitColMap.Exists("Full Legal Fund Name") Then
+        rawArray(rawRowCount, 7) = markitArray(markitRow, markitColMap("Full Legal Fund Name"))
+    End If
+    
+    ' 8. Fund LEI from Approved
+    If approvedColMap.Exists("Fund LEI") Then
+        rawArray(rawRowCount, 8) = approvedArray(approvedRow, approvedColMap("Fund LEI"))
+    End If
+    
+    ' 9. Fund Code from Approved
+    If approvedColMap.Exists("Fund Code") Then
+        rawArray(rawRowCount, 9) = approvedArray(approvedRow, approvedColMap("Fund Code"))
+    End If
+    
+    ' 10. RFAD Currency from Approved
+    If approvedColMap.Exists("Currency") Then
+        rawArray(rawRowCount, 10) = approvedArray(approvedRow, approvedColMap("Currency"))
+    End If
+    
+    ' 11. Markit Currency from Markit
+    If markitColMap.Exists("Currency") Then
+        rawArray(rawRowCount, 11) = markitArray(markitRow, markitColMap("Currency"))
+    End If
+    
+    ' 12. RFAD Latest NAV Date from Approved
+    If approvedColMap.Exists("Latest NAV Date") Then
+        rawArray(rawRowCount, 12) = approvedArray(approvedRow, approvedColMap("Latest NAV Date"))
+    End If
+    
+    ' 13. RFAD Latest NAV from Approved
+    If approvedColMap.Exists("Latest NAV") Then
+        rawArray(rawRowCount, 13) = approvedArray(approvedRow, approvedColMap("Latest NAV"))
+    End If
+    
+    ' 14. Markit Latest NAV Date from Markit
+    If markitColMap.Exists("As of Date") Then
+        rawArray(rawRowCount, 14) = markitArray(markitRow, markitColMap("As of Date"))
+    End If
+    
+    ' 15. Markit Latest NAV from Markit
+    If markitColMap.Exists("AUM Value") Then
+        rawArray(rawRowCount, 15) = markitArray(markitRow, markitColMap("AUM Value"))
+    End If
+End Sub
+
+' Helper function to process raw data arrays for upload table
+Sub ProcessRawDataForUpload(rawArray As Variant, rawRowCount As Long, uploadArray As Variant, ByRef uploadRowCount As Long)
+    Dim i As Long
+    Dim tempUploadArray() As Variant
+    Dim rfadNAVDate As Variant
+    Dim markitNAVDate As Variant
+    Dim isMoreRecentBy15Days As Boolean
+    Dim daysDifference As Long
+    Dim rfadNAV As Variant
+    Dim markitNAV As Variant
+    Dim deltaValue As Double
+    
+    ' Loop through Raw data (skip header row)
+    For i = 2 To rawRowCount
+        ' Get dates
+        rfadNAVDate = rawArray(i, 12)
+        markitNAVDate = rawArray(i, 14)
+        
+        ' Check if Markit date is at least 15 days more recent
+        isMoreRecentBy15Days = False
+        
+        ' Compare dates if both exist
+        If Not IsEmpty(rfadNAVDate) And Not IsEmpty(markitNAVDate) Then
+            ' Convert to dates if needed
+            If Not IsDate(rfadNAVDate) Then
+                On Error Resume Next
+                rfadNAVDate = CDate(rfadNAVDate)
+                On Error GoTo 0
+            End If
+            
+            If Not IsDate(markitNAVDate) Then
+                On Error Resume Next
+                markitNAVDate = CDate(markitNAVDate)
+                On Error GoTo 0
+            End If
+            
+            ' Compare dates if both are valid
+            If IsDate(rfadNAVDate) And IsDate(markitNAVDate) Then
+                ' Calculate days difference
+                daysDifference = DateDiff("d", CDate(rfadNAVDate), CDate(markitNAVDate))
+                isMoreRecentBy15Days = (daysDifference >= 15)
+            End If
+        End If
+        
+        ' If Markit date is at least 15 days more recent, add to Upload
+        If isMoreRecentBy15Days Then
+            uploadRowCount = uploadRowCount + 1
+            
+            ' If we need to resize the array
+            If uploadRowCount > UBound(uploadArray, 1) Then
+                ' Create a new larger array
+                ReDim tempUploadArray(1 To uploadRowCount * 2, 1 To UBound(uploadArray, 2))
+                
+                ' Copy existing data
+                For j = 1 To UBound(uploadArray, 1)
+                    For k = 1 To UBound(uploadArray, 2)
+                        tempUploadArray(j, k) = uploadArray(j, k)
+                    Next k
+                Next j
+                
+                ' Replace the old array with the new one
+                uploadArray = tempUploadArray
+            End If
+            
+            ' Copy all columns from Raw to Upload
+            For j = 1 To UBound(rawArray, 2)
+                uploadArray(uploadRowCount, j) = rawArray(i, j)
+            Next j
+            
+            ' Calculate Delta with Markit NAV in millions
+            rfadNAV = rawArray(i, 13)
+            markitNAV = rawArray(i, 15)
+            
+            ' Calculate Delta if both NAVs are valid numbers
+            If IsNumeric(rfadNAV) And IsNumeric(markitNAV) And CDbl(rfadNAV) <> 0 Then
+                ' Convert Markit NAV to millions
+                markitNAV = CDbl(markitNAV) / 1000000
+                deltaValue = (markitNAV / CDbl(rfadNAV)) - 1
+                uploadArray(uploadRowCount, UBound(uploadArray, 2)) = deltaValue
+            End If
+        End If
+    Next i
+End Sub
+
+' Helper function to format Raw tables
+Sub FormatRawTable(tbl As ListObject)
+    On Error Resume Next
+    If Not tbl Is Nothing Then
+        With tbl
+            If .ListColumns.Count >= 12 Then .ListColumns(12).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' RFAD Latest NAV Date
+            If .ListColumns.Count >= 14 Then .ListColumns(14).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' Markit Latest NAV Date
+            If .ListColumns.Count >= 13 Then .ListColumns(13).DataBodyRange.NumberFormat = "#,##0.00" ' RFAD Latest NAV
+            If .ListColumns.Count >= 15 Then .ListColumns(15).DataBodyRange.NumberFormat = "#,##0.00" ' Markit Latest NAV
+            
+            ' Add currency mismatch highlighting
+            If .ListColumns.Count >= 10 And .ListColumns.Count >= 11 Then
+                ' Highlight Markit Currency if it doesn't match RFAD Currency
+                For i = 1 To .ListRows.Count
+                    Dim rfadCurrency As String
+                    Dim markitCurrency As String
+                    
+                    rfadCurrency = Trim(CStr(.ListRows(i).Range.Cells(1, 10).Value))
+                    markitCurrency = Trim(CStr(.ListRows(i).Range.Cells(1, 11).Value))
+                    
+                    If rfadCurrency <> "" And markitCurrency <> "" And rfadCurrency <> markitCurrency Then
+                        .ListRows(i).Range.Cells(1, 11).Interior.Color = RGB(255, 255, 0) ' Yellow highlight
+                    End If
+                Next i
+            End If
+        End With
+    End If
+    On Error GoTo 0
+End Sub
+
+' Helper function to format Upload table
+Sub FormatUploadTable(tbl As ListObject)
+    On Error Resume Next
+    If Not tbl Is Nothing Then
+        With tbl
+            If .ListColumns.Count >= 12 Then .ListColumns(12).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' RFAD Latest NAV Date
+            If .ListColumns.Count >= 14 Then .ListColumns(14).DataBodyRange.NumberFormat = "yyyy-mm-dd" ' Markit Latest NAV Date
+            If .ListColumns.Count >= 13 Then .ListColumns(13).DataBodyRange.NumberFormat = "#,##0.00" ' RFAD Latest NAV
+            If .ListColumns.Count >= 15 Then .ListColumns(15).DataBodyRange.NumberFormat = "#,##0.00" ' Markit Latest NAV
+            If .ListColumns.Count >= 16 Then .ListColumns(16).DataBodyRange.NumberFormat = "0.00%" ' Delta
+            
+            ' Add currency mismatch highlighting
+            If .ListColumns.Count >= 10 And .ListColumns.Count >= 11 Then
+                ' Highlight Markit Currency if it doesn't match RFAD Currency
+                For i = 1 To .ListRows.Count
+                    Dim rfadCurrency As String
+                    Dim markitCurrency As String
+                    
+                    rfadCurrency = Trim(CStr(.ListRows(i).Range.Cells(1, 10).Value))
+                    markitCurrency = Trim(CStr(.ListRows(i).Range.Cells(1, 11).Value))
+                    
+                    If rfadCurrency <> "" And markitCurrency <> "" And rfadCurrency <> markitCurrency Then
+                        .ListRows(i).Range.Cells(1, 11).Interior.Color = RGB(255, 255, 0) ' Yellow highlight
+                    End If
+                Next i
+            End If
+            
+            ' Highlight cells in Delta column if value >= 100% or <= -50%
+            If Not .DataBodyRange Is Nothing Then
+                For i = 1 To .ListRows.Count
+                    Dim cellValue As Variant
+                    cellValue = .ListRows(i).Range.Cells(1, .ListColumns.Count).Value
+                    
+                    If IsNumeric(cellValue) Then
+                        If cellValue >= 1 Or cellValue <= -0.5 Then
+                            .ListRows(i).Range.Cells(1, .ListColumns.Count).Interior.Color = RGB(255, 0, 0)
+                        End If
+                    End If
+                Next i
+            End If
+        End With
+    End If
+    On Error GoTo 0
 End Sub
