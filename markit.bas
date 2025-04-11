@@ -1094,9 +1094,6 @@ Sub FormatRawTable(tbl As ListObject)
             If .ListColumns.Count >= 10 And .ListColumns.Count >= 11 Then
                 ' Highlight Markit Currency if it doesn't match RFAD Currency
                 For i = 1 To .ListRows.Count
-                    Dim cellValue As Variant
-                    Dim rfadCurrency As String
-                    Dim markitCurrency As String
                     Dim rfadCurrency As String
                     Dim markitCurrency As String
                     
@@ -1145,6 +1142,7 @@ Sub FormatUploadTable(tbl As ListObject)
             ' Highlight cells in Delta column if value >= 100% or <= -50%
             If Not .DataBodyRange Is Nothing Then
                 For i = 1 To .ListRows.Count
+                    Dim cellValue As Variant
                     cellValue = .ListRows(i).Range.Cells(1, .ListColumns.Count).Value
                     
                     If IsNumeric(cellValue) Then
