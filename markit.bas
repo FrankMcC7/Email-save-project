@@ -207,36 +207,85 @@ Sub ProcessMarkitAndApprovedFunds()
     
     ' Create new sheets in master workbook for the tables
     On Error Resume Next
+    Application.DisplayAlerts = False
     wbMaster.Sheets("Approved").Delete
     wbMaster.Sheets("Markit").Delete
     wbMaster.Sheets("Raw_data").Delete
     wbMaster.Sheets("Markit NAV today date").Delete
+    Application.DisplayAlerts = True
     On Error GoTo 0
     
+    ' Add new clean sheets
     Set wsApproved = wbMaster.Sheets.Add(After:=wbMaster.Sheets(wbMaster.Sheets.Count))
     wsApproved.Name = "Approved"
     
     Set wsMarkit = wbMaster.Sheets.Add(After:=wsApproved)
     wsMarkit.Name = "Markit"
     
-    ' Copy the tables to the master workbook
-    tblApproved.Range.SpecialCells(xlCellTypeVisible).Copy wsApproved.Range("A1")
+    ' Copy the data from the source workbooks to the master workbook
+    ' Important: Copy only the visible cells from the filtered Approved table
+    If tblApproved.ShowAutoFilter Then
+        tblApproved.Range.SpecialCells(xlCellTypeVisible).Copy wsApproved.Range("A1")
+    Else
+        tblApproved.Range.Copy wsApproved.Range("A1")
+    End If
+    
     tblMarkit.Range.Copy wsMarkit.Range("A1")
     
-    ' Convert copied data to tables in master workbook
+    ' Get the dimensions of the copied data
     lastRowApproved = wsApproved.Cells(wsApproved.Rows.Count, "A").End(xlUp).Row
     lastColApproved = wsApproved.Cells(1, wsApproved.Columns.Count).End(xlToLeft).Column
-    Set approvedData = wsApproved.Range(wsApproved.Cells(1, 1), wsApproved.Cells(lastRowApproved, lastColApproved))
     
     lastRowMarkit = wsMarkit.Cells(wsMarkit.Rows.Count, "A").End(xlUp).Row
     lastColMarkit = wsMarkit.Cells(1, wsMarkit.Columns.Count).End(xlToLeft).Column
-    Set markitData = wsMarkit.Range(wsMarkit.Cells(1, 1), wsMarkit.Cells(lastRowMarkit, lastColMarkit))
     
+    ' Create ranges for the copied data
+    If lastRowApproved > 0 And lastColApproved > 0 Then
+        Set approvedData = wsApproved.Range(wsApproved.Cells(1, 1), wsApproved.Cells(lastRowApproved, lastColApproved))
+    Else
+        MsgBox "No data found in Approved sheet", vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    If lastRowMarkit > 0 And lastColMarkit > 0 Then
+        Set markitData = wsMarkit.Range(wsMarkit.Cells(1, 1), wsMarkit.Cells(lastRowMarkit, lastColMarkit))
+    Else
+        MsgBox "No data found in Markit sheet", vbExclamation
+        GoTo CleanupAndExit
+    End If
+    
+    ' Make sure there are no existing tables before creating new ones
+    ' This is critical for preventing the "table can't overlap" error
+    For Each existingListObj In wsApproved.ListObjects
+        existingListObj.Unlist
+    Next existingListObj
+    
+    For Each existingListObj In wsMarkit.ListObjects
+        existingListObj.Unlist
+    Next existingListObj
+    
+    ' Now create the tables safely
+    On Error Resume Next
     Set tblApproved = wsApproved.ListObjects.Add(xlSrcRange, approvedData, , xlYes)
-    tblApproved.Name = "Approved"
+    If Err.Number <> 0 Then
+        Err.Clear
+        ' Alternative approach - create table directly with worksheet data
+        wsApproved.ListObjects.Add(xlSrcRange, approvedData, , xlYes).Name = "Approved"
+        Set tblApproved = wsApproved.ListObjects("Approved")
+    Else
+        tblApproved.Name = "Approved"
+    End If
     
     Set tblMarkit = wsMarkit.ListObjects.Add(xlSrcRange, markitData, , xlYes)
-    tblMarkit.Name = "Markit"
+    If Err.Number <> 0 Then
+        Err.Clear
+        ' Alternative approach - create table directly with worksheet data
+        wsMarkit.ListObjects.Add(xlSrcRange, markitData, , xlYes).Name = "Markit"
+        Set tblMarkit = wsMarkit.ListObjects("Markit")
+    Else
+        tblMarkit.Name = "Markit"
+    End If
+    On Error GoTo 0
     
     ' Close the original files
     wbApproved.Close SaveChanges:=False
