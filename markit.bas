@@ -87,9 +87,6 @@ Sub ProcessMarkitAndApprovedFunds()
     Dim isMoreRecentBy15Days As Boolean
     Dim daysDifference As Long
     Dim deltaValue As Double
-    Dim cellValue As Variant
-    Dim rfadCurrency As String
-    Dim markitCurrency As String
     
     ' Row counters
     Dim approvedRowCount As Long
@@ -721,11 +718,11 @@ NextApprovedRowName:
         ReDim finalRawCodeArray(1 To rawCodeRowCount, 1 To UBound(rawDataHeaders) + 1)
         
         ' Copy data from original array to the final array
-        For j = 1 To rawCodeRowCount
+        For i = 1 To rawCodeRowCount
             For k = 1 To UBound(rawDataHeaders) + 1
-                finalRawCodeArray(j, k) = rawCodeArray(j, k)
+                finalRawCodeArray(i, k) = rawCodeArray(i, k)
             Next k
-        Next j
+        Next i
         
         ' Write the correctly sized array to the worksheet
         Application.StatusBar = "Writing Raw_data_Code to worksheet..."
@@ -740,11 +737,11 @@ NextApprovedRowName:
         ReDim finalRawLEIArray(1 To rawLEIRowCount, 1 To UBound(rawDataHeaders) + 1)
         
         ' Copy data from original array to the final array
-        For j = 1 To rawLEIRowCount
+        For i = 1 To rawLEIRowCount
             For k = 1 To UBound(rawDataHeaders) + 1
-                finalRawLEIArray(j, k) = rawLEIArray(j, k)
+                finalRawLEIArray(i, k) = rawLEIArray(i, k)
             Next k
-        Next j
+        Next i
         
         ' Write the correctly sized array to the worksheet
         Application.StatusBar = "Writing Raw_data_LEI to worksheet..."
@@ -759,11 +756,11 @@ NextApprovedRowName:
         ReDim finalRawNameArray(1 To rawNameRowCount, 1 To UBound(rawDataHeaders) + 1)
         
         ' Copy data from original array to the final array
-        For j = 1 To rawNameRowCount
+        For i = 1 To rawNameRowCount
             For k = 1 To UBound(rawDataHeaders) + 1
-                finalRawNameArray(j, k) = rawNameArray(j, k)
+                finalRawNameArray(i, k) = rawNameArray(i, k)
             Next k
-        Next j
+        Next i
         
         ' Write the correctly sized array to the worksheet
         Application.StatusBar = "Writing Raw_data_Name to worksheet..."
@@ -825,11 +822,11 @@ NextApprovedRowName:
         ReDim finalUploadArray(1 To uploadRowCount, 1 To UBound(rawDataHeaders) + 2)
         
         ' Copy data from original array to the final array
-        For j = 1 To uploadRowCount
+        For i = 1 To uploadRowCount
             For k = 1 To UBound(rawDataHeaders) + 2
-                finalUploadArray(j, k) = uploadArray(j, k)
+                finalUploadArray(i, k) = uploadArray(i, k)
             Next k
-        Next j
+        Next i
         
         ' Write the correctly sized array to the worksheet
         Application.StatusBar = "Writing Upload data to worksheet..."
@@ -1072,7 +1069,7 @@ Sub ProcessRawDataForUpload(rawArray As Variant, rawRowCount As Long, uploadArra
             
             ' Calculate Delta if both NAVs are valid numbers
             If IsNumeric(rfadNAV) And IsNumeric(markitNAV) And CDbl(rfadNAV) <> 0 Then
-                ' Convert Markit NAV to millions
+                ' Convert Markit NAV to millions - RFAD NAV is already in millions
                 markitNAV = CDbl(markitNAV) / 1000000
                 deltaValue = (markitNAV / CDbl(rfadNAV)) - 1
                 uploadArray(uploadRowCount, UBound(uploadArray, 2)) = deltaValue
@@ -1084,8 +1081,6 @@ End Sub
 ' Helper function to format Raw tables
 Sub FormatRawTable(tbl As ListObject)
     Dim i As Long
-    Dim rfadCurrency As String
-    Dim markitCurrency As String
     
     On Error Resume Next
     If Not tbl Is Nothing Then
@@ -1099,6 +1094,11 @@ Sub FormatRawTable(tbl As ListObject)
             If .ListColumns.Count >= 10 And .ListColumns.Count >= 11 Then
                 ' Highlight Markit Currency if it doesn't match RFAD Currency
                 For i = 1 To .ListRows.Count
+                    Dim cellValue As Variant
+                    Dim rfadCurrency As String
+                    Dim markitCurrency As String
+                    Dim rfadCurrency As String
+                    Dim markitCurrency As String
                     
                     rfadCurrency = Trim(CStr(.ListRows(i).Range.Cells(1, 10).Value))
                     markitCurrency = Trim(CStr(.ListRows(i).Range.Cells(1, 11).Value))
@@ -1116,9 +1116,6 @@ End Sub
 ' Helper function to format Upload table
 Sub FormatUploadTable(tbl As ListObject)
     Dim i As Long
-    Dim rfadCurrency As String
-    Dim markitCurrency As String
-    Dim cellValue As Variant
     
     On Error Resume Next
     If Not tbl Is Nothing Then
@@ -1148,7 +1145,6 @@ Sub FormatUploadTable(tbl As ListObject)
             ' Highlight cells in Delta column if value >= 100% or <= -50%
             If Not .DataBodyRange Is Nothing Then
                 For i = 1 To .ListRows.Count
-                    Dim cellValue As Variant
                     cellValue = .ListRows(i).Range.Cells(1, .ListColumns.Count).Value
                     
                     If IsNumeric(cellValue) Then
