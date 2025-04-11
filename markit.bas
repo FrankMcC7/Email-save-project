@@ -295,11 +295,23 @@ Sub ProcessMarkitAndApprovedFunds()
     Set wsRawData = wbMaster.Sheets.Add(After:=wsMarkit)
     wsRawData.Name = "Raw_data"
     
-    ' Define columns for Raw table
-    rawDataHeaders = Array("Business Unit", "IA GCI", "RFAD Investment Manager", "Markit Investment Manager", _
-                          "Fund GCI", "RFAD Fund Name", "Markit Fund Name", "Fund LEI", "Fund Code", _
-                          "RFAD Currency", "Markit Currency", "RFAD Latest NAV Date", "RFAD Latest NAV", _
-                          "Markit Latest NAV Date", "Markit Latest NAV")
+    ' Define columns for Raw table - clean declaration with proper line continuation
+    Dim rawDataHeaders(14) As String
+    rawDataHeaders(0) = "Business Unit"
+    rawDataHeaders(1) = "IA GCI"
+    rawDataHeaders(2) = "RFAD Investment Manager"
+    rawDataHeaders(3) = "Markit Investment Manager"
+    rawDataHeaders(4) = "Fund GCI"
+    rawDataHeaders(5) = "RFAD Fund Name"
+    rawDataHeaders(6) = "Markit Fund Name"
+    rawDataHeaders(7) = "Fund LEI"
+    rawDataHeaders(8) = "Fund Code"
+    rawDataHeaders(9) = "RFAD Currency"
+    rawDataHeaders(10) = "Markit Currency"
+    rawDataHeaders(11) = "RFAD Latest NAV Date"
+    rawDataHeaders(12) = "RFAD Latest NAV"
+    rawDataHeaders(13) = "Markit Latest NAV Date"
+    rawDataHeaders(14) = "Markit Latest NAV"
     
     ' Create headers for Raw table
     For i = LBound(rawDataHeaders) To UBound(rawDataHeaders)
