@@ -37,6 +37,9 @@ Sub ProcessMarkitAndApprovedFunds()
     Dim markitArray() As Variant
     Dim rawArray() As Variant
     Dim uploadArray() As Variant
+    Dim finalRawArray() As Variant
+    Dim finalUploadArray() As Variant
+    Dim tempUploadArray() As Variant
     Dim rawDataHeaders(14) As String
     
     ' Dictionary objects for faster lookups
@@ -46,15 +49,49 @@ Sub ProcessMarkitAndApprovedFunds()
     Dim fundLEIMap As Object
     
     ' Loop counters and flags
-    Dim i As Long, j As Long, k As Long 
+    Dim i As Long, j As Long, k As Long
     Dim foundMatch As Boolean
     Dim matchFundCode As Boolean
     Dim matchFundLEI As Boolean
+    
+    ' Column indexes and values
+    Dim buColIndex As Long
+    Dim codeColIndex As Long
+    Dim leiColIndex As Long
+    Dim approvedFundCode As String
+    Dim approvedFundLEI As String
+    Dim fundGCI As String
+    Dim matchedMarkitRow As Long
+    
+    ' Date and NAV variables
+    Dim rfadNAVDate As Variant
+    Dim markitNAVDate As Variant
+    Dim rfadNAV As Variant
+    Dim markitNAV As Variant
+    Dim isMoreRecent As Boolean
+    Dim deltaValue As Double
+    Dim cellValue As Variant
+    
+    ' Row counters
+    Dim approvedRowCount As Long
+    Dim rawRowCount As Long
+    Dim uploadRowCount As Long
+    Dim maxRawRows As Long
+    Dim visibleRowCount As Long
+    Dim dataRow As Long
     
     ' Timing and status variables
     Dim startTime As Double
     Dim endTime As Double
     Dim executionTime As String
+    
+    ' Range objects for visible cells processing
+    Dim visibleCells As Range
+    Dim visibleArea As Range
+    Dim visibleRow As Range
+    
+    ' For objects
+    Dim existingObj As Object
     
     ' Record start time
     startTime = Timer
@@ -161,7 +198,6 @@ Sub ProcessMarkitAndApprovedFunds()
     On Error GoTo 0
     
     ' Filter to keep only 'FI-EMEA', 'FI-US', and 'FI-GMC-ASIA' in 'Business Unit' column
-    Dim buColIndex As Long
     buColIndex = 0
     
     For i = 1 To tblApproved.ListColumns.Count
@@ -191,8 +227,6 @@ Sub ProcessMarkitAndApprovedFunds()
     ' If filtered, get only visible cells
     If tblApproved.ShowAutoFilter Then
         ' Count visible rows for array allocation
-        Dim visibleRowCount As Long
-        Dim visibleCells As Range
         On Error Resume Next
         Set visibleCells = tblApproved.DataBodyRange.SpecialCells(xlCellTypeVisible)
         On Error GoTo 0
@@ -212,11 +246,7 @@ Sub ProcessMarkitAndApprovedFunds()
             
             ' Copy visible rows data
             If visibleRowCount > 0 Then
-                Dim dataRow As Long
                 dataRow = 2 ' Start after header
-                
-                Dim visibleRow As Range
-                Dim visibleArea As Range
                 
                 ' Loop through each visible cell area (might be non-contiguous due to filter)
                 For Each visibleArea In visibleCells.Areas
@@ -294,7 +324,8 @@ Sub ProcessMarkitAndApprovedFunds()
     
     ' Build lookup dictionaries for faster matching
     Application.StatusBar = "Building lookup tables for faster matching..."
-    Dim codeColIndex As Long, leiColIndex As Long
+    codeColIndex = 0
+    leiColIndex = 0
     
     If markitColMap.Exists("Client Identifier") Then
         codeColIndex = markitColMap("Client Identifier")
@@ -426,11 +457,9 @@ Sub ProcessMarkitAndApprovedFunds()
     Application.StatusBar = "Processing data for Raw table..."
     
     ' Determine dimensions for approved data (excluding header)
-    Dim approvedRowCount As Long
     approvedRowCount = UBound(approvedArray, 1) - 1 ' Subtract header row
     
     ' Pre-allocate Raw array (max size = approved count + header)
-    Dim maxRawRows As Long
     maxRawRows = approvedRowCount + 1 ' +1 for header
     ReDim rawArray(1 To maxRawRows, 1 To UBound(rawDataHeaders) + 1)
     
@@ -440,7 +469,6 @@ Sub ProcessMarkitAndApprovedFunds()
     Next i
     
     ' Row counter for rawArray
-    Dim rawRowCount As Long
     rawRowCount = 1 ' Start at 1 (header row)
     
     ' Process matching
@@ -454,13 +482,14 @@ Sub ProcessMarkitAndApprovedFunds()
             DoEvents ' Allow UI to update
         End If
         
-        ' Get fund code and LEI from Approved array
-        Dim approvedFundCode As String, approvedFundLEI As String, fundGCI As String
-        
-        ' Initialize variables
+        ' Initialize variables for this row
         approvedFundCode = ""
         approvedFundLEI = ""
         fundGCI = ""
+        foundMatch = False
+        matchFundCode = False
+        matchFundLEI = False
+        matchedMarkitRow = 0
         
         ' Get values safely
         On Error Resume Next
@@ -484,13 +513,6 @@ Sub ProcessMarkitAndApprovedFunds()
         If Len(Trim(approvedFundCode)) = 0 And Len(Trim(approvedFundLEI)) = 0 Then
             GoTo NextApprovedRow
         End If
-        
-        ' Initialize match variables
-        foundMatch = False
-        matchFundCode = False
-        matchFundLEI = False
-        Dim matchedMarkitRow As Long
-        matchedMarkitRow = 0
         
         ' Try to match by Fund Code first (using dictionary lookup)
         If Len(Trim(approvedFundCode)) > 0 Then
@@ -593,8 +615,6 @@ NextApprovedRow:
     ' Resize rawArray to actual data size (can't use ReDim Preserve on first dimension of 2D array)
     ' Instead, we'll create a new array with the exact size we need
     If rawRowCount > 1 Then
-        Dim finalRawArray() As Variant
-        Dim j As Long, k As Long
         ReDim finalRawArray(1 To rawRowCount, 1 To UBound(rawDataHeaders) + 1)
         
         ' Copy data from original array to the final array
@@ -605,6 +625,7 @@ NextApprovedRow:
         Next j
         
         ' Write the correctly sized array to the worksheet
+        Application.StatusBar = "Writing Raw data to worksheet..."
         wsRawData.Range("A1").Resize(rawRowCount, UBound(rawDataHeaders) + 1).Value = finalRawArray
     Else
         ' If no data, just write the header row
@@ -638,18 +659,14 @@ NextApprovedRow:
     uploadArray(1, UBound(rawDataHeaders) + 2) = "Delta"
     
     ' Prepare for Upload data processing
-    Dim uploadRowCount As Long
     uploadRowCount = 1 ' Start at 1 (header row)
     
     ' Process data for Upload table
     Application.StatusBar = "Analyzing NAV dates for Upload table..."
     
     ' Loop through Raw data (skip header row)
-    For i = 2 To UBound(rawArray, 1)
+    For i = 2 To rawRowCount
         ' Get dates
-        Dim rfadNAVDate As Variant, markitNAVDate As Variant
-        Dim isMoreRecent As Boolean
-        
         rfadNAVDate = rawArray(i, 12)
         markitNAVDate = rawArray(i, 14)
         
@@ -684,8 +701,6 @@ NextApprovedRow:
             ' If we need to resize the array
             If uploadRowCount > UBound(uploadArray, 1) Then
                 ' Create a new larger array
-                Dim tempUploadArray() As Variant
-                Dim k As Long
                 ReDim tempUploadArray(1 To uploadRowCount * 2, 1 To UBound(rawDataHeaders) + 2)
                 
                 ' Copy existing data
@@ -705,9 +720,6 @@ NextApprovedRow:
             Next j
             
             ' Calculate Delta
-            Dim rfadNAV As Variant, markitNAV As Variant
-            Dim deltaValue As Double
-            
             rfadNAV = rawArray(i, 13)
             markitNAV = rawArray(i, 15)
             
@@ -721,8 +733,6 @@ NextApprovedRow:
     
     ' Resize uploadArray to actual data size (can't use ReDim Preserve on first dimension of 2D array)
     If uploadRowCount > 1 Then
-        Dim finalUploadArray() As Variant
-        Dim j As Long, k As Long
         ReDim finalUploadArray(1 To uploadRowCount, 1 To UBound(rawDataHeaders) + 2)
         
         ' Copy data from original array to the final array
@@ -733,6 +743,7 @@ NextApprovedRow:
         Next j
         
         ' Write the correctly sized array to the worksheet
+        Application.StatusBar = "Writing Upload data to worksheet..."
         wsUpload.Range("A1").Resize(uploadRowCount, UBound(rawDataHeaders) + 2).Value = finalUploadArray
     Else
         ' If no data, just write the header row
@@ -741,7 +752,7 @@ NextApprovedRow:
     
     ' Create Upload table
     On Error Resume Next
-    Set tblUpload = wsUpload.ListObjects.Add(xlSrcRange, wsUpload.Range("A1").Resize(uploadRowCount, UBound(uploadArray, 2)), , xlYes)
+    Set tblUpload = wsUpload.ListObjects.Add(xlSrcRange, wsUpload.Range("A1").Resize(uploadRowCount, UBound(rawDataHeaders) + 2), , xlYes)
     tblUpload.Name = "Upload"
     On Error GoTo 0
     
@@ -771,7 +782,6 @@ NextApprovedRow:
         ' Highlight cells in Delta column if value >= 100% or <= -50%
         If Not tblUpload.DataBodyRange Is Nothing Then
             For i = 1 To tblUpload.ListRows.Count
-                Dim cellValue As Variant
                 cellValue = tblUpload.ListRows(i).Range.Cells(1, tblUpload.ListColumns.Count).Value
                 
                 If IsNumeric(cellValue) Then
