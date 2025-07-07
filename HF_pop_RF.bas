@@ -1,3 +1,11 @@
+  Dim lr As ListRow, fundID As String
+    For Each lr In loInactive.ListRows
+        fundID = Trim(CStr(lr.Range.Cells(1, in_FundCol).Value))
+        If tierDict.Exists(fundID) Then
+            lr.Range.Cells(1, in_TierCol).Value = tierDict(fundID)
+        End If
+    Next lr
+
 Option Explicit
 
 '==========================================================
