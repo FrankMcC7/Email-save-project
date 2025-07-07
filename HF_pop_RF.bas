@@ -1,11 +1,3 @@
-  Dim lr As ListRow, fundID As String
-    For Each lr In loInactive.ListRows
-        fundID = Trim(CStr(lr.Range.Cells(1, in_FundCol).Value))
-        If tierDict.Exists(fundID) Then
-            lr.Range.Cells(1, in_TierCol).Value = tierDict(fundID)
-        End If
-    Next lr
-
 Option Explicit
 
 '==========================================================
@@ -296,6 +288,94 @@ Sub NewFundsIdentificationMacro()
     Set loUpload = EnsureTableRange(wsUpload, "UploadHF", rngUpload)
 
     '=======================
+    ' ADDITIONAL LOOKUPS & POPULATE EXTRA COLUMNS IN UploadHF
+    '=======================
+    '--- Build dictionaries from CO_Table ------------------
+    On Error Resume Next: Set wsCO = wbMain.Sheets("CO_Table"): On Error GoTo 0
+    If Not wsCO Is Nothing Then
+        Set loCO = wsCO.ListObjects("CO_Table")
+        If Not loCO Is Nothing Then
+            coCredCol   = GetColumnIndex(loCO, "Credit Officer")
+            coRegionCol = GetColumnIndex(loCO, "Region")
+            coEmailCol  = GetColumnIndex(loCO, "Email Address")
+            For rIdx = 1 To loCO.DataBodyRange.Rows.Count
+                key = Trim(CStr(loCO.DataBodyRange.Cells(rIdx, coCredCol).Value))
+                If Len(key) > 0 Then
+                    If Not coDict.Exists(key) Then coDict.Add key, Array(loCO.DataBodyRange.Cells(rIdx, coRegionCol).Value, loCO.DataBodyRange.Cells(rIdx, coEmailCol).Value)
+                End If
+            Next rIdx
+        End If
+    End If
+
+    '--- Build IM dictionary from SharePoint ---------------
+    sp_IMCol        = GetColumnIndex(loMainSP, "HFAD_IM_CoperID")
+    sp_NAVCol       = GetColumnIndex(loMainSP, "NAV Source")
+    sp_FreqCol      = GetColumnIndex(loMainSP, "Frequency")
+    sp_AdHocCol     = GetColumnIndex(loMainSP, "Ad-Hoc Reporting")
+    sp_ParentFlagCol = GetColumnIndex(loMainSP, "Parent/Flagship Reporting")
+
+    For rIdx = 1 To loMainSP.DataBodyRange.Rows.Count
+        key = Trim(CStr(loMainSP.DataBodyRange.Cells(rIdx, sp_IMCol).Value))
+        If Len(key) > 0 Then
+            If Not imDict.Exists(key) Then
+                imDict.Add key, Array(loMainSP.DataBodyRange.Cells(rIdx, sp_NAVCol).Value, _
+                                      loMainSP.DataBodyRange.Cells(rIdx, sp_FreqCol).Value, _
+                                      loMainSP.DataBodyRange.Cells(rIdx, sp_AdHocCol).Value, _
+                                      loMainSP.DataBodyRange.Cells(rIdx, sp_ParentFlagCol).Value)
+            End If
+        End If
+    Next rIdx
+
+    '--- Build Days to Report dictionary -------------------
+    hfDaysCol = GetColumnIndex(loMainHF, "HFAD_Days_to_report")
+    For rIdx = 1 To loMainHF.DataBodyRange.Rows.Count
+        key = Trim(CStr(loMainHF.DataBodyRange.Cells(rIdx, hfFundIDCol).Value))
+        If Len(key) > 0 Then
+            If Not daysDict.Exists(key) Then daysDict.Add key, loMainHF.DataBodyRange.Cells(rIdx, hfDaysCol).Value
+        End If
+    Next rIdx
+
+    '--- Ensure extra columns exist ------------------------
+    Dim extraCols As Variant: extraCols = Array("Region", "NAV Source", "Frequency", "Ad-Hoc Reporting", "Parent/Flagship Reporting", "Days to Report")
+    For Each key In extraCols
+        If Not ColumnExists(loUpload, CStr(key)) Then loUpload.ListColumns.Add.Name = CStr(key)
+    Next key
+
+    '--- Fill extra columns --------------------------------
+    up_CredCol    = GetColumnIndex(loUpload, "HFAD_Credit_Officer")
+    up_RegCol     = GetColumnIndex(loUpload, "Region")
+    up_IMIDCol    = GetColumnIndex(loUpload, "HFAD_IM_CoperID")
+    up_NAVCol     = GetColumnIndex(loUpload, "NAV Source")
+    up_FreqCol    = GetColumnIndex(loUpload, "Frequency")
+    up_AdHocCol   = GetColumnIndex(loUpload, "Ad-Hoc Reporting")
+    up_ParFlagCol = GetColumnIndex(loUpload, "Parent/Flagship Reporting")
+    up_DaysCol    = GetColumnIndex(loUpload, "Days to Report")
+    up_FundCol    = GetColumnIndex(loUpload, "HFAD_Fund_CoperID")
+
+    Dim lrU As ListRow
+    For Each lrU In loUpload.ListRows
+        ' Credit officer / region / email
+        key = Trim(CStr(lrU.Range.Cells(1, up_CredCol).Value))
+        If coDict.Exists(key) Then
+            lrU.Range.Cells(1, up_CredCol).Value = coDict(key)(1) 'Email
+            lrU.Range.Cells(1, up_RegCol).Value = coDict(key)(0)
+        End If
+
+        ' IM-driven fields
+        key = Trim(CStr(lrU.Range.Cells(1, up_IMIDCol).Value))
+        If imDict.Exists(key) Then
+            lrU.Range.Cells(1, up_NAVCol).Value   = imDict(key)(0)
+            lrU.Range.Cells(1, up_FreqCol).Value  = imDict(key)(1)
+            lrU.Range.Cells(1, up_AdHocCol).Value = imDict(key)(2)
+            lrU.Range.Cells(1, up_ParFlagCol).Value = imDict(key)(3)
+        End If
+
+        ' Days to report
+        key = Trim(CStr(lrU.Range.Cells(1, up_FundCol).Value))
+        If daysDict.Exists(key) Then lrU.Range.Cells(1, up_DaysCol).Value = daysDict(key)
+    Next lrU
+
+    '=======================
     ' INACTIVE FUNDS (SharePoint not in HF)
     '=======================
     share_CoperCol   = GetColumnIndex(loMainSP, "HFAD_Fund_CoperID")
@@ -337,10 +417,13 @@ Sub NewFundsIdentificationMacro()
     in_FundCol = GetColumnIndex(loInactive, "HFAD_Fund_CoperID")
     in_TierCol = GetColumnIndex(loInactive, "Tier")
 
-    For Each r In loInactive.ListRows
-        key = Trim(CStr(r.Range.Cells(1, in_FundCol).Value))
-        If tierDict.Exists(key) Then r.Range.Cells(1, in_TierCol).Value = tierDict(key)
-    Next r
+    Dim lr As ListRow, fundID As String
+    For Each lr In loInactive.ListRows
+        fundID = Trim(CStr(lr.Range.Cells(1, in_FundCol).Value))
+        If tierDict.Exists(fundID) Then
+            lr.Range.Cells(1, in_TierCol).Value = tierDict(fundID)
+        End If
+    Next lr
 
     '=======================
     MsgBox "Macro completed successfully.", vbInformation
