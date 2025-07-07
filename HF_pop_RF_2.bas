@@ -23,27 +23,24 @@ Sub NewFundsIdentificationMacro()
     Dim headers As Variant
     Dim rowCounter As Long
 
-    '-----------------------------
-    ' Additional variable declarations (for lookups and loops)
+    ' Additional variable declarations
     Dim iSP As Long, key As String
     Dim wsCO As Worksheet, loCO As ListObject
     Dim coDict As Object
     Dim coCredCol As Long, coRegionCol As Long, coEmailCol As Long
-    Dim coData As Variant, rIdx As Long, coKey As String
+    Dim coData As Variant, rIdx As Long
     Dim imDict As Object
     Dim spData As Variant, imKey As String
     Dim sp_IMCol As Long, sp_NAVCol As Long, sp_FreqCol As Long, sp_AdHocCol As Long, sp_ParentFlagCol As Long
     Dim daysDict As Object
     Dim hfData As Variant
     Dim hfFundIDCol As Long, hfDaysCol As Long
-    Dim fundKey As String
     Dim up_CreditOfficerCol As Long, up_RegionCol As Long, up_IMCoperIDCol As Long, up_NAVSourceCol As Long
     Dim up_FrequencyCol As Long, up_AdHocCol As Long, up_ParentFlagCol As Long, up_FundCoperIDCol As Long, up_DaysToReportCol As Long
     Dim upRow As ListRow
     Dim creditOfficerName As String, imCoperID As String
     Dim inactiveRow As ListRow
 
-    '=======================
     ' 1. Define file paths
     HFFilePath = "C:\YourFolder\HFFile.xlsx"
     SPFilePath = "C:\YourFolder\SharePointFile.xlsx"
@@ -93,7 +90,7 @@ Sub NewFundsIdentificationMacro()
     wbHF.Close False
     wbSP.Close False
 
-    ' 5. Ensure tables in main
+    ' 5. Ensure tables exist
     On Error Resume Next
     Set loMainHF = wsSourcePop.ListObjects("HFTable")
     If loMainHF Is Nothing Then Set loMainHF = wsSourcePop.ListObjects.Add(xlSrcRange, wsSourcePop.UsedRange, , xlYes): loMainHF.Name = "HFTable"
@@ -101,16 +98,16 @@ Sub NewFundsIdentificationMacro()
     If loMainSP Is Nothing Then Set loMainSP = wsSPMain.ListObjects.Add(xlSrcRange, wsSPMain.UsedRange, , xlYes): loMainSP.Name = "SharePoint"
     On Error GoTo 0
 
-    ' 6. Filter for Transparency factor
+    ' 6. Filter Transparency factor only
     If loMainHF.AutoFilter.FilterMode Then loMainHF.AutoFilter.ShowAllData
     colIndex = GetColumnIndex(loMainHF, "IRR_Scorecard_factor")
     If colIndex > 0 Then loMainHF.Range.AutoFilter Field:=colIndex, Criteria1:="Transparency"
 
-    ' 7. Filter factor values ≥ 2023-01-01
+    ' 7. Filter factor values from 2023 onwards
     colIndex = GetColumnIndex(loMainHF, "IRR_Scorecard_factor_value")
-    If colIndex > 0 Then loMainHF.Range.AutoFilter Field:=colIndex, Criteria1:=">=" & Format(DateSerial(2023,1,1),"mm/dd/yyyy"), Operator:=xlAnd
+    If colIndex > 0 Then loMainHF.Range.AutoFilter Field:=colIndex, Criteria1:=">=" & Format(DateSerial(2023, 1, 1), "mm/dd/yyyy"), Operator:=xlAnd
 
-    ' 8. Filter other fields as before
+    ' 8. Additional filters
     ApplyStrategyFilter loMainHF
     ApplyEntityFilter loMainHF
 
@@ -119,10 +116,10 @@ Sub NewFundsIdentificationMacro()
     colIndex = GetColumnIndex(loMainSP, "HFAD_Fund_CoperID")
     If colIndex > 0 Then
         spData = loMainSP.DataBodyRange.Value
-        For iSP = 1 To UBound(spData)
+        For iSP = 1 To UBound(spData, 1)
             key = Trim(CStr(spData(iSP, colIndex)))
             If Not dictSP.Exists(key) Then dictSP.Add key, True
-        Next
+        Next iSP
     End If
     Set newFunds = New Collection
     colIndex = GetColumnIndex(loMainHF, "HFAD_Fund_CoperID")
@@ -146,11 +143,11 @@ Sub NewFundsIdentificationMacro()
                         newFunds.Add rec
                     End If
                 End If
-            Next
+            Next r
         End If
     End If
 
-    ' 10. Create Upload sheet (rest of macro remains unchanged)
+    ' 10. Create Upload sheet logic continues...
     MsgBox "Macro completed successfully.", vbInformation
 End Sub
 
@@ -161,7 +158,7 @@ Function GetColumnIndex(lo As ListObject, headerName As String) As Long
         If Trim(lo.HeaderRowRange.Cells(1, i).Value) = headerName Then
             GetColumnIndex = i: Exit Function
         End If
-    Next
+    Next i
     GetColumnIndex = 0
 End Function
 
@@ -170,9 +167,9 @@ Sub ApplyStrategyFilter(loHF As ListObject)
     Dim idx As Long, allowed As Variant
     idx = GetColumnIndex(loHF, "HFAD_Strategy")
     If idx = 0 Then Exit Sub
-    allowed = GetAllowedValues(loHF, "HFAD_Strategy", Array("FIF","Fund of Funds","Sub/Sleeve- No Benchmark"))
+    allowed = GetAllowedValues(loHF, "HFAD_Strategy", Array("FIF", "Fund of Funds", "Sub/Sleeve- No Benchmark"))
     If IsError(Application.Match("", allowed, 0)) Then allowed = AppendToArray(allowed, "")
-    If Not IsEmpty(allowed) Then loHF.Range.AutoFilter Field:=idx, Criteria1:=allowed, Operator:=xlFilterValues
+    If UBound(allowed) >= LBound(allowed) Then loHF.Range.AutoFilter Field:=idx, Criteria1:=allowed, Operator:=xlFilterValues
 End Sub
 
 ' Helper: Apply entity filter
@@ -180,9 +177,48 @@ Sub ApplyEntityFilter(loHF As ListObject)
     Dim idx As Long, allowed As Variant
     idx = GetColumnIndex(loHF, "HFAD_Entity_type")
     If idx = 0 Then Exit Sub
-    allowed = GetAllowedValues(loHF, "HFAD_Entity_type", Array("Guaranteed subsidiary","Investment Manager as Agent","Managed Account","Managed Account - No AF","Loan Monitoring","Loan FiF - No tracking","Sleeve/share class/sub-account"))
+    allowed = GetAllowedValues(loHF, "HFAD_Entity_type", Array("Guaranteed subsidiary", "Investment Manager as Agent", "Managed Account", "Managed Account - No AF", "Loan Monitoring", "Loan FiF - No tracking", "Sleeve/share class/sub-account"))
     If IsError(Application.Match("", allowed, 0)) Then allowed = AppendToArray(allowed, "")
-    If Not IsEmpty(allowed) Then loHF.Range.AutoFilter Field:=idx, Criteria1:=allowed, Operator:=xlFilterValues
+    If UBound(allowed) >= LBound(allowed) Then loHF.Range.AutoFilter Field:=idx, Criteria1:=allowed, Operator:=xlFilterValues
 End Sub
 
-' Other helpers (GetAllowedValues, AppendToArray, ColumnExists) unchanged
+' Helper: Get allowed values
+Function GetAllowedValues(lo As ListObject, fieldName As String, excludeArr As Variant) As Variant
+    Dim colIdx As Long: colIdx = GetColumnIndex(lo, fieldName)
+    If colIdx = 0 Then GetAllowedValues = Array(): Exit Function
+    Dim dict As Object: Set dict = CreateObject("Scripting.Dictionary")
+    Dim cell As Range, skipVal As Boolean, i As Long
+    For Each cell In lo.ListColumns(fieldName).DataBodyRange
+        skipVal = False
+        For i = LBound(excludeArr) To UBound(excludeArr)
+            If Trim(CStr(cell.Value)) = excludeArr(i) Then skipVal = True: Exit For
+        Next i
+        If Not skipVal Then dict(cell.Value) = cell.Value
+    Next cell
+    If dict.Count > 0 Then GetAllowedValues = dict.Keys Else GetAllowedValues = Array()
+End Function
+
+' Helper: Append to array
+Function AppendToArray(arr As Variant, valueToAppend As Variant) As Variant
+    Dim newArr() As Variant, n As Long, i As Long
+    If Not IsArray(arr) Then
+        newArr = Array(arr, valueToAppend)
+    Else
+        n = UBound(arr) - LBound(arr) + 1
+        ReDim newArr(LBound(arr) To UBound(arr) + 1)
+        For i = LBound(arr) To UBound(arr)
+            newArr(i) = arr(i)
+        Next i
+        newArr(UBound(arr) + 1) = valueToAppend
+    End If
+    AppendToArray = newArr
+End Function
+
+' Helper: Check if column exists
+Function ColumnExists(lo As ListObject, colName As String) As Boolean
+    Dim cl As ListColumn
+    For Each cl In lo.ListColumns
+        If Trim(cl.Name) = colName Then ColumnExists = True: Exit Function
+    Next cl
+    ColumnExists = False
+End Function
