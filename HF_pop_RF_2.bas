@@ -134,7 +134,8 @@ Sub NewFundsIdentificationMacro()
     colIndex = GetColumnIndex(loMainHF, "IRR_Scorecard_factor_value")
     If colIndex > 0 Then
         loMainHF.Range.AutoFilter Field:=colIndex, _
-            Criteria1:">=" & Format(DateSerial(2023, 1, 1), "mm/dd/yyyy"), Operator:=xlAnd
+            Criteria1:= ">=" & Format(DateSerial(2023, 1, 1), "mm/dd/yyyy"), _
+            Operator:=xlAnd
     End If
     
     ' 4.3 Filter HFAD_Strategy to remove unwanted values but include blanks
@@ -204,70 +205,4 @@ Sub NewFundsIdentificationMacro()
                         rec = Array(fundCoperID, _
                                     r.Cells(1, idxFundName).Value, _
                                     r.Cells(1, idxIMCoperID).Value, _
-                                    r.Cells(1, idxIMName).Value, _
-                                    r.Cells(1, idxCreditOfficer).Value, _
-                                    r.Cells(1, idxFactorVal).Value, _
-                                    "Active")
-                        newFunds.Add rec
-                    End If
-                End If
-            Next r
-        End If
-    End If
-    
-    ' 6. Create new sheet "Upload to SP" with table "UploadHF" (unchanged)...
-    ' [rest of code remains unchanged, ensure any references to IRR_Transparency_Tier are replaced]
-    
-    '=======================
-    MsgBox "Macro completed successfully.", vbInformation
-End Sub
-
-'------------------------------------------------
-Function GetColumnIndex(lo As ListObject, headerName As String) As Long
-    Dim i As Long
-    For i = 1 To lo.HeaderRowRange.Columns.Count
-        If Trim(lo.HeaderRowRange.Cells(1, i).Value) = headerName Then
-            GetColumnIndex = i: Exit Function
-        End If
-    Next i
-    GetColumnIndex = 0
-End Function
-
-'------------------------------------------------
-Function GetAllowedValues(lo As ListObject, fieldName As String, excludeArr As Variant) As Variant
-    Dim colIndex As Long: colIndex = GetColumnIndex(lo, fieldName)
-    If colIndex = 0 Then GetAllowedValues = Array(): Exit Function
-    Dim dict As Object: Set dict = CreateObject("Scripting.Dictionary")
-    Dim cell As Range, skipVal As Boolean
-    For Each cell In lo.ListColumns(fieldName).DataBodyRange
-        skipVal = False
-        For i = LBound(excludeArr) To UBound(excludeArr)
-            If Trim(CStr(cell.Value)) = excludeArr(i) Then skipVal = True: Exit For
-        Next i
-        If Not skipVal Then If Not dict.Exists(cell.Value) Then dict.Add cell.Value, cell.Value
-    Next cell
-    If dict.Count > 0 Then GetAllowedValues = dict.Keys Else GetAllowedValues = Array()
-End Function
-
-'------------------------------------------------
-Function AppendToArray(arr As Variant, valueToAppend As Variant) As Variant
-    Dim newArr() As Variant, n As Long, i As Long
-    If Not IsArray(arr) Then newArr = Array(arr, valueToAppend) Else
-        n = UBound(arr) - LBound(arr) + 1
-        ReDim newArr(LBound(arr) To UBound(arr) + 1)
-        For i = LBound(arr) To UBound(arr)
-            newArr(i) = arr(i)
-        Next i
-        newArr(UBound(arr) + 1) = valueToAppend
-    End If
-    AppendToArray = newArr
-End Function
-
-'------------------------------------------------
-Function ColumnExists(lo As ListObject, colName As String) As Boolean
-    Dim cl As ListColumn
-    For Each cl In lo.ListColumns
-        If Trim(cl.Name) = colName Then ColumnExists = True: Exit Function
-    Next cl
-    ColumnExists = False
-End Function
+                                    r.Cells(1, idxIMName).
