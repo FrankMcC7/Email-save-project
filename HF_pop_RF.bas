@@ -5,19 +5,17 @@ Option Explicit
 ' ---------------------------------------------------------
 ' • Fully self‑contained and Option Explicit‑compliant
 ' • No chained statements or single‑line If / For
-' • All helpers defined in this module BEFORE they are called
+' • All helpers defined BEFORE they are called
 ' • Compiles cleanly via Debug ▸ Compile VBAProject
 '==========================================================
 
 '=======================
-' HELPERS (declare first so they are defined before use)
+' HELPERS (define first)
 '=======================
 Function GetOrClearSheet(wb As Workbook, sheetName As String) As Worksheet
-    'Return existing sheet or create a new one, clearing any data
     On Error Resume Next
     Set GetOrClearSheet = wb.Sheets(sheetName)
     On Error GoTo 0
-
     If GetOrClearSheet Is Nothing Then
         Set GetOrClearSheet = wb.Sheets.Add(After:=wb.Sheets(wb.Sheets.Count))
         GetOrClearSheet.Name = sheetName
@@ -27,11 +25,9 @@ Function GetOrClearSheet(wb As Workbook, sheetName As String) As Worksheet
 End Function
 
 Function EnsureTable(ws As Worksheet, tblName As String) As ListObject
-    'Ensure a ListObject exists on a worksheet over UsedRange
     On Error Resume Next
     Set EnsureTable = ws.ListObjects(tblName)
     On Error GoTo 0
-
     If EnsureTable Is Nothing Then
         Set EnsureTable = ws.ListObjects.Add(xlSrcRange, ws.UsedRange, , xlYes)
         EnsureTable.Name = tblName
@@ -39,11 +35,9 @@ Function EnsureTable(ws As Worksheet, tblName As String) As ListObject
 End Function
 
 Function EnsureTableRange(ws As Worksheet, tblName As String, rng As Range) As ListObject
-    'Ensure a ListObject exists covering rng; resize if needed
     On Error Resume Next
     Set EnsureTableRange = ws.ListObjects(tblName)
     On Error GoTo 0
-
     If EnsureTableRange Is Nothing Then
         Set EnsureTableRange = ws.ListObjects.Add(xlSrcRange, rng, , xlYes)
         EnsureTableRange.Name = tblName
@@ -53,7 +47,6 @@ Function EnsureTableRange(ws As Worksheet, tblName As String, rng As Range) As L
 End Function
 
 Function GetColumnIndex(lo As ListObject, headerName As String) As Long
-    'Return 0 if header not found
     Dim i As Long
     For i = 1 To lo.HeaderRowRange.Columns.Count
         If Trim(lo.HeaderRowRange.Cells(1, i).Value) = headerName Then
@@ -88,10 +81,7 @@ Function GetAllowedValues(lo As ListObject, fieldName As String, excludeArr As V
         valStr = Trim(CStr(cell.Value))
         skipVal = False
         For i = LBound(excludeArr) To UBound(excludeArr)
-            If StrComp(valStr, Trim(CStr(excludeArr(i))), vbTextCompare) = 0 Then
-                skipVal = True
-                Exit For
-            End If
+            If StrComp(valStr, Trim(CStr(excludeArr(i))), vbTextCompare) = 0 Then skipVal = True: Exit For
         Next i
         If Not skipVal Then If Not dict.Exists(valStr) Then dict.Add valStr, valStr
     Next cell
@@ -119,12 +109,12 @@ Sub ApplyEntityFilter(ByVal loHF As ListObject)
     loHF.Range.AutoFilter Field:=idx, Criteria1:=allowed, Operator:=xlFilterValues
 End Sub
 
-'==========================================================
+'=======================
 ' MAIN MACRO
-'==========================================================
+'=======================
 Sub NewFundsIdentificationMacro()
     '------------------------------------------------------
-    ' 0. File paths (EDIT AS NEEDED)
+    ' 0. File paths
     '------------------------------------------------------
     Dim HFFilePath As String: HFFilePath = "C:\YourFolder\HFFile.xlsx"
     Dim SPFilePath As String: SPFilePath = "C:\YourFolder\SharePointFile.xlsx"
@@ -158,7 +148,7 @@ Sub NewFundsIdentificationMacro()
     Dim inactiveFunds As Collection: Set inactiveFunds = New Collection
 
     '------------------------------------------------------
-    ' 4. Other variables
+    ' 4. Variables / indices
     '------------------------------------------------------
     Dim colIndex As Long, i As Long, j As Long, rIdx As Long
     Dim rowCounter As Long
@@ -166,8 +156,20 @@ Sub NewFundsIdentificationMacro()
     Dim rec As Variant
     Dim visData As Range, r As Range
 
+    '   -- CO table columns
+    Dim coCredCol As Long, coRegionCol As Long, coEmailCol As Long
+    '   -- SP IM columns
+    Dim sp_IMCol As Long, sp_NAVCol As Long, sp_FreqCol As Long, sp_AdHocCol As Long, sp_ParentFlagCol As Long
+    '   -- UploadHF columns
+    Dim up_CredCol As Long, up_RegCol As Long, up_IMIDCol As Long, up_NAVCol As Long
+    Dim up_FreqCol As Long, up_AdHocCol As Long, up_ParFlagCol As Long, up_DaysCol As Long, up_FundCol As Long
+    '   -- HF columns
+    Dim hfFundIDCol As Long, hfDaysCol As Long, idxTier As Long
+    '   -- Inactive sheet columns
+    Dim share_CoperCol As Long, share_StatusCol As Long, share_CommentsCol As Long
+
     '------------------------------------------------------
-    ' 5. OPEN SOURCE WORKBOOKS & TABLES
+    ' 5. OPEN & PREP SOURCE FILES
     '------------------------------------------------------
     Set wbHF = Workbooks.Open(HFFilePath)
     Set wsHFSource = wbHF.Worksheets(1)
@@ -188,7 +190,7 @@ Sub NewFundsIdentificationMacro()
     loSP.Name = "SharePoint"
 
     '------------------------------------------------------
-    ' 6. COPY TABLES INTO MAIN WB
+    ' 6. COPY SOURCE TABLES TO MAIN
     '------------------------------------------------------
     Set wsSourcePop = GetOrClearSheet(wbMain, "Source Population")
     Set wsSPMain    = GetOrClearSheet(wbMain, "SharePoint")
@@ -196,8 +198,7 @@ Sub NewFundsIdentificationMacro()
     loHF.Range.Copy wsSourcePop.Range("A1")
     loSP.Range.Copy wsSPMain.Range("A1")
 
-    wbHF.Close SaveChanges:=False
-    wbSP.Close SaveChanges:=False
+    wbHF.Close False: wbSP.Close False
 
     Set loMainHF = EnsureTable(wsSourcePop, "HFTable")
     Set loMainSP = EnsureTable(wsSPMain,   "SharePoint")
@@ -220,7 +221,7 @@ Sub NewFundsIdentificationMacro()
     ApplyEntityFilter  loMainHF
 
     '------------------------------------------------------
-    ' 8. BUILD SP DICTIONARY
+    ' 8. BUILD DICTIONARY OF EXISTING SP FUNDS
     '------------------------------------------------------
     colIndex = GetColumnIndex(loMainSP, "HFAD_Fund_CoperID")
     For i = 1 To loMainSP.DataBodyRange.Rows.Count
@@ -236,11 +237,11 @@ Sub NewFundsIdentificationMacro()
 
     If Not visData Is Nothing Then
         Dim idxName As Long, idxIMID As Long, idxIMName As Long, idxCred As Long, idxTierVal As Long
-        idxName     = GetColumnIndex(loMainHF, "HFAD_Fund_Name")
-        idxIMID     = GetColumnIndex(loMainHF, "HFAD_IM_CoperID")
-        idxIMName   = GetColumnIndex(loMainHF, "HFAD_IM_Name")
-        idxCred     = GetColumnIndex(loMainHF, "HFAD_Credit_Officer")
-        idxTierVal  = GetColumnIndex(loMainHF, "IRR_Scorecard_factor_value")
+        idxName    = GetColumnIndex(loMainHF, "HFAD_Fund_Name")
+        idxIMID    = GetColumnIndex(loMainHF, "HFAD_IM_CoperID")
+        idxIMName  = GetColumnIndex(loMainHF, "HFAD_IM_Name")
+        idxCred    = GetColumnIndex(loMainHF, "HFAD_Credit_Officer")
+        idxTierVal = GetColumnIndex(loMainHF, "IRR_Scorecard_factor_value")
 
         For Each r In visData.Rows
             If Not r.EntireRow.Hidden Then
@@ -258,7 +259,7 @@ Sub NewFundsIdentificationMacro()
     End If
 
     '------------------------------------------------------
-    '10. CREATE & POPULATE "UPLOAD TO SP"
+    '10. CREATE / POPULATE UPLOAD TO SP
     '------------------------------------------------------
     Set wsUpload = GetOrClearSheet(wbMain, "Upload to SP")
     Dim uploadHeaders As Variant: uploadHeaders = Array("HFAD_Fund_CoperID", "HFAD_Fund_Name", "HFAD_IM_CoperID", _
@@ -280,10 +281,9 @@ Sub NewFundsIdentificationMacro()
     Set loUpload = EnsureTableRange(wsUpload, "UploadHF", rngUpload)
 
     '------------------------------------------------------
-    '11. CO_TABLE DICTIONARY
+    '11. CO TABLE -> coDict
     '------------------------------------------------------
-    On Error Resume Next: Set wsCO = wbMain.Sheets("CO_Table"): On Error GoTo 0
-    If wsCO Is Nothing Then MsgBox "CO_Table sheet missing", vbCritical: Exit Sub
+    Set wsCO = wbMain.Sheets("CO_Table")
     Set loCO = wsCO.ListObjects("CO_Table")
 
     coCredCol   = GetColumnIndex(loCO, "Credit Officer")
@@ -293,14 +293,12 @@ Sub NewFundsIdentificationMacro()
     For rIdx = 1 To loCO.DataBodyRange.Rows.Count
         key = Trim(CStr(loCO.DataBodyRange.Cells(rIdx, coCredCol).Value))
         If Len(key) > 0 Then
-            If Not coDict.Exists(key) Then
-                coDict.Add key, Array(loCO.DataBodyRange.Cells(rIdx, coRegionCol).Value, loCO.DataBodyRange.Cells(rIdx, coEmailCol).Value)
-            End If
+            If Not coDict.Exists(key) Then coDict.Add key, Array(loCO.DataBodyRange.Cells(rIdx, coRegionCol).Value, loCO.DataBodyRange.Cells(rIdx, coEmailCol).Value)
         End If
     Next rIdx
 
     '------------------------------------------------------
-    '12. IM DICTIONARY & DAYS DICTIONARY
+    '12. IM DICT + DAYS DICT
     '------------------------------------------------------
     sp_IMCol        = GetColumnIndex(loMainSP, "HFAD_IM_CoperID")
     sp_NAVCol       = GetColumnIndex(loMainSP, "NAV Source")
@@ -311,31 +309,25 @@ Sub NewFundsIdentificationMacro()
     For rIdx = 1 To loMainSP.DataBodyRange.Rows.Count
         key = Trim(CStr(loMainSP.DataBodyRange.Cells(rIdx, sp_IMCol).Value))
         If Len(key) > 0 Then
-            If Not imDict.Exists(key) Then
-                imDict.Add key, Array(loMainSP.DataBodyRange.Cells(rIdx, sp_NAVCol).Value, _
-                                      loMainSP.DataBodyRange.Cells(rIdx, sp_FreqCol).Value, _
-                                      loMainSP.DataBodyRange.Cells(rIdx, sp_AdHocCol).Value, _
-                                      loMainSP.DataBodyRange.Cells(rIdx, sp_ParentFlagCol).Value)
-            End If
+            If Not imDict.Exists(key) Then imDict.Add key, Array(loMainSP.DataBodyRange.Cells(rIdx, sp_NAVCol).Value, _
+                                                                loMainSP.DataBodyRange.Cells(rIdx, sp_FreqCol).Value, _
+                                                                loMainSP.DataBodyRange.Cells(rIdx, sp_AdHocCol).Value, _
+                                                                loMainSP.DataBodyRange.Cells(rIdx, sp_ParentFlagCol).Value)
         End If
     Next rIdx
 
-    Dim hfFundIDCol As Long, hfDaysCol As Long
     hfFundIDCol = GetColumnIndex(loMainHF, "HFAD_Fund_CoperID")
     hfDaysCol   = GetColumnIndex(loMainHF, "HFAD_Days_to_report")
 
     For rIdx = 1 To loMainHF.DataBodyRange.Rows.Count
         key = Trim(CStr(loMainHF.DataBodyRange.Cells(rIdx, hfFundIDCol).Value))
-        If Len(key) > 0 Then
-            If Not daysDict.Exists(key) Then daysDict.Add key, loMainHF.DataBodyRange.Cells(rIdx, hfDaysCol).Value
-        End If
+        If Len(key) > 0 Then If Not daysDict.Exists(key) Then daysDict.Add key, loMainHF.DataBodyRange.Cells(rIdx, hfDaysCol).Value
     Next rIdx
 
     '------------------------------------------------------
-    '13. ADD EXTRA COLUMNS & POPULATE
+    '13. ADD EXTRA COLS & FILL
     '------------------------------------------------------
-    Dim extraCols As Variant
-    extraCols = Array("Region", "NAV Source", "Frequency", "Ad-Hoc Reporting", "Parent/Flagship Reporting", "Days to Report")
+    Dim extraCols As Variant: extraCols = Array("Region", "NAV Source", "Frequency", "Ad-Hoc Reporting", "Parent/Flagship Reporting", "Days to Report")
     For Each key In extraCols
         If Not ColumnExists(loUpload, key) Then loUpload.ListColumns.Add.Name = key
     Next key
@@ -370,10 +362,9 @@ Sub NewFundsIdentificationMacro()
     Next r
 
     '------------------------------------------------------
-    '14. INACTIVE FUNDS TRACKING
+    '14. INACTIVE FUNDS
     '------------------------------------------------------
-    Dim idxTier As Long: idxTier = GetColumnIndex(loMainHF, "IRR_Scorecard_factor_value")
-
+    idxTier = GetColumnIndex(loMainHF, "IRR_Scorecard_factor_value")
     For rIdx = 1 To loMainHF.DataBodyRange.Rows.Count
         key = Trim(CStr(loMainHF.DataBodyRange.Cells(rIdx, hfFundIDCol).Value))
         If Len(key) > 0 Then If Not dictHF.Exists(key) Then dictHF.Add key, loMainHF.DataBodyRange.Cells(rIdx, idxTier).Value
@@ -386,18 +377,12 @@ Sub NewFundsIdentificationMacro()
     For rIdx = 1 To loMainSP.DataBodyRange.Rows.Count
         key = Trim(CStr(loMainSP.DataBodyRange.Cells(rIdx, share_CoperCol).Value))
         If Len(key) > 0 Then
-            If Not dictHF.Exists(key) Then
-                rec = Array(key, loMainSP.DataBodyRange.Cells(rIdx, share_StatusCol).Value, _
-                            loMainSP.DataBodyRange.Cells(rIdx, share_CommentsCol).Value, "Tier?")
-                inactiveFunds.Add rec
-            End If
+            If Not dictHF.Exists(key) Then inactiveFunds.Add Array(key, loMainSP.DataBodyRange.Cells(rIdx, share_StatusCol).Value, loMainSP.DataBodyRange.Cells(rIdx, share_CommentsCol).Value, "Tier?")
         End If
     Next rIdx
 
     Set wsInactive = GetOrClearSheet(wbMain, "Inactive Funds Tracking")
-
-    Dim inactiveHeaders As Variant
-    inactiveHeaders = Array("HFAD_Fund_CoperID", "Status", "Comments", "Tier")
+    Dim inactiveHeaders As Variant: inactiveHeaders = Array("HFAD_Fund_CoperID", "Status", "Comments", "Tier")
     For j = LBound(inactiveHeaders) To UBound(inactiveHeaders)
         wsInactive.Cells(1, j + 1).Value = inactiveHeaders(j)
     Next j
@@ -410,8 +395,7 @@ Sub NewFundsIdentificationMacro()
         rowCounter = rowCounter + 1
     Next rec
 
-    Dim rngInactive As Range
-    Set rngInactive = wsInactive.Range(wsInactive.Cells(1, 1), wsInactive.Cells(rowCounter - 1, UBound(inactiveHeaders) + 1))
+    Dim rngInactive As Range: Set rngInactive = wsInactive.Range(wsInactive.Cells(1, 1), wsInactive.Cells(rowCounter - 1, UBound(inactiveHeaders) + 1))
     Set loInactive = EnsureTableRange(wsInactive, "InactiveHF", rngInactive)
 
     colIndex = GetColumnIndex(loInactive, "Status")
