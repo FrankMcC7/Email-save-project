@@ -1,5 +1,9 @@
 Option Explicit
 
+' 6.2 Date filter on IRR_last_update_date
+    colIndex = GetColumnIndex(loMainHF, "IRR_last_update_date")
+    If colIndex > 0 Then loMainHF.Range.AutoFilter Field:=colIndex, Criteria1:=">=" & Format(DateSerial(2023, 1, 1), "mm/dd/yyyy"), Operator:=xlAnd
+
 Sub NewFundsIdentificationMacro()
     '=======================
     ' Main variable declarations
